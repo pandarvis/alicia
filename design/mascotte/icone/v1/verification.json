@@ -1,0 +1,151 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "format": "png",
+      "size": 16,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 24,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 32,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 48,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 64,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 128,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 256,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 512,
+      "transparentCorners": true
+    },
+    {
+      "format": "png",
+      "size": 1024,
+      "transparentCorners": true
+    },
+    {
+      "format": "ico",
+      "size": 16,
+      "alpha": true
+    },
+    {
+      "format": "ico",
+      "size": 24,
+      "alpha": true
+    },
+    {
+      "format": "ico",
+      "size": 32,
+      "alpha": true
+    },
+    {
+      "format": "ico",
+      "size": 48,
+      "alpha": true
+    },
+    {
+      "format": "ico",
+      "size": 64,
+      "alpha": true
+    },
+    {
+      "format": "ico",
+      "size": 128,
+      "alpha": true
+    },
+    {
+      "format": "ico",
+      "size": 256,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "icp4",
+      "size": 16,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "icp5",
+      "size": 32,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "icp6",
+      "size": 64,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic07",
+      "size": 128,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic08",
+      "size": 256,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic09",
+      "size": 512,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic10",
+      "size": 1024,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic11",
+      "size": 32,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic12",
+      "size": 64,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic13",
+      "size": 256,
+      "alpha": true
+    },
+    {
+      "format": "icns",
+      "type": "ic14",
+      "size": 512,
+      "alpha": true
+    }
+  ]
+}

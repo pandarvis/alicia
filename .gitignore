@@ -13,3 +13,10 @@ design/mascotte/papier-decoupe/v2/*
 !design/mascotte/papier-decoupe/v2/apercu-128px.png
 !design/mascotte/papier-decoupe/v2/manifest.json
 !design/mascotte/papier-decoupe/v2/verification.json
+# Icône : sources et archive hors dépôt (aperçu + métadonnées versionnés ; exports de l'app dans apps/desktop/build)
+design/mascotte/icone/*
+!design/mascotte/icone/v1/
+design/mascotte/icone/v1/*
+!design/mascotte/icone/v1/apercu-tailles.png
+!design/mascotte/icone/v1/manifest.json
+!design/mascotte/icone/v1/verification.json

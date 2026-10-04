@@ -1,0 +1,50 @@
+{
+  "character": "Alicia",
+  "kind": "Icône d'application — tête kawaii en papier découpé, yeux haricot",
+  "version": 1,
+  "created": "2026-10-04",
+  "tool": "image_gen built-in",
+  "reference": "../../papier-decoupe/v2/neutre.png",
+  "prompt": "Use case: stylized-concept.\nAsset type: actual square app icon artwork for the Electron desktop app Alicia, based on its approved kawaii layered-paper mascot.\nInput reference: approved Alicia v2 full-body sprite. Use it as a STRICT character identity and material reference.\nPrimary request: create ONE isolated HEAD-ONLY app icon version of Alicia. Preserve her honey-blonde hair, black headband and asymmetric black bow above her left temple (viewer right), warm cream peach round face, dark chocolate rounded bean eyes with ONE tiny cream pasted-paper circular highlight upper-left in each eye, pink cheeks, and friendly closed smile. Keep the same recognizable mascot identity and cut-paper charm.\nICON OPTIMIZATION: head fills most of a square canvas with clean transparent margin of approximately 6-8 percent on all sides. A large round face occupies about 65 percent of total icon width. Twin ponytails are shorter, rounded, compact lobes framing the face, within an almost square head silhouette. Simplify the layered fringe to three or four large clean paper pieces. Bow is chunky and clearly readable. Eyes and tiny smile are proportioned to remain readable at 32 and 48 pixels; highlights remain modest. No shoulders, no neck, no clothing, no body, no feet. Face is front-facing, upright and optically centered.\nMaterial: thick matte colored paper cutout, fine restrained fibers, distinct stacked flat paper layers, subtle internal layer shadows. Avoid excessive fibers, creases or decorative patterns. Soft rounded geometry. Clean carefully antialiased edges with no yellow halo or floating flecks.\nBackground: TRUE TRANSPARENT alpha outside the head, and in any gaps. No square tile, no backdrop, no ground plane or cast ground shadow, no sticker border. No lettering, no logo text, no watermark, no extra icons or embellishments.\nProduce one clean centered high-resolution square PNG app-icon master. No comparison sheet.",
+  "source": "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-19cccc12-16ad-4ef6-92d5-5aece7261ae2.png",
+  "master": "icon.png",
+  "formats": {
+    "png": [
+      16,
+      24,
+      32,
+      48,
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
+    "ico": [
+      16,
+      24,
+      32,
+      48,
+      64,
+      128,
+      256
+    ],
+    "icns": [
+      16,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024
+    ]
+  },
+  "electronAssets": "../../../../apps/desktop/build/",
+  "electronDocumentation": "https://www.electron.build/v26/docs/features/icons-and-images/",
+  "integrationStatus": "Fichiers prêts ; configuration runtime et packaging non modifiée.",
+  "nativeSource": {
+    "width": 1254,
+    "height": 1254
+  },
+  "margin": 64
+}

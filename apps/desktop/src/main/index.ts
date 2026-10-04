@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,6 +8,8 @@ import { EncryptionUnavailableError, SessionStore } from "./session-store.ts";
 import { isTrustedSenderUrl } from "./trusted-sender.ts";
 
 const RENDERER_INDEX = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
+/** Mascot head icon (design/mascotte/icone/v1), exported to build/ for electron-builder too. */
+const APP_ICON = join(app.getAppPath(), "build", "icon.png");
 
 // Lets the end-to-end test isolate its profile; ignored in a packaged app.
 const userDataOverride = process.env["ALICIA_USER_DATA"];
@@ -68,6 +71,8 @@ function isWebUrl(url: string): boolean {
 
 function createWindow(): void {
   const window = new BrowserWindow({
+    // Window and taskbar icon (the installer's .ico comes with packaging, plan 4b).
+    ...(existsSync(APP_ICON) ? { icon: APP_ICON } : {}),
     width: 1200,
     height: 800,
     minWidth: 900,
