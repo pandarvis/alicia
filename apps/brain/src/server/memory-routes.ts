@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { Memory, MemoryStore } from "../memory/store.ts";
+import { refusedBody, sendError } from "./http-errors.ts";
 
 export interface MemoryRoutesDependencies {
   memory: MemoryStore;
@@ -72,12 +73,12 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
 
   app.get("/memories", async (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const query = MemoryQuery.safeParse(request.query);
-    if (!query.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!query.success) return sendError(reply, 400, "invalid_request");
     const { scope, kind, q, forgotten } = query.data;
     const trash = forgotten === "true";
-    if (trash && q !== undefined) return reply.code(400).send({ error: "invalid_request" });
+    if (trash && q !== undefined) return sendError(reply, 400, "invalid_request");
     const filter = {
       ...(scope !== undefined ? { scope } : {}),
       ...(kind !== undefined ? { kind } : {}),
@@ -94,9 +95,9 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
   // The test bench: what Alicia would find for a question, and why. Never counts as a recall.
   app.get("/memories/test", async (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const query = TestQuery.safeParse(request.query);
-    if (!query.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!query.success) return sendError(reply, 400, "invalid_request");
     const explained = await memory.explain(person.id, query.data.q, TEST_LIMIT);
     const hits: MemoryTestHit[] = explained.map((hit) => ({
       memory: summarize(person, hit.memory),
@@ -109,9 +110,9 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
 
   app.post("/memories", async (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const body = MemoryCreate.safeParse(request.body);
-    if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!body.success) return sendError(reply, 400, "invalid_request");
     const { text, kind, scope, pinned } = body.data;
     const result = await memory.remember({
       personId: person.id,
@@ -122,15 +123,15 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
       ...(pinned !== undefined ? { pinned } : {}),
     });
     if (result.status === "created") return reply.code(201).send(summarize(person, result.memory));
-    if (result.status === "duplicate") return reply.code(409).send({ error: "duplicate" });
-    return reply.code(422).send({ error: "refused", reason: result.reason });
+    if (result.status === "duplicate") return sendError(reply, 409, "duplicate");
+    return reply.code(422).send(refusedBody(result.reason));
   });
 
   app.patch<{ Params: { id: string } }>("/memories/:id", async (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const body = MemoryPatch.safeParse(request.body);
-    if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!body.success) return sendError(reply, 400, "invalid_request");
     const { text, kind, scope, pinned } = body.data;
     const result = await memory.update(person.id, request.params.id, {
       ...(text !== undefined ? { text } : {}),
@@ -139,22 +140,22 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
       ...(pinned !== undefined ? { pinned } : {}),
     });
     if (result.status === "updated") return summarize(person, result.memory);
-    if (result.status === "not_found") return reply.code(404).send({ error: "not_found" });
-    return reply.code(422).send({ error: "refused", reason: result.reason });
+    if (result.status === "not_found") return sendError(reply, 404, "not_found");
+    return reply.code(422).send(refusedBody(result.reason));
   });
 
   app.post<{ Params: { id: string } }>("/memories/:id/restore", (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const restored = memory.restore(person.id, request.params.id);
-    if (restored === undefined) return reply.code(404).send({ error: "not_found" });
+    if (restored === undefined) return sendError(reply, 404, "not_found");
     return summarize(person, restored);
   });
 
   app.delete<{ Params: { id: string } }>("/memories/:id", (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
-    if (!memory.forget(person.id, request.params.id)) return reply.code(404).send({ error: "not_found" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
+    if (!memory.forget(person.id, request.params.id)) return sendError(reply, 404, "not_found");
     return reply.code(204).send();
   });
 }

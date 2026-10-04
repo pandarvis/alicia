@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Person } from "./identity.ts";
+import { MemoryRefusalReason } from "./memory.ts";
 
 export const PairingRequest = z.strictObject({
   code: z.string().regex(/^\d{6}$/),
@@ -27,3 +28,24 @@ export const HistoryMessage = z.object({
   createdAt: z.iso.datetime(),
 });
 export type HistoryMessage = z.infer<typeof HistoryMessage>;
+
+export const HttpErrorCode = z.enum([
+  "invalid_request",
+  "unauthenticated",
+  "not_found",
+  "busy",
+  "duplicate",
+  "refused",
+  "invalid_code",
+  "too_many_attempts",
+  "forbidden_origin",
+  "internal",
+]);
+export type HttpErrorCode = z.infer<typeof HttpErrorCode>;
+
+const RefusedError = z.object({ code: z.literal("refused"), message: z.string(), reason: MemoryRefusalReason });
+const PlainError = z.object({ code: HttpErrorCode.exclude(["refused"]), message: z.string() });
+
+/** Body of every HTTP error answer of the brain; `message` is French and may be shown as is. */
+export const HttpErrorBody = z.object({ error: z.union([RefusedError, PlainError]) });
+export type HttpErrorBody = z.infer<typeof HttpErrorBody>;

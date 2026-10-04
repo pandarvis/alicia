@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   ClientMessage,
   ConversationSummary,
+  HttpErrorBody,
   MEMORY_KINDS,
   MemoryPatch,
   MemorySummary,
@@ -132,6 +133,20 @@ describe("HTTP", () => {
     expect(
       ConversationSummary.safeParse({ id: UUID, title: "t", updatedAt: "2026-10-04T12:00:00Z" }).success,
     ).toBe(true);
+  });
+});
+
+describe("HTTP errors", () => {
+  test("a plain error and a refused memory", () => {
+    expect(HttpErrorBody.safeParse({ error: { code: "not_found", message: "Introuvable." } }).success).toBe(true);
+    expect(
+      HttpErrorBody.safeParse({ error: { code: "refused", message: "Souvenir refusé.", reason: "secret" } }).success,
+    ).toBe(true);
+  });
+  test("a refusal needs its reason; unknown codes and the old flat shape are rejected", () => {
+    expect(HttpErrorBody.safeParse({ error: { code: "refused", message: "x" } }).success).toBe(false);
+    expect(HttpErrorBody.safeParse({ error: { code: "teapot", message: "x" } }).success).toBe(false);
+    expect(HttpErrorBody.safeParse({ error: "not_found" }).success).toBe(false);
   });
 });
 

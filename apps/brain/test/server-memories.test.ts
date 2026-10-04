@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
+import { errorBody, refusedBody } from "../src/server/http-errors.ts";
 import { createServer } from "../src/server/server.ts";
 import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
@@ -118,11 +119,11 @@ describe("memories HTTP API", () => {
 
     const duplicate = await ctx.app.inject({ method: "POST", url: "/memories", headers, payload: LASAGNES });
     expect(duplicate.statusCode).toBe(409);
-    expect(duplicate.json()).toEqual({ error: "duplicate" });
+    expect(duplicate.json()).toEqual(errorBody("duplicate"));
 
     const secret = await ctx.app.inject({ method: "POST", url: "/memories", headers, payload: { ...LASAGNES, text: "mot de passe : x" } });
     expect(secret.statusCode).toBe(422);
-    expect(secret.json()).toEqual({ error: "refused", reason: "secret" });
+    expect(secret.json()).toEqual(refusedBody("secret"));
 
     const post = (payload: object) => ctx.app.inject({ method: "POST", url: "/memories", headers, payload });
     expect((await post({ text: "x" })).statusCode).toBe(400);
@@ -140,12 +141,12 @@ describe("memories HTTP API", () => {
 
     const secret = await patch(id, { text: "le code pin : 1234" });
     expect(secret.statusCode).toBe(422);
-    expect(secret.json()).toEqual({ error: "refused", reason: "secret" });
+    expect(secret.json()).toEqual(refusedBody("secret"));
     expect((await patch(id, { text: "   " })).statusCode).toBe(400);
     expect((await patch(id, { bogus: true })).statusCode).toBe(400);
     const unknown = await patch(UNKNOWN_ID, { pinned: true });
     expect(unknown.statusCode).toBe(404);
-    expect(unknown.json()).toEqual({ error: "not_found" });
+    expect(unknown.json()).toEqual(errorBody("not_found"));
 
     const moved = await patch(id, { scope: "common", text: "La famille adore les lasagnes" });
     expect(moved.json<{ scope: string; text: string }>()).toMatchObject({ scope: "common", text: "La famille adore les lasagnes" });
@@ -220,7 +221,7 @@ describe("memories HTTP API", () => {
     expect(await trash(kevin)).toEqual([]);
     const again = await restore(kevin);
     expect(again.statusCode).toBe(404);
-    expect(again.json()).toEqual({ error: "not_found" });
+    expect(again.json()).toEqual(errorBody("not_found"));
     expect((await restore(kevin, UNKNOWN_ID)).statusCode).toBe(404);
   });
 

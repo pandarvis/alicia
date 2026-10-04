@@ -11,6 +11,7 @@ import type { ChatDependencies } from "../conversations/chat-service.ts";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { PairingService } from "../identity/pairing.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
+import { sendError } from "./http-errors.ts";
 import { registerMemoryRoutes } from "./memory-routes.ts";
 import { attachWs } from "./ws.ts";
 
@@ -61,11 +62,13 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     const status = clientStatus(error);
     if (status !== undefined) {
       request.log.warn({ status }, "request rejected");
-      return reply.code(status).send({ error: "invalid_request" });
+      return sendError(reply, status, "invalid_request");
     }
     request.log.error({ err: error }, "internal error");
-    return reply.code(500).send({ error: "internal" });
+    return sendError(reply, 500, "internal");
   });
+  // Unknown routes answer in the same shape as everything else.
+  app.setNotFoundHandler((_request, reply) => sendError(reply, 404, "not_found"));
 
   // Browser pages may only call the brain from the Alicia app itself: the built app (file:// → "null")
   // or its dev server on this machine. Auth still relies on the device token; this only stops other sites.
@@ -88,17 +91,15 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
 
   app.post("/pairing", (request, reply) => {
     const body = PairingRequest.safeParse(request.body);
-    if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!body.success) return sendError(reply, 400, "invalid_request");
     const result = deps.pairing.redeem(body.data.code, body.data.deviceName);
-    if ("error" in result) {
-      return reply.code(result.error === "too_many_attempts" ? 429 : 401).send({ error: result.error });
-    }
+    if ("error" in result) return sendError(reply, result.error === "too_many_attempts" ? 429 : 401, result.error);
     return result;
   });
 
   app.get("/conversations", (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const list: ConversationSummary[] = deps.repository
       .list(person.id)
       .map((c) => ({ id: c.id, title: c.title, updatedAt: iso(c.updatedAt) }));
@@ -110,9 +111,9 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
 
   app.get<{ Params: { id: string } }>("/conversations/:id/messages", (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     if (deps.repository.get(request.params.id, person.id) === undefined) {
-      return reply.code(404).send({ error: "not_found" });
+      return sendError(reply, 404, "not_found");
     }
     const list: HistoryMessage[] = deps.repository
       .messages(request.params.id)
@@ -122,13 +123,13 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
 
   app.delete<{ Params: { id: string } }>("/conversations/:id", (request, reply) => {
     const person = personOf(request);
-    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const { id } = request.params;
     if (deps.repository.get(id, person.id) === undefined) {
-      return reply.code(404).send({ error: "not_found" });
+      return sendError(reply, 404, "not_found");
     }
     // Holding the turn lock while deleting: no turn can start on this conversation meanwhile.
-    if (!locks.acquire(person.id, id)) return reply.code(409).send({ error: "busy" });
+    if (!locks.acquire(person.id, id)) return sendError(reply, 409, "busy");
     try {
       deps.repository.delete(id, person.id);
     } finally {

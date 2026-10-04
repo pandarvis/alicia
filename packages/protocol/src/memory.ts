@@ -15,6 +15,10 @@ const memoryText = z.string().trim().min(1).max(1000);
 export const MemorySource = z.enum(["conversation", "manual", "import"]);
 export type MemorySource = z.infer<typeof MemorySource>;
 
+/** Why the brain refused to write a memory: it looked like a secret, or was empty once cleaned. */
+export const MemoryRefusalReason = z.enum(["secret", "empty"]);
+export type MemoryRefusalReason = z.infer<typeof MemoryRefusalReason>;
+
 export const MemorySummary = z.object({
   id: z.uuid(),
   scope: MemoryScope,

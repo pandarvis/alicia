@@ -1,8 +1,10 @@
+import { HttpErrorBody } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import { ConversationLocks } from "../src/server/conversation-locks.ts";
+import { errorBody } from "../src/server/http-errors.ts";
 import { createServer } from "../src/server/server.ts";
 import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
@@ -101,7 +103,7 @@ describe("HTTP server", () => {
       method: "POST", url: "/pairing", headers: { "content-type": "application/json" }, payload: "{not json",
     });
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({ error: "invalid_request" });
+    expect(res.json()).toEqual(errorBody("invalid_request"));
   });
 
   test("body too large → 413 invalid_request", async () => {
@@ -111,7 +113,7 @@ describe("HTTP server", () => {
       payload: JSON.stringify({ code: "123456", deviceName: "x".repeat(1_100_000) }),
     });
     expect(res.statusCode).toBe(413);
-    expect(res.json()).toEqual({ error: "invalid_request" });
+    expect(res.json()).toEqual(errorBody("invalid_request"));
   });
 
   test("exception in a route → 500 internal, without leaking the message", async () => {
@@ -124,7 +126,7 @@ describe("HTTP server", () => {
       method: "GET", url: "/conversations", headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(500);
-    expect(res.json()).toEqual({ error: "internal" });
+    expect(res.json()).toEqual(errorBody("internal"));
   });
 
   test("DELETE /conversations/:id → 204, then 404; 404 for another person; 401 without token", async () => {
@@ -160,11 +162,35 @@ describe("HTTP server", () => {
 
     const busy = await ctx.app.inject({ method: "DELETE", url: `/conversations/${c.id}`, headers });
     expect(busy.statusCode).toBe(409);
-    expect(busy.json()).toEqual({ error: "busy" });
+    expect(busy.json()).toEqual(errorBody("busy"));
     expect(ctx.repository.get(c.id, "kevin")).toBeDefined();
 
     ctx.locks.release("kevin", c.id);
     expect((await ctx.app.inject({ method: "DELETE", url: `/conversations/${c.id}`, headers })).statusCode).toBe(204);
+  });
+
+  test("every error answer follows the shared schema, unknown routes included", async () => {
+    const ctx = await createContext();
+    const token = await pair(ctx, "kevin");
+    const busy = ctx.repository.create("kevin", "Occupée");
+    expect(ctx.locks.acquire("kevin", busy.id)).toBe(true);
+    const answers = [
+      await ctx.app.inject({ method: "GET", url: "/conversations" }),
+      await ctx.app.inject({ method: "POST", url: "/pairing", payload: { code: "abc" } }),
+      await ctx.app.inject({ method: "POST", url: "/pairing", payload: { code: "000000", deviceName: "PC" } }),
+      await ctx.app.inject({ method: "GET", url: "/nowhere" }),
+      await ctx.app.inject({
+        method: "DELETE", url: `/conversations/${busy.id}`, headers: { authorization: `Bearer ${token}` },
+      }),
+    ];
+    expect(answers.map((a) => [a.statusCode, HttpErrorBody.parse(a.json()).error.code])).toEqual([
+      [401, "unauthenticated"],
+      [400, "invalid_request"],
+      [401, "invalid_code"],
+      [404, "not_found"],
+      [409, "busy"],
+    ]);
+    for (const a of answers) expect(HttpErrorBody.parse(a.json()).error.message).not.toBe("");
   });
 });
 
