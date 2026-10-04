@@ -1,0 +1,28 @@
+@import "@fontsource-variable/nunito";
+
+:root {
+  --night: #16213e;
+  --night-deep: #121a32;
+  --surface: #1e2a4a;
+  --surface-raised: #2a3a62;
+  --sage: #8fb9a8;
+  --cream: #f3ebdd;
+  --cream-muted: #cfc7b8;
+  --amber: #d9a45b;
+  --muted: #8a93ab;
+  --radius: 12px;
+  --duration: 180ms;
+  --titlebar-height: 40px;
+  color-scheme: dark;
+  font-family: "Nunito Variable", system-ui, sans-serif;
+  color: var(--cream);
+  background: var(--night);
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+button, input, textarea { font: inherit; color: inherit; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

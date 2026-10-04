@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client", "svelte"],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["src", "test", "e2e", "scripts", "*.config.ts"]
+}
