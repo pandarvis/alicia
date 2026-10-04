@@ -18,19 +18,46 @@ export interface DependancesServeur {
   version: string;
   /** Délai laissé au client pour s'authentifier (défaut 5 s ; réglable pour les tests). */
   delaiAuthentificationMs?: number;
+  /** Journal pino de Fastify (défaut : coupé, pour des tests silencieux). */
+  journal?: boolean;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
+/** Schéma « Bearer » insensible à la casse (RFC 7235). */
+const BEARER = /^bearer +(\S+)$/i;
+
+/** Statut 4xx porté par une erreur Fastify (JSON mal formé, corps trop gros…), sinon undefined. */
+function statutClient(erreur: unknown): number | undefined {
+  if (typeof erreur !== "object" || erreur === null || !("statusCode" in erreur)) return undefined;
+  const statut = erreur.statusCode;
+  return typeof statut === "number" && statut >= 400 && statut < 500 ? statut : undefined;
+}
+
 export async function creerServeur(deps: DependancesServeur): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false, bodyLimit: 1_048_576 });
+  const app = Fastify({
+    // Jamais l'en-tête Authorization dans le journal ; les corps et les messages n'y sont pas écrits.
+    logger: deps.journal === true ? { redact: ["req.headers.authorization"] } : false,
+    bodyLimit: 1_048_576,
+  });
+
+  // Aucune erreur ne fuit vers le client : 4xx → requete_invalide, le reste → interne (détail au journal).
+  app.setErrorHandler((erreur, requete, reponse) => {
+    const statut = statutClient(erreur);
+    if (statut !== undefined) {
+      requete.log.warn({ statut }, "requête refusée");
+      return reponse.code(statut).send({ erreur: "requete_invalide" });
+    }
+    requete.log.error({ err: erreur }, "erreur interne");
+    return reponse.code(500).send({ erreur: "interne" });
+  });
+
   // 128 Kio : le protocole plafonne les messages à 20 000 caractères.
   await app.register(websocket, { options: { maxPayload: 131_072 } });
 
   const personneDe = (requete: FastifyRequest): Personne | undefined => {
-    const entete = requete.headers.authorization;
-    if (entete?.startsWith("Bearer ") !== true) return undefined;
-    return deps.appairage.authentifier(entete.slice("Bearer ".length));
+    const jeton = BEARER.exec(requete.headers.authorization ?? "")?.[1];
+    return jeton === undefined ? undefined : deps.appairage.authentifier(jeton);
   };
 
   app.get("/sante", () => ({ ok: true as const, version: deps.version }));

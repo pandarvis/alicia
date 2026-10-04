@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { DepotConversations } from "../src/conversations/depot.ts";
 import { ServiceAppairage } from "../src/identites/appairage.ts";
 import { FauxMoteur } from "../src/moteur/faux-moteur.ts";
@@ -80,5 +80,46 @@ describe("serveur HTTP", () => {
     expect(rep.json()).toEqual([
       { id: expect.any(String) as string, role: "utilisateur", texte: "Bonjour", creeLe: "2026-10-04T13:30:00.000Z" },
     ]);
+  });
+
+  test("schéma Bearer insensible à la casse (RFC 7235)", async () => {
+    const ctx = await creerContexte();
+    const jeton = await appairer(ctx, "kevin");
+    const rep = await ctx.app.inject({
+      method: "GET", url: "/conversations", headers: { authorization: `bearer ${jeton}` },
+    });
+    expect(rep.statusCode).toBe(200);
+  });
+
+  test("JSON mal formé → 400 requete_invalide, sans détail interne", async () => {
+    const { app } = await creerContexte();
+    const rep = await app.inject({
+      method: "POST", url: "/appairage", headers: { "content-type": "application/json" }, payload: "{pas du json",
+    });
+    expect(rep.statusCode).toBe(400);
+    expect(rep.json()).toEqual({ erreur: "requete_invalide" });
+  });
+
+  test("corps trop gros → 413 requete_invalide", async () => {
+    const { app } = await creerContexte();
+    const rep = await app.inject({
+      method: "POST", url: "/appairage", headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ code: "123456", nomAppareil: "x".repeat(1_100_000) }),
+    });
+    expect(rep.statusCode).toBe(413);
+    expect(rep.json()).toEqual({ erreur: "requete_invalide" });
+  });
+
+  test("exception dans une route → 500 interne, sans fuite du message", async () => {
+    const ctx = await creerContexte();
+    const jeton = await appairer(ctx, "kevin");
+    vi.spyOn(ctx.depot, "lister").mockImplementation(() => {
+      throw new Error("détail secret de la base");
+    });
+    const rep = await ctx.app.inject({
+      method: "GET", url: "/conversations", headers: { authorization: `Bearer ${jeton}` },
+    });
+    expect(rep.statusCode).toBe(500);
+    expect(rep.json()).toEqual({ erreur: "interne" });
   });
 });

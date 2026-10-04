@@ -7,7 +7,7 @@ const DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS = 5000;
 const FERMETURE_NON_AUTHENTIFIE = 4401;
 const FERMETURE_ERREUR_INTERNE = 1011;
 
-function enTexte(donnees: RawData): string {
+export function enTexte(donnees: RawData): string {
   if (Buffer.isBuffer(donnees)) return donnees.toString("utf8");
   if (Array.isArray(donnees)) return Buffer.concat(donnees).toString("utf8");
   return Buffer.from(donnees).toString("utf8");
