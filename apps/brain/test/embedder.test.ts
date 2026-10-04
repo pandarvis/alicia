@@ -15,6 +15,9 @@ describe("vector helpers", () => {
     expect(cosine(new Float32Array([1, 0]), new Float32Array([1, 0]))).toBeCloseTo(1);
     expect(cosine(new Float32Array([1, 0]), new Float32Array([0, 1]))).toBeCloseTo(0);
   });
+  test("vectors of different sizes (different models) are refused", () => {
+    expect(() => cosine(new Float32Array(2), new Float32Array(3))).toThrow(/different embedding models/);
+  });
 });
 
 describe("FakeEmbedder", () => {

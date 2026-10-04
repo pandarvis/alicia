@@ -30,7 +30,11 @@ export class TransformersEmbedder implements Embedder {
   #load(): Promise<FeatureExtractionPipeline> {
     if (this.#extractor === null) {
       env.cacheDir = this.#cacheDir;
-      this.#extractor = pipeline("feature-extraction", MODEL, { dtype: "q8" });
+      this.#extractor = pipeline("feature-extraction", MODEL, { dtype: "q8" }).catch((error: unknown) => {
+        // A failed download must not stick: the next call tries again.
+        this.#extractor = null;
+        throw error;
+      });
     }
     return this.#extractor;
   }

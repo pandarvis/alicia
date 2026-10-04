@@ -15,11 +15,11 @@ export function fromBlob(blob: Buffer): Float32Array {
   return new Float32Array(bytes.buffer, 0, bytes.byteLength / Float32Array.BYTES_PER_ELEMENT);
 }
 
-/** Dot product: equals cosine similarity for normalized vectors. */
+/** Dot product: equals cosine similarity for normalized vectors. Vectors of different models never compare. */
 export function cosine(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) throw new Error(`Vector sizes differ (${a.length} vs ${b.length}): different embedding models`);
   let sum = 0;
-  const length = Math.min(a.length, b.length);
-  for (let i = 0; i < length; i++) sum += (a[i] ?? 0) * (b[i] ?? 0);
+  for (let i = 0; i < a.length; i++) sum += (a[i] ?? 0) * (b[i] ?? 0);
   return sum;
 }
 
