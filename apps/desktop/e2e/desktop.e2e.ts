@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   callHook, closeWindow, deferred, GREETING_EVENTS, launch, pair, POLL, recorded, secondInstance, send, startBrain,
@@ -66,4 +68,17 @@ test("an answer arriving while the window is hidden becomes a notification that 
   await callHook(app, "clickNotification", 0);
   await expect.poll(() => windowVisible(app, "main"), POLL).toBe(true);
   await expect.poll(() => page.getByTestId("message-assistant").count(), POLL).toBe(2);
+});
+
+test("a tray change that cannot be saved says so in a notification, and changes nothing", async () => {
+  const userData = tempDir("alicia-e2e-profile-");
+  // A folder where settings.json should be: the settings can be read (defaults) but never written.
+  mkdirSync(join(userData, "settings.json"));
+  const { app } = await launch(userData);
+  await callHook(app, "trayAction", "toggle-startup");
+  await expect.poll(async () => (await recorded(app)).notifications, POLL).toEqual([
+    { title: "Alicia", body: "Impossible d'enregistrer ce réglage pour l'instant." },
+  ]);
+  expect((await recorded(app)).loginItem).toBe(false);
+  expect((await recorded(app)).tray.find((item) => item.id === "toggle-startup")?.checked).toBe(false);
 });

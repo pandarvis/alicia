@@ -1,5 +1,5 @@
 import type { ServerEvent } from "@alicia/protocol";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ChatConnection, ConnectionStatus, type SocketLike, webSocketUrl,
 } from "../src/shared/chat-connection.ts";
@@ -41,7 +41,10 @@ interface Timer {
   cancelled: boolean;
 }
 
-function setup(onEvent?: (e: ServerEvent) => void, options: { closeFiresAtOnce?: boolean } = {}) {
+function setup(
+  onEvent?: (e: ServerEvent) => void,
+  options: { closeFiresAtOnce?: boolean; onStatus?: (s: ConnectionStatus) => void } = {},
+) {
   const sockets: FakeSocket[] = [];
   const allTimers: Timer[] = [];
   const events: ServerEvent[] = [];
@@ -65,7 +68,10 @@ function setup(onEvent?: (e: ServerEvent) => void, options: { closeFiresAtOnce?:
       events.push(e);
       onEvent?.(e);
     },
-    onStatus: (s) => statuses.push(s),
+    onStatus: (s) => {
+      statuses.push(s);
+      options.onStatus?.(s);
+    },
   });
   const timers = {
     /** Reconnect timers only. */
@@ -325,5 +331,27 @@ describe("ConnectionStatus", () => {
   test("the four states, validated at boundaries", () => {
     expect(ConnectionStatus.options).toEqual(["connecting", "ready", "offline", "rejected"]);
     expect(ConnectionStatus.safeParse("lost").success).toBe(false);
+  });
+});
+
+describe("ChatConnection with a faulty status consumer", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("a throwing status handler cannot stop the reconnection", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { connection, sockets, timers, statuses } = setup(undefined, {
+      onStatus: () => {
+        throw new Error("consumer broke");
+      },
+    });
+    connection.start();
+    sockets[0]?.receive(READY);
+    sockets[0]?.onclose?.(1006);
+    expect(statuses).toEqual(["connecting", "ready", "offline"]);
+    expect(timers.retries).toHaveLength(1);
+    timers.retries[0]?.run();
+    expect(sockets).toHaveLength(2);
   });
 });

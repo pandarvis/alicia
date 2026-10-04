@@ -133,8 +133,9 @@ describe("ChatStore", () => {
   });
 
   test("tool call shows an activity line, cleared by the text", () => {
-    const { store } = setup();
+    const { store, sent } = setup();
     store.send("Météo ?");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
     store.handle({ type: "tool_call", conversationId: CONV, callId: "t1", tool: "weather" });
     expect(store.activity).toBe("Alicia utilise l'outil « weather »…");
     expect(store.mascot).toBe("thinking");
@@ -149,15 +150,17 @@ describe("ChatStore", () => {
     ["memory_forget", "Alicia oublie ce souvenir…"],
     ["weather", "Alicia utilise l'outil « weather »…"],
   ])("tool %s → activity label", (tool, label) => {
-    const { store } = setup();
+    const { store, sent } = setup();
     store.send("x");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
     store.handle({ type: "tool_call", conversationId: CONV, callId: "t1", tool });
     expect(store.activity).toBe(label);
   });
 
   test("remembering gives the mascot an idea, other tools keep it thinking", () => {
-    const { store } = setup();
+    const { store, sent } = setup();
     store.send("Retiens ça");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
     store.handle({ type: "tool_call", conversationId: CONV, callId: "t1", tool: "memory_remember" });
     expect(store.mascot).toBe("idea");
     store.handle({ type: "tool_call", conversationId: CONV, callId: "t2", tool: "memory_search" });
@@ -308,6 +311,24 @@ describe("ChatStore", () => {
     expect(listConversations).toHaveBeenCalled();
     store.handle({ type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
     expect(history).toHaveBeenCalledTimes(2);
+  });
+
+  test("a new conversation started while another window's answer streams never shows that answer", () => {
+    const { store, sent } = setup();
+    store.send("Nouvelle question");
+    // The Holo's turn in another conversation, before this window's own conversation is known.
+    store.handle({ type: "text_delta", conversationId: CONV_B, text: "Intrus" });
+    store.handle({ type: "tool_call", conversationId: CONV_B, callId: "t", tool: "weather" });
+    store.handle({ type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
+    expect(store.messages.map((m) => m.text)).toEqual(["Nouvelle question"]);
+    expect([store.busy, store.activity]).toEqual([true, null]);
+    // Its own conversation arrives: from now on, its events count.
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
+    store.handle({ type: "text_delta", conversationId: CONV_B, text: "Encore" });
+    store.handle({ type: "text_delta", conversationId: CONV, text: "Réponse" });
+    store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
+    expect(store.messages.map((m) => m.text)).toEqual(["Nouvelle question", "Réponse"]);
+    expect(store.busy).toBe(false);
   });
 
   test("events for another conversation are ignored while busy", () => {

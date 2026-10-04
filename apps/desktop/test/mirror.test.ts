@@ -1,32 +1,39 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { mirror } from "../src/renderer/src/lib/mirror.ts";
+
+/** Lets pending promise callbacks run. */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function source<T>() {
   const listeners: ((value: T) => void)[] = [];
-  let resolve: (value: T) => void = () => undefined;
-  let reject: (error: Error) => void = () => undefined;
-  const loaded = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
+  const loads: { resolve: (value: T) => void; reject: (error: Error) => void }[] = [];
   return {
-    load: () => loaded,
+    load: () => new Promise<T>((resolve, reject) => {
+      loads.push({ resolve, reject });
+    }),
     subscribe: (listener: (value: T) => void) => {
       listeners.push(listener);
       return () => { listeners.splice(listeners.indexOf(listener), 1); };
     },
     push: (value: T) => { for (const listener of [...listeners]) listener(value); },
-    resolve, reject, listeners,
+    loads, listeners,
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("mirror", () => {
   test("applies the loaded value, then every push", async () => {
     const s = source<string>();
     const seen: string[] = [];
     mirror(s.load, s.subscribe, (value) => { seen.push(value); });
-    s.resolve("a");
-    await vi.waitFor(() => { expect(seen).toEqual(["a"]); });
+    s.loads[0]?.resolve("a");
+    await flush();
+    expect(seen).toEqual(["a"]);
     s.push("b");
     expect(seen).toEqual(["a", "b"]);
   });
@@ -36,18 +43,46 @@ describe("mirror", () => {
     const seen: string[] = [];
     mirror(s.load, s.subscribe, (value) => { seen.push(value); });
     s.push("fresh");
-    s.resolve("stale");
-    await Promise.resolve();
-    await Promise.resolve();
+    s.loads[0]?.resolve("stale");
+    await flush();
     expect(seen).toEqual(["fresh"]);
   });
 
-  test("returns the unsubscribe; a failed load is ignored", async () => {
+  test("a failed load is tried once more", async () => {
     const s = source<string>();
-    const off = mirror(s.load, s.subscribe, () => undefined);
-    s.reject(new Error("down"));
-    await Promise.resolve();
+    const seen: string[] = [];
+    mirror(s.load, s.subscribe, (value) => { seen.push(value); });
+    s.loads[0]?.reject(new Error("main process busy"));
+    await flush();
+    expect(s.loads).toHaveLength(2);
+    s.loads[1]?.resolve("a");
+    await flush();
+    expect(seen).toEqual(["a"]);
+  });
+
+  test("failing twice is logged; pushes still arrive; the unsubscribe is returned", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const s = source<string>();
+    const seen: string[] = [];
+    const off = mirror(s.load, s.subscribe, (value) => { seen.push(value); });
+    s.loads[0]?.reject(new Error("down"));
+    await flush();
+    s.loads[1]?.reject(new Error("still down"));
+    await flush();
+    expect(s.loads).toHaveLength(2);
+    expect(logged).toHaveBeenCalledOnce();
+    s.push("later");
+    expect(seen).toEqual(["later"]);
     off();
     expect(s.listeners).toHaveLength(0);
+  });
+
+  test("no retry once a push arrived", async () => {
+    const s = source<string>();
+    mirror(s.load, s.subscribe, () => undefined);
+    s.push("fresh");
+    s.loads[0]?.reject(new Error("down"));
+    await flush();
+    expect(s.loads).toHaveLength(1);
   });
 });

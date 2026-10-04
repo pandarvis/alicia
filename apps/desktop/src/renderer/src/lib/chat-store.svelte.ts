@@ -46,6 +46,8 @@ export class ChatStore {
 
   readonly #ports: ChatPorts;
   #pendingRequestId: string | null = null;
+  /** The conversation of this window's running turn, from its own `conversation` event. */
+  #turnConversationId: string | null = null;
   #cancelMascotReset: (() => void) | null = null;
   #loadToken = 0;
   #refreshToken = 0;
@@ -147,6 +149,7 @@ export class ChatStore {
         return;
       case "conversation":
         if (event.requestId !== this.#pendingRequestId) return;
+        this.#turnConversationId = event.conversationId;
         if (this.activeId === null) this.activeId = event.conversationId;
         void this.refreshConversations();
         return;
@@ -198,9 +201,12 @@ export class ChatStore {
     if (!this.busy && conversationId === this.activeId) void this.#loadHistory(conversationId);
   }
 
-  /** Turn events only count while a turn is pending and, once known, for the active conversation. */
+  /**
+   * Turn events only count while this window's turn is pending, and only for its conversation: in a new
+   * conversation, nothing counts before the brain named it (another window's answer may be streaming).
+   */
   #isCurrentTurn(conversationId: string): boolean {
-    return this.busy && (this.activeId === null || conversationId === this.activeId);
+    return this.busy && conversationId === (this.#turnConversationId ?? this.activeId);
   }
 
   /** Loads a history; only the latest load may assign messages or report an error. */
@@ -225,6 +231,7 @@ export class ChatStore {
     this.busy = false;
     this.activity = null;
     this.#pendingRequestId = null;
+    this.#turnConversationId = null;
   }
 
   /** Sets the mascot; with `resetAfterMs`, goes back to idle afterwards. */

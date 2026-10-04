@@ -17,6 +17,8 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
+      // A new event type or state must be handled everywhere it is switched on (an explicit `default` is a choice).
+      "@typescript-eslint/switch-exhaustiveness-check": ["error", { considerDefaultExhaustiveForUnions: true }],
     },
   },
   {

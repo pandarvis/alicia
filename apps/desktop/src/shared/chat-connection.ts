@@ -102,7 +102,7 @@ export class ChatConnection {
 
   #open(): void {
     this.#ready = false;
-    this.#options.onStatus("connecting");
+    this.#status("connecting");
     const socket = this.#options.openSocket(this.#options.url);
     this.#socket = socket;
     this.#cancelReadyTimeout = this.#options.schedule(() => {
@@ -125,6 +125,15 @@ export class ChatConnection {
       if (this.#socket !== socket) return;
       this.#closed(code);
     };
+  }
+
+  /** Reports a status; a faulty consumer must not stop the connection (nor its reconnection). */
+  #status(status: ConnectionStatus): void {
+    try {
+      this.#options.onStatus(status);
+    } catch {
+      console.error(`chat status handler failed (${status})`);
+    }
   }
 
   #clearReadyTimeout(): void {
@@ -166,7 +175,7 @@ export class ChatConnection {
       this.#clearReadyTimeout();
       this.#ready = true;
       this.#attempt = 0;
-      this.#options.onStatus("ready");
+      this.#status("ready");
       this.#watch(socket);
     }
     // Liveness only: nothing for the consumers.
@@ -186,10 +195,10 @@ export class ChatConnection {
     this.#socket = null;
     if (this.#stopped) return;
     if (code === DEVICE_REFUSED) {
-      this.#options.onStatus("rejected");
+      this.#status("rejected");
       return;
     }
-    this.#options.onStatus("offline");
+    this.#status("offline");
     const delay = Math.min(MAX_DELAY_MS, FIRST_DELAY_MS * 2 ** this.#attempt);
     this.#attempt++;
     this.#cancelRetry = this.#options.schedule(() => {

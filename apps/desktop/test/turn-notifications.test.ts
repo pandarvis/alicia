@@ -43,4 +43,17 @@ describe("notificationBody", () => {
     expect(long).toHaveLength(180);
     expect(long.endsWith("…")).toBe(true);
   });
+
+  test("only real Markdown goes: paired marks, line-start marks, links", () => {
+    expect(notificationBody("> Cite\n- un\n* deux\n1. trois\n## Fin")).toBe("Cite un deux trois Fin");
+    expect(notificationBody("Lis [la recette](https://exemple.fr) et ![photo](p.png) _vite_ ~~pas~~")).toBe("Lis la recette et photo vite pas");
+    expect(notificationBody("2 * 3 * 4 = 24, fichier_de_test.txt, C# et #42")).toBe("2 * 3 * 4 = 24, fichier_de_test.txt, C# et #42");
+  });
+
+  test("the cut never splits a character", () => {
+    const family = "👨‍👩‍👧";
+    // 181 characters as read: cut to 179, then the ellipsis.
+    const body = notificationBody(`${"a".repeat(178)}${family}${family}${family}`);
+    expect(body).toBe(`${"a".repeat(178)}${family}…`);
+  });
 });

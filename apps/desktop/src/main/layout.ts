@@ -13,6 +13,8 @@ export const HOLO_SIZE = { width: 136, height: 152 } as const;
 export const HOLO_PANEL = { width: 320, height: 420, gap: 8 } as const;
 export const SPOTLIGHT_SIZE = { width: 680, height: 120 } as const;
 const MARGIN = 24;
+/** Space kept on each side of the Spotlight bar on a narrow screen. */
+const SPOTLIGHT_MARGIN = 16;
 
 export interface HoloLayout {
   bounds: Rect;
@@ -37,6 +39,33 @@ export function clampAnchor(anchor: Point, workArea: Rect): Point {
   };
 }
 
+/** Squared distance from a point to a rectangle (0 inside). */
+function distanceSquared(point: Point, area: Rect): number {
+  const dx = Math.max(area.x - point.x, 0, point.x - (area.x + area.width));
+  const dy = Math.max(area.y - point.y, 0, point.y - (area.y + area.height));
+  return dx * dx + dy * dy;
+}
+
+/** The work area a point is on, else the nearest one (a monitor may have been unplugged); `primary` when none. */
+export function nearestWorkArea(point: Point, areas: readonly Rect[], primary: Rect): Rect {
+  let best = primary;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const area of areas) {
+    const distance = distanceSquared(point, area);
+    if (distance < bestDistance) {
+      best = area;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/** Where the collapsed Holo goes: its saved place, brought back onto a monitor that still exists, or the default. */
+export function holoAnchor(saved: Point | null, areas: readonly Rect[], primary: Rect): Point {
+  if (saved === null) return defaultAnchor(primary);
+  return clampAnchor(saved, nearestWorkArea(saved, areas, primary));
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
 }
@@ -59,9 +88,11 @@ export function holoLayout(anchor: Point, expanded: boolean, workArea: Rect): Ho
 
 /** The Spotlight bar: centred, a little above the middle of the screen under the pointer. */
 export function spotlightBounds(workArea: Rect): Rect {
+  const width = Math.max(0, Math.min(SPOTLIGHT_SIZE.width, workArea.width - 2 * SPOTLIGHT_MARGIN));
   return {
-    x: workArea.x + Math.round((workArea.width - SPOTLIGHT_SIZE.width) / 2),
+    x: workArea.x + Math.round((workArea.width - width) / 2),
     y: workArea.y + Math.round(workArea.height * 0.22),
-    ...SPOTLIGHT_SIZE,
+    width,
+    height: SPOTLIGHT_SIZE.height,
   };
 }

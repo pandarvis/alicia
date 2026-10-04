@@ -25,6 +25,11 @@ function isWebUrl(url: string): boolean {
   }
 }
 
+/** A window whose page can still receive messages (a closing window's contents may already be gone). */
+function isAlive(window: BrowserWindow): boolean {
+  return !window.isDestroyed() && !window.webContents.isDestroyed();
+}
+
 function secureWebPreferences(): WebPreferences {
   return { preload: PRELOAD, sandbox: true, contextIsolation: true, nodeIntegration: false };
 }
@@ -100,18 +105,35 @@ export class WindowManager {
     return undefined;
   }
 
+  /** The surfaces whose window is open (created and not destroyed). */
+  surfaces(): Surface[] {
+    return this.#main !== null && isAlive(this.#main) ? ["main"] : [];
+  }
+
+  /** Sends to one surface's window, if it is open. */
+  sendTo(surface: Surface, channel: string, payload?: unknown): void {
+    const window = this.#window(surface);
+    if (window !== null) window.webContents.send(channel, payload);
+  }
+
   /** Sends to every open window. */
   broadcast(channel: string, payload?: unknown): void {
     for (const window of this.#windows()) window.webContents.send(channel, payload);
   }
 
+  #window(surface: Surface): BrowserWindow | null {
+    const window = surface === "main" ? this.#main : null;
+    return window !== null && isAlive(window) ? window : null;
+  }
+
+  /** Shown, not minimized and in front: an answer arriving behind another app would go unseen. */
   #mainVisible(): boolean {
     const window = this.#main;
-    return window !== null && !window.isDestroyed() && window.isVisible() && !window.isMinimized();
+    return window !== null && isAlive(window) && window.isVisible() && !window.isMinimized() && window.isFocused();
   }
 
   #windows(): BrowserWindow[] {
-    return [this.#main].filter((window): window is BrowserWindow => window !== null && !window.isDestroyed());
+    return [this.#main].filter((window): window is BrowserWindow => window !== null && isAlive(window));
   }
 
   /** The app never navigates away nor opens windows; external links go to the browser. */

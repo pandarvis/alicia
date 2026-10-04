@@ -5,8 +5,10 @@ import { app, type IpcMainInvokeEvent, safeStorage, session } from "electron";
 import { PUSH } from "../shared/bridge.ts";
 import { openWebSocket } from "../shared/chat-connection.ts";
 import { type SaveSessionResult, StoredSession } from "../shared/session.ts";
+import type { SettingsPatch } from "../shared/settings.ts";
 import { BrainHub } from "./brain-hub.ts";
 import { electronOs } from "./electron-os.ts";
+import { eventRecipients } from "./event-routing.ts";
 import { registerIpc } from "./ipc.ts";
 import type { OsIntegration, TrayHandle } from "./os-integration.ts";
 import { Presence } from "./presence.ts";
@@ -38,6 +40,9 @@ if (!app.isPackaged && userDataOverride !== undefined) app.setPath("userData", u
 const osIntegrationOff = !app.isPackaged && process.env["ALICIA_OS_INTEGRATION"] === "off";
 /** Started by Windows at login (login item argument): stay in the notification area. */
 const startHidden = process.argv.includes("--hidden");
+
+/** Said in a Windows notification when a change from the tray menu could not be saved. */
+const SETTING_NOT_SAVED = "Impossible d'enregistrer ce réglage pour l'instant.";
 
 /** The dev server URL, only ever honoured when running unpackaged. */
 function devServerUrl(): string | undefined {
@@ -93,18 +98,22 @@ function start(): void {
   const hub = new BrainHub({
     openSocket: openWebSocket,
     schedule,
-    onEvent: (event) => {
-      windows.broadcast(PUSH.brainEvent, event);
+    onEvent: (event, owner) => {
+      // A turn's events only reach the window that asked (another one may be starting its own conversation).
+      for (const surface of eventRecipients(event, owner, windows.surfaces())) windows.sendTo(surface, PUSH.brainEvent, event);
       presence.event(event);
     },
     onStatus: (status) => {
       windows.broadcast(PUSH.brainStatus, status);
-      presence.status(status);
+      // Signed out on purpose: the closed connection is not a problem to show.
+      if (current === null) presence.signedOut();
+      else presence.status(status);
     },
-    onSent: () => {
-      presence.sent();
+    onSent: (_origin, pendingTurns) => {
+      presence.sent(pendingTurns);
     },
-    onTurnFinished: (turn) => {
+    onTurnFinished: (turn, pendingTurns) => {
+      presence.finished(turn, pendingTurns);
       const notification = notificationFor(turn, windows.visibility());
       if (notification === null) return;
       os.notify({
@@ -145,17 +154,28 @@ function start(): void {
     tray?.update(trayItems());
   }
 
+  /** A change asked from the tray menu; the menu has no room for an error, so a refusal is a notification. */
+  function updateFromTray(patch: SettingsPatch): void {
+    if (settings.update(patch).ok) return;
+    os.notify({
+      title: "Alicia",
+      body: SETTING_NOT_SAVED,
+      onClick: () => {
+        windows.showMain();
+      },
+    });
+  }
+
   function onTrayAction(action: TrayAction): void {
     switch (action) {
       case "open":
         windows.showMain();
         return;
       case "toggle-holo":
-        // A refused change (settings file locked) leaves the menu as it was.
-        settings.update({ showHolo: !settings.snapshot.settings.showHolo });
+        updateFromTray({ showHolo: !settings.snapshot.settings.showHolo });
         return;
       case "toggle-startup":
-        settings.update({ launchAtStartup: !settings.snapshot.settings.launchAtStartup });
+        updateFromTray({ launchAtStartup: !settings.snapshot.settings.launchAtStartup });
         return;
       case "install-update":
         // Offered once updates exist (task 15).

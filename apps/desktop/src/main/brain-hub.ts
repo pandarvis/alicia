@@ -1,22 +1,33 @@
-import type { SendMessage, ServerEvent } from "@alicia/protocol";
+import type { ErrorCode, SendMessage, ServerEvent } from "@alicia/protocol";
 import { ChatConnection, type ConnectionStatus, type SocketLike, webSocketUrl } from "../shared/chat-connection.ts";
 import type { Surface } from "../shared/surface.ts";
 
 /** How a turn ended, and which window asked for it (the notification depends on both). */
 export type FinishedTurn =
   | { origin: Surface; outcome: "answered"; conversationId: string; text: string }
-  | { origin: Surface; outcome: "failed"; conversationId: string | undefined; message: string };
+  | {
+    origin: Surface;
+    outcome: "failed";
+    conversationId: string | undefined;
+    message: string;
+    /** The brain's error code; none when the connection itself failed. */
+    code?: ErrorCode;
+  };
 
 export interface BrainHubPorts {
   openSocket(url: string): SocketLike;
   /** Runs `run` after `ms`; returns a cancel function. */
   schedule(run: () => void, ms: number): () => void;
-  /** Every event from the brain, already validated, for every window. */
-  onEvent(event: ServerEvent): void;
+  /**
+   * Every event from the brain, already validated. `owner`: the window whose turn the event belongs to;
+   * undefined for events of the whole connection (ready) and for events of no known turn.
+   */
+  onEvent(event: ServerEvent, owner: Surface | undefined): void;
   onStatus(status: ConnectionStatus): void;
-  /** A message left for the brain. */
-  onSent(origin: Surface): void;
-  onTurnFinished(turn: FinishedTurn): void;
+  /** A message left for the brain; `pendingTurns` counts it. */
+  onSent(origin: Surface, pendingTurns: number): void;
+  /** `pendingTurns`: the turns still running afterwards. */
+  onTurnFinished(turn: FinishedTurn, pendingTurns: number): void;
 }
 
 interface Turn {
@@ -30,13 +41,14 @@ const DEVICE_REFUSED = "Cet appareil a été déconnecté d'Alicia.";
 
 /**
  * The only connection from this PC to the brain, owned by the main process. Every window sends through it
- * and receives everything from it; the brain answers one turn at a time per connection, so one per PC.
+ * and receives from it; the brain answers one turn at a time per connection, so one per PC. The hub's own
+ * bookkeeping always happens before its consumers are called, and a failing consumer is logged, never fatal.
  */
 export class BrainHub {
   readonly #ports: BrainHubPorts;
   #connection: ChatConnection | null = null;
   #status: ConnectionStatus = "offline";
-  /** Turns waiting for their end, by request id. */
+  /** Turns waiting for their end, by request id, oldest first. */
   readonly #turns = new Map<string, Turn>();
 
   constructor(ports: BrainHubPorts) {
@@ -47,8 +59,9 @@ export class BrainHub {
     return this.#status;
   }
 
+  /** Connects to the paired brain; a previous connection is replaced without passing through "offline". */
   connect(session: { serverUrl: string; token: string }): void {
-    this.disconnect();
+    this.#teardown();
     const connection: ChatConnection = new ChatConnection({
       url: webSocketUrl(session.serverUrl),
       token: session.token,
@@ -67,78 +80,138 @@ export class BrainHub {
 
   /** Signed out: the connection closes and pending turns are forgotten (no notification). */
   disconnect(): void {
+    if (this.#teardown()) this.#setStatus("offline");
+  }
+
+  /** False when not connected, or when this request id is already pending. */
+  send(message: SendMessage, origin: Surface): boolean {
+    if (this.#turns.has(message.requestId)) return false;
+    if (this.#connection?.send(message) !== true) return false;
+    this.#turns.set(message.requestId, { origin, conversationId: message.conversationId, text: "" });
+    const pending = this.#turns.size;
+    this.#safely("onSent", () => {
+      this.#ports.onSent(origin, pending);
+    });
+    return true;
+  }
+
+  /** Stops the current connection and forgets its turns; true when there was one. */
+  #teardown(): boolean {
     const connection = this.#connection;
-    if (connection === null) return;
+    if (connection === null) return false;
     this.#connection = null;
     connection.stop();
     this.#turns.clear();
-    this.#setStatus("offline");
-  }
-
-  send(message: SendMessage, origin: Surface): boolean {
-    if (this.#connection?.send(message) !== true) return false;
-    this.#turns.set(message.requestId, { origin, conversationId: message.conversationId, text: "" });
-    this.#ports.onSent(origin);
     return true;
   }
 
   #receive(event: ServerEvent): void {
-    this.#ports.onEvent(event);
+    // Bookkeeping first: which turn the event belongs to, and whether it ends it.
+    let requestId: string | undefined;
+    let finished: FinishedTurn | null = null;
     switch (event.type) {
       case "conversation": {
         const turn = this.#turns.get(event.requestId);
-        if (turn !== undefined) turn.conversationId = event.conversationId;
-        return;
+        if (turn !== undefined) {
+          turn.conversationId = event.conversationId;
+          requestId = event.requestId;
+        }
+        break;
       }
       case "text_delta": {
-        const found = this.#find(event.conversationId);
-        if (found !== undefined) found[1].text += event.text;
-        return;
+        requestId = this.#find(event.conversationId);
+        const turn = requestId === undefined ? undefined : this.#turns.get(requestId);
+        if (turn !== undefined) turn.text += event.text;
+        break;
       }
+      case "tool_call":
+      case "tool_result":
+        requestId = this.#find(event.conversationId);
+        break;
       case "done": {
-        const found = this.#find(event.conversationId);
-        if (found === undefined) return;
-        const [requestId, turn] = found;
-        this.#finish(requestId, { origin: turn.origin, outcome: "answered", conversationId: event.conversationId, text: turn.text });
-        return;
+        requestId = this.#find(event.conversationId);
+        const turn = requestId === undefined ? undefined : this.#turns.get(requestId);
+        if (turn !== undefined) {
+          finished = { origin: turn.origin, outcome: "answered", conversationId: event.conversationId, text: turn.text };
+        }
+        break;
       }
       case "error": {
-        const requestId = event.requestId ?? (event.conversationId === undefined ? undefined : this.#find(event.conversationId)?.[0]);
+        requestId = this.#errorTurn(event);
         const turn = requestId === undefined ? undefined : this.#turns.get(requestId);
-        if (requestId === undefined || turn === undefined) return;
-        this.#finish(requestId, {
-          origin: turn.origin, outcome: "failed", conversationId: event.conversationId ?? turn.conversationId, message: event.message,
-        });
-        return;
+        if (turn !== undefined) {
+          finished = {
+            origin: turn.origin,
+            outcome: "failed",
+            conversationId: event.conversationId ?? turn.conversationId,
+            message: event.message,
+            code: event.code,
+          };
+        }
+        break;
       }
       case "heartbeat":
       case "ready":
-      case "tool_call":
-      case "tool_result":
-        return;
+        break;
     }
+    const owner = requestId === undefined ? undefined : this.#turns.get(requestId)?.origin;
+    if (finished !== null && requestId !== undefined) this.#turns.delete(requestId);
+    const pending = this.#turns.size;
+
+    this.#safely("onEvent", () => {
+      this.#ports.onEvent(event, owner);
+    });
+    if (finished !== null) this.#report(finished, pending);
   }
 
-  /** The oldest pending turn of a conversation (a refused second send in the same conversation comes after it). */
-  #find(conversationId: string): [string, Turn] | undefined {
-    for (const entry of this.#turns) {
-      if (entry[1].conversationId === conversationId) return entry;
+  /**
+   * The turn an error ends: by request id, else by conversation, else (no id at all) the oldest turn still
+   * waiting for its conversation; undefined when none matches (the error is then nobody's).
+   */
+  #errorTurn(event: Extract<ServerEvent, { type: "error" }>): string | undefined {
+    if (event.requestId !== undefined) return this.#turns.has(event.requestId) ? event.requestId : undefined;
+    if (event.conversationId !== undefined) return this.#find(event.conversationId);
+    for (const [requestId, turn] of this.#turns) {
+      if (turn.conversationId === undefined) return requestId;
     }
     return undefined;
   }
 
-  #finish(requestId: string, turn: FinishedTurn): void {
-    this.#turns.delete(requestId);
-    this.#ports.onTurnFinished(turn);
+  /** The oldest pending turn of a conversation (a refused second send in the same conversation comes after it). */
+  #find(conversationId: string): string | undefined {
+    for (const [requestId, turn] of this.#turns) {
+      if (turn.conversationId === conversationId) return requestId;
+    }
+    return undefined;
+  }
+
+  #report(turn: FinishedTurn, pending: number): void {
+    this.#safely("onTurnFinished", () => {
+      this.#ports.onTurnFinished(turn, pending);
+    });
   }
 
   #setStatus(status: ConnectionStatus): void {
     this.#status = status;
-    this.#ports.onStatus(status);
-    if (status !== "offline" && status !== "rejected") return;
-    const message = status === "rejected" ? DEVICE_REFUSED : CONNECTION_LOST;
-    for (const [requestId, turn] of [...this.#turns]) {
-      this.#finish(requestId, { origin: turn.origin, outcome: "failed", conversationId: turn.conversationId, message });
+    const lost: FinishedTurn[] = [];
+    if (status === "offline" || status === "rejected") {
+      const message = status === "rejected" ? DEVICE_REFUSED : CONNECTION_LOST;
+      for (const turn of this.#turns.values()) {
+        lost.push({ origin: turn.origin, outcome: "failed", conversationId: turn.conversationId, message });
+      }
+      this.#turns.clear();
+    }
+    this.#safely("onStatus", () => {
+      this.#ports.onStatus(status);
+    });
+    for (const turn of lost) this.#report(turn, 0);
+  }
+
+  #safely(port: string, run: () => void): void {
+    try {
+      run();
+    } catch (error) {
+      console.error(`brain hub: ${port} failed`, error);
     }
   }
 }
