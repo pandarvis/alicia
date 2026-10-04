@@ -125,3 +125,32 @@ describe("HTTP server", () => {
     expect(res.json()).toEqual({ error: "internal" });
   });
 });
+
+describe("CORS: only the Alicia app may call the brain from a browser page", () => {
+  const preflight = (origin: string) => ({
+    method: "OPTIONS" as const,
+    url: "/pairing",
+    headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type" },
+  });
+
+  test.each(["http://localhost:5173", "http://127.0.0.1:5173", "null"])("allowed origin %s", async (origin) => {
+    const { app } = await createContext();
+    const response = await app.inject(preflight(origin));
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe(origin);
+  });
+
+  test.each(["https://evil.example", "http://localhost.evil.example", "http://192.168.1.50:5173"])(
+    "refused origin %s",
+    async (origin) => {
+      const { app } = await createContext();
+      const response = await app.inject(preflight(origin));
+      expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+    },
+  );
+
+  test("requests without Origin (CLI, curl) still work", async () => {
+    const { app } = await createContext();
+    expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+  });
+});

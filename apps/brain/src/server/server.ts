@@ -1,3 +1,4 @@
+import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import {
   type ConversationSummary,
@@ -12,6 +13,13 @@ import type { PairingService } from "../identity/pairing.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
 import { registerMemoryRoutes } from "./memory-routes.ts";
 import { attachWs } from "./ws.ts";
+
+const APP_DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
+
+/** Origins of the Alicia desktop app: the packaged app (file://, sent as "null") and its local dev server. */
+export function isAppOrigin(origin: string | undefined): boolean {
+  return origin === undefined || origin === "null" || APP_DEV_ORIGIN.test(origin);
+}
 
 export interface ServerDependencies {
   pairing: PairingService;
@@ -52,6 +60,15 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     }
     request.log.error({ err: error }, "internal error");
     return reply.code(500).send({ error: "internal" });
+  });
+
+  // Browser pages may only call the brain from the Alicia app itself: the built app (file:// → "null")
+  // or its dev server on this machine. Auth still relies on the device token; this only stops other sites.
+  await app.register(cors, {
+    origin: (origin, callback) => {
+      callback(null, isAppOrigin(origin));
+    },
+    methods: ["GET", "POST", "PATCH", "DELETE"],
   });
 
   // 128 KiB: the protocol caps messages at 20,000 characters.
