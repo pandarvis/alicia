@@ -1,6 +1,7 @@
 import { ClientMessage, type Person, type ServerEvent } from "@alicia/protocol";
 import type { RawData, WebSocket } from "ws";
 import { handleSend } from "../conversations/chat-service.ts";
+import { DEFAULT_DRAIN, waitForDrain } from "./backpressure.ts";
 import type { ConversationLocks } from "./conversation-locks.ts";
 import type { ServerDependencies } from "./server.ts";
 
@@ -8,6 +9,7 @@ const DEFAULT_AUTH_TIMEOUT_MS = 5000;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const CLOSE_UNAUTHENTICATED = 4401;
 const CLOSE_INTERNAL_ERROR = 1011;
+const CLOSE_TRY_AGAIN_LATER = 1013;
 
 export function toText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
@@ -129,6 +131,13 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
             locked = e.conversationId;
           }
           send(e);
+          // Backpressure: reading the engine pauses while the app catches up; an app that stays behind
+          // (or is gone) ends the turn instead of growing the buffer without limit. It reconnects and resyncs.
+          if (!(await waitForDrain(socket, deps.drain ?? DEFAULT_DRAIN))) {
+            turn.abort();
+            if (socket.readyState === socket.OPEN) socket.close(CLOSE_TRY_AGAIN_LATER, "client too slow");
+            break;
+          }
         }
       } catch {
         send({ type: "error", requestId: message.requestId, code: "internal", message: "Erreur interne." });

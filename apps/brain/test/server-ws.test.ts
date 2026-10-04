@@ -7,6 +7,7 @@ import { ConversationRepository } from "../src/conversations/repository.ts";
 import type { Engine, EngineEvent } from "../src/engine/engine.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
+import type { DrainOptions } from "../src/server/backpressure.ts";
 import { createServer } from "../src/server/server.ts";
 import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
@@ -25,6 +26,7 @@ interface StartOptions {
   authTimeoutMs?: number;
   allowedOrigins?: readonly string[];
   heartbeatMs?: number;
+  drain?: DrainOptions;
 }
 
 async function start(options: StartOptions = {}) {
@@ -50,6 +52,7 @@ async function start(options: StartOptions = {}) {
       : { authTimeoutMs: options.authTimeoutMs }),
     ...(options.allowedOrigins === undefined ? {} : { allowedOrigins: options.allowedOrigins }),
     ...(options.heartbeatMs === undefined ? {} : { heartbeatMs: options.heartbeatMs }),
+    ...(options.drain === undefined ? {} : { drain: options.drain }),
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
@@ -128,6 +131,20 @@ describe("WebSocket", () => {
       ws.send(JSON.stringify({ type: "authenticate", token }));
     });
     expect(await closed).toBe(1006);
+  });
+
+  test("an app that does not drain its buffer: the turn stops and the connection closes with 1013", async () => {
+    // A negative high-water mark makes every send look congested; a zero timeout gives up at once.
+    const { url, token } = await start({
+      drain: { highWaterBytes: -1, timeoutMs: 0, pollMs: 1, wait: () => Promise.resolve() },
+    });
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Salut" }));
+    expect(await c.closed).toBe(1013);
+    expect(c.received.some((e) => e.type === "done")).toBe(false);
   });
 
   test("authentication then a full conversation", async () => {

@@ -10,6 +10,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { ChatDependencies } from "../conversations/chat-service.ts";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { PairingService } from "../identity/pairing.ts";
+import type { DrainOptions } from "./backpressure.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
 import { FailureLimiter } from "./failure-limiter.ts";
 import { sendError } from "./http-errors.ts";
@@ -49,6 +50,8 @@ export interface ServerDependencies {
   allowedOrigins?: readonly string[];
   /** Heartbeat period of the WebSocket (default 30 s; shortened by tests). */
   heartbeatMs?: number;
+  /** WebSocket backpressure settings (default DEFAULT_DRAIN; adjusted by tests). */
+  drain?: DrainOptions;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
