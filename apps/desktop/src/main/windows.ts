@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, shell, type WebContents, type WebPreferences } from "electron";
+import { PUSH } from "../shared/bridge.ts";
 import type { Surface } from "../shared/surface.ts";
+import type { Visibility } from "./turn-notifications.ts";
 
 const PRELOAD = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
 
@@ -31,6 +33,7 @@ function secureWebPreferences(): WebPreferences {
 export class WindowManager {
   readonly #options: WindowManagerOptions;
   #main: BrowserWindow | null = null;
+  #quitting = false;
 
   constructor(options: WindowManagerOptions) {
     this.#options = options;
@@ -49,6 +52,12 @@ export class WindowManager {
       titleBarOverlay: { color: "#121a32", symbolColor: "#f3ebdd", height: 40 },
       webPreferences: secureWebPreferences(),
     });
+    // Closing the window keeps Alicia running in the notification area.
+    window.on("close", (event) => {
+      if (this.#quitting) return;
+      event.preventDefault();
+      window.hide();
+    });
     if (options.show) {
       window.once("ready-to-show", () => {
         window.show();
@@ -57,6 +66,31 @@ export class WindowManager {
     this.#harden(window);
     this.#load(window, "main");
     this.#main = window;
+  }
+
+  /** Quitting for real (tray, update, Windows shutting down): windows may now close. */
+  prepareQuit(): void {
+    this.#quitting = true;
+  }
+
+  /** Brings the main window forward (second launch, tray, notification click). */
+  showMain(): void {
+    const window = this.#main;
+    if (window === null || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  }
+
+  /** Asks the main window to show a conversation (it is already shown by then). */
+  openConversation(conversationId: string): void {
+    const window = this.#main;
+    if (window !== null && !window.isDestroyed()) window.webContents.send(PUSH.openConversation, conversationId);
+  }
+
+  /** What the person can see right now (decides notifications). */
+  visibility(): Visibility {
+    return { main: this.#mainVisible(), holoChat: false };
   }
 
   /** Which of our windows sent an IPC message (undefined: not one of ours). */
@@ -69,6 +103,11 @@ export class WindowManager {
   /** Sends to every open window. */
   broadcast(channel: string, payload?: unknown): void {
     for (const window of this.#windows()) window.webContents.send(channel, payload);
+  }
+
+  #mainVisible(): boolean {
+    const window = this.#main;
+    return window !== null && !window.isDestroyed() && window.isVisible() && !window.isMinimized();
   }
 
   #windows(): BrowserWindow[] {

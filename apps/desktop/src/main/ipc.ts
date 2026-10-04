@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { SendMessage } from "@alicia/protocol";
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { z } from "zod";
 import { INVOKE } from "../shared/bridge.ts";
 import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
@@ -49,5 +49,13 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.presenceGet, NONE, () => deps.presence.mood);
   handle(INVOKE.presenceTyping, NONE, () => {
     deps.presence.typing();
+  });
+  handle(INVOKE.appVersion, NONE, () => app.getVersion());
+  handle(INVOKE.showMain, NONE, () => {
+    deps.windows.showMain();
+  });
+  handle(INVOKE.openConversation, z.uuid(), (conversationId) => {
+    deps.windows.showMain();
+    deps.windows.openConversation(conversationId);
   });
 }

@@ -125,6 +125,10 @@
   onMount(() => {
     hub.start();
     void store.refreshConversations();
+    // A notification or the Holo asks for a conversation.
+    return window.alicia.app.onOpenConversation((conversationId) => {
+      openConversation(conversationId);
+    });
   });
   onDestroy(() => {
     hub.stop();

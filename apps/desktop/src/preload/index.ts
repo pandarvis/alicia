@@ -60,6 +60,12 @@ const bridge: AliciaBridge = {
       void ipcRenderer.invoke(INVOKE.presenceTyping).catch(() => undefined);
     },
   },
+  app: {
+    version: () => call(z.string(), INVOKE.appVersion),
+    showMain: () => call(z.undefined(), INVOKE.showMain),
+    openConversation: (conversationId) => call(z.undefined(), INVOKE.openConversation, conversationId),
+    onOpenConversation: (listener) => subscribe(PUSH.openConversation, z.uuid(), listener),
+  },
 };
 
 contextBridge.exposeInMainWorld("alicia", bridge);
