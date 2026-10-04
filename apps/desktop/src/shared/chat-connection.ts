@@ -1,6 +1,8 @@
 import { type SendMessage, ServerEvent } from "@alicia/protocol";
+import { z } from "zod";
 
-export type ConnectionStatus = "connecting" | "ready" | "offline" | "rejected";
+export const ConnectionStatus = z.enum(["connecting", "ready", "offline", "rejected"]);
+export type ConnectionStatus = z.infer<typeof ConnectionStatus>;
 
 /** The few WebSocket features we use, so tests can drive a fake. */
 export interface SocketLike {
@@ -31,8 +33,8 @@ const READY_TIMEOUT_CLOSE = 4000;
 const HEARTBEAT_TIMEOUT_MS = 75_000;
 const HEARTBEAT_TIMEOUT_CLOSE = 4001;
 
-/** Adapter from the browser WebSocket to SocketLike. */
-export function browserSocket(url: string): SocketLike {
+/** Adapter from the standard WebSocket (renderer pages, and Electron's main process on Node 24) to SocketLike. */
+export function openWebSocket(url: string): SocketLike {
   const ws = new WebSocket(url);
   const socket: SocketLike = {
     send: (data) => {
@@ -51,6 +53,11 @@ export function browserSocket(url: string): SocketLike {
   };
   ws.onclose = (event) => socket.onclose?.(event.code);
   return socket;
+}
+
+/** Takes an already-normalized server URL. */
+export function webSocketUrl(serverUrl: string): string {
+  return `${serverUrl.replace(/^http/i, "ws")}/ws`;
 }
 
 export class ChatConnection {

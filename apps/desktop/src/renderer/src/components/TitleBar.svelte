@@ -4,7 +4,7 @@
   import MessageCircle from "@lucide/svelte/icons/message-circle";
   import { fade } from "svelte/transition";
   import { motion } from "../lib/motion.ts";
-  import type { ConnectionStatus } from "../lib/chat-connection.ts";
+  import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
 
   let { title, personName, status, sidebarOpen, onToggleSidebar }: {
     title: string;

@@ -4,8 +4,8 @@
   import type { ServerEvent } from "@alicia/protocol";
   import type { StoredSession } from "../../../shared/session.ts";
   import type { AppView } from "../lib/app-view.ts";
-  import { BrainApi, UnauthorizedError, webSocketUrl } from "../lib/brain-client.ts";
-  import { browserSocket, ChatConnection, type ConnectionStatus } from "../lib/chat-connection.ts";
+  import { BrainApi, UnauthorizedError } from "../lib/brain-client.ts";
+  import { ChatConnection, type ConnectionStatus, openWebSocket, webSocketUrl } from "../../../shared/chat-connection.ts";
   import { ChatStore } from "../lib/chat-store.svelte.ts";
   import { MemoryScreen } from "../lib/memory-screen.svelte.ts";
   import { motion } from "../lib/motion.ts";
@@ -89,7 +89,7 @@
   const connection = new ChatConnection({
     url: webSocketUrl(initialSession.serverUrl),
     token: initialSession.token,
-    openSocket: browserSocket,
+    openSocket: openWebSocket,
     schedule,
     onEvent: handleEvent,
     onStatus: handleStatus,

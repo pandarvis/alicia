@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  BrainApi, normalizeServerUrl, pair, UnauthorizedError, webSocketUrl,
+  BrainApi, normalizeServerUrl, pair, UnauthorizedError,
 } from "../src/renderer/src/lib/brain-client.ts";
 
 const CONVERSATION_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
@@ -51,11 +51,6 @@ describe("server URL", () => {
     expect(normalizeServerUrl("ftp://x")).toBeNull();
     expect(normalizeServerUrl("http://")).toBeNull();
     expect(normalizeServerUrl("")).toBeNull();
-  });
-  test("derives the WebSocket URL", () => {
-    expect(webSocketUrl("http://127.0.0.1:8780")).toBe("ws://127.0.0.1:8780/ws");
-    expect(webSocketUrl("https://alicia.ts.net")).toBe("wss://alicia.ts.net/ws");
-    expect(webSocketUrl("https://host/alicia")).toBe("wss://host/alicia/ws");
   });
 });
 

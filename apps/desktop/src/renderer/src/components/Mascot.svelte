@@ -1,6 +1,6 @@
 <script lang="ts">
   import { MASCOT_IMAGES } from "../lib/mascot-images.ts";
-  import { MASCOT_STATES, type MascotState } from "../lib/mascot.ts";
+  import { MASCOT_STATES, type MascotState } from "../../../shared/mascot.ts";
 
   let { mood, size = 128 }: { mood: MascotState; size?: number } = $props();
 </script>

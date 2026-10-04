@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { MASCOT_SOURCE_FILES, MASCOT_STATES } from "../src/renderer/src/lib/mascot.ts";
+import { MASCOT_SOURCE_FILES, MASCOT_STATES } from "../src/shared/mascot.ts";
 
 const SOURCE_DIR = fileURLToPath(new URL("../../../design/mascotte/papier-decoupe/v2/", import.meta.url));
 const OUTPUT_DIR = fileURLToPath(new URL("../src/renderer/src/assets/mascot/", import.meta.url));

@@ -1,7 +1,7 @@
 import type {
-  ConversationSummary, ErrorCode, HistoryMessage, SendMessage, ServerEvent,
+  ConversationSummary, HistoryMessage, SendMessage, ServerEvent,
 } from "@alicia/protocol";
-import type { MascotState } from "./mascot.ts";
+import { MASCOT_ON_ERROR, type MascotState } from "../../../shared/mascot.ts";
 import { toolActivity } from "./tool-labels.ts";
 
 export interface ChatMessage {
@@ -23,12 +23,6 @@ export interface ChatPorts {
 
 const SUCCESS_MS = 1500;
 const ALERT_MS = 2000;
-const MASCOT_ON_ERROR: Partial<Record<ErrorCode, MascotState>> = {
-  quota: "sleeping",
-  busy: "alert",
-  engine: "error",
-  internal: "error",
-};
 
 type TurnEvent = Extract<ServerEvent, { type: "text_delta" | "tool_call" | "tool_result" | "done" }>;
 

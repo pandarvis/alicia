@@ -51,11 +51,6 @@ export function normalizeServerUrl(raw: string): string | null {
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
-/** Takes an already-normalized server URL. */
-export function webSocketUrl(serverUrl: string): string {
-  return `${serverUrl.replace(/^http/i, "ws")}/ws`;
-}
-
 const FAILURE_BY_STATUS: Readonly<Record<number, PairingFailure>> = {
   400: "invalid_request",
   401: "invalid_code",

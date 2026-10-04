@@ -1,8 +1,8 @@
 import type { ServerEvent } from "@alicia/protocol";
 import { describe, expect, test } from "vitest";
 import {
-  ChatConnection, type ConnectionStatus, type SocketLike,
-} from "../src/renderer/src/lib/chat-connection.ts";
+  ChatConnection, ConnectionStatus, type SocketLike, webSocketUrl,
+} from "../src/shared/chat-connection.ts";
 
 const TOKEN = "t".repeat(43);
 const READY_TIMEOUT_MS = 15_000;
@@ -310,5 +310,20 @@ describe("ChatConnection", () => {
     sockets.at(-1)?.receive(READY);
     connection.stop();
     expect(timers.heartbeats.every((t) => t.cancelled)).toBe(true);
+  });
+});
+
+describe("webSocketUrl", () => {
+  test("derives the WebSocket URL", () => {
+    expect(webSocketUrl("http://127.0.0.1:8780")).toBe("ws://127.0.0.1:8780/ws");
+    expect(webSocketUrl("https://alicia.ts.net")).toBe("wss://alicia.ts.net/ws");
+    expect(webSocketUrl("https://host/alicia")).toBe("wss://host/alicia/ws");
+  });
+});
+
+describe("ConnectionStatus", () => {
+  test("the four states, validated at boundaries", () => {
+    expect(ConnectionStatus.options).toEqual(["connecting", "ready", "offline", "rejected"]);
+    expect(ConnectionStatus.safeParse("lost").success).toBe(false);
   });
 });

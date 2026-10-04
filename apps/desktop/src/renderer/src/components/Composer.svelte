@@ -1,7 +1,7 @@
 <script lang="ts">
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import { untrack } from "svelte";
-  import type { ConnectionStatus } from "../lib/chat-connection.ts";
+  import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
 
   let { store, status }: { store: ChatStore; status: ConnectionStatus } = $props();

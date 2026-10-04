@@ -7,7 +7,7 @@ import sleepingUrl from "../assets/mascot/sleeping.webp";
 import speakingUrl from "../assets/mascot/speaking.webp";
 import successUrl from "../assets/mascot/success.webp";
 import thinkingUrl from "../assets/mascot/thinking.webp";
-import type { MascotState } from "./mascot.ts";
+import type { MascotState } from "../../../shared/mascot.ts";
 
 export const MASCOT_IMAGES: Readonly<Record<MascotState, string>> = {
   idle: idleUrl,
