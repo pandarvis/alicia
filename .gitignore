@@ -3,4 +3,4 @@ node_modules/
 design/mascotte/references/
 .env
 apps/brain/alicia.config.yaml
-apps/brain/donnees/
+apps/brain/data/

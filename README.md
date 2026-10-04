@@ -5,33 +5,33 @@ Spec : `docs/superpowers/specs/2026-10-04-alicia-socle-design.md`.
 
 ## Prérequis
 - Node (dernière LTS), pnpm (`corepack enable`)
-- Pour le mode abonnement : `claude setup-token` (Claude Code) pour obtenir le jeton
+- Pour le mode subscription : `claude setup-token` (Claude Code) pour obtenir le jeton
 
 ## Installation
 ```bash
 pnpm install
-cp apps/cerveau/alicia.config.example.yaml apps/cerveau/alicia.config.yaml
-cp apps/cerveau/.env.example apps/cerveau/.env   # puis renseigner le secret du mode choisi
+cp apps/brain/alicia.config.example.yaml apps/brain/alicia.config.yaml
+cp apps/brain/.env.example apps/brain/.env   # puis renseigner le secret du mode choisi
 ```
 
 ## Commandes (depuis la racine)
 ```bash
 pnpm test && pnpm typecheck && pnpm lint
-pnpm --filter @alicia/cerveau alicia                     # aide
-pnpm --filter @alicia/cerveau alicia demarrer            # Ctrl+C : arrêt propre
-pnpm --filter @alicia/cerveau alicia appairer kevin
-pnpm --filter @alicia/cerveau alicia discuter --code 123456
-pnpm --filter @alicia/cerveau alicia appareils           # appareils appairés (id, personne, dates)
-pnpm --filter @alicia/cerveau alicia revoquer <id>       # coupe un appareil, même connecté
-pnpm --filter @alicia/cerveau alicia verifier-moteur
+pnpm --filter @alicia/brain alicia                     # aide
+pnpm --filter @alicia/brain alicia start               # Ctrl+C : arrêt propre
+pnpm --filter @alicia/brain alicia pair kevin
+pnpm --filter @alicia/brain alicia chat --code 123456
+pnpm --filter @alicia/brain alicia devices             # appareils appairés (id, personne, dates)
+pnpm --filter @alicia/brain alicia revoke <id>         # coupe un appareil, même connecté
+pnpm --filter @alicia/brain alicia check-engine
 ```
-Les commandes s'exécutent dans `apps/cerveau` : la config y est lue
+Les commandes s'exécutent dans `apps/brain` : la config y est lue
 (`alicia.config.yaml`, ou le chemin donné par `ALICIA_CONFIG`).
 Les secrets sont lus dans l'environnement (pas de chargement automatique de `.env`) :
 - soit exporter les variables avant la commande (Git Bash) :
-  `set -a; source apps/cerveau/.env; set +a`
+  `set -a; source apps/brain/.env; set +a`
 - soit lancer `tsx` directement avec l'option Node `--env-file` (le script `alicia` ne la
-  transmet pas) : `cd apps/cerveau && pnpm exec tsx --env-file=.env src/cli.ts demarrer`.
+  transmet pas) : `cd apps/brain && pnpm exec tsx --env-file=.env src/cli.ts start`.
 
 ## Vérification réelle (manuelle, consomme un peu de quota)
 
@@ -39,21 +39,21 @@ Les secrets sont lus dans l'environnement (pas de chargement automatique de `.en
 
 1. Préparer la config et le jeton :
    ```bash
-   cp apps/cerveau/alicia.config.example.yaml apps/cerveau/alicia.config.yaml
+   cp apps/brain/alicia.config.example.yaml apps/brain/alicia.config.yaml
    claude setup-token
    ```
-   Copier le jeton affiché dans `apps/cerveau/.env` (`CLAUDE_CODE_OAUTH_TOKEN=...`), puis :
+   Copier le jeton affiché dans `apps/brain/.env` (`CLAUDE_CODE_OAUTH_TOKEN=...`), puis :
    ```bash
-   set -a; source apps/cerveau/.env; set +a
-   pnpm --filter @alicia/cerveau alicia verifier-moteur
+   set -a; source apps/brain/.env; set +a
+   pnpm --filter @alicia/brain alicia check-engine
    ```
-   Attendu : un `{ type: "session", ... }`, un ou plusieurs `{ type: "texte", texte: "ok" ... }`,
-   puis `{ type: "fin", tokensEntree: …, tokensSortie: … }`.
-2. Dans un premier terminal : `pnpm --filter @alicia/cerveau alicia demarrer`.
+   Attendu : un `{ type: "session", ... }`, un ou plusieurs `{ type: "text", text: "ok" ... }`,
+   puis `{ type: "done", inputTokens: …, outputTokens: … }`.
+2. Dans un premier terminal : `pnpm --filter @alicia/brain alicia start`.
 3. Dans un second terminal :
    ```bash
-   pnpm --filter @alicia/cerveau alicia appairer kevin
-   pnpm --filter @alicia/cerveau alicia discuter --code <code affiché>
+   pnpm --filter @alicia/brain alicia pair kevin
+   pnpm --filter @alicia/brain alicia chat --code <code affiché>
    ```
    Attendu : « Connecté en tant que Kévin ».
    - « Bonjour » → la réponse arrive en morceaux.

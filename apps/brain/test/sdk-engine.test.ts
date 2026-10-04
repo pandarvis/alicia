@@ -44,17 +44,17 @@ describe("buildEnv", () => {
   const ABSENT = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "GOOGLE_CLIENT_SECRET"];
 
   test("subscription: allow-list + token only", () => {
-    const env = buildEnv(PARENT, { mode: "abonnement", token: "j" });
+    const env = buildEnv(PARENT, { mode: "subscription", token: "j" });
     expect(env).toEqual({ PATH: "/bin", TEMP: "/tmp", CLAUDE_CODE_OAUTH_TOKEN: "j" });
     for (const name of [...ABSENT, "ANTHROPIC_API_KEY"]) expect(env).not.toHaveProperty(name);
   });
   test("API key: allow-list + key only", () => {
-    const env = buildEnv(PARENT, { mode: "cle_api", key: "k" });
+    const env = buildEnv(PARENT, { mode: "api_key", key: "k" });
     expect(env).toEqual({ PATH: "/bin", TEMP: "/tmp", ANTHROPIC_API_KEY: "k" });
     for (const name of [...ABSENT, "CLAUDE_CODE_OAUTH_TOKEN"]) expect(env).not.toHaveProperty(name);
   });
   test("allow-listed variables missing from the parent: not created", () => {
-    expect(buildEnv({}, { mode: "abonnement", token: "j" })).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "j" });
+    expect(buildEnv({}, { mode: "subscription", token: "j" })).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "j" });
   });
 });
 

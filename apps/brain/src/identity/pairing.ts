@@ -24,7 +24,7 @@ export interface AuthenticatedDevice {
   person: Person;
 }
 
-/** A paired device, as shown by `alicia appareils` (dates in ms). */
+/** A paired device, as shown by `alicia devices` (dates in ms). */
 export interface Device {
   id: string;
   personId: string;

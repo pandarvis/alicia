@@ -12,18 +12,18 @@ import { toText } from "./server/ws.ts";
 
 const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
 
-  demarrer                       lance le cerveau
-  appairer <personne>            affiche un code d'appairage (10 min)
-  discuter [--url U] [--code C]  discute dans le terminal (jeton : --code ou ALICIA_JETON)
-  appareils                      liste les appareils appairés
-  revoquer <id>                  révoque un appareil (effet immédiat, même connecté)
-  verifier-moteur                un appel réel au SDK (consomme un peu de quota)
+  start                          lance le cerveau
+  pair <personne>                affiche un code d'appairage (10 min)
+  chat [--url U] [--code C]      discute dans le terminal (jeton : --code ou ALICIA_TOKEN)
+  devices                        liste les appareils appairés
+  revoke <id>                    révoque un appareil (effet immédiat, même connecté)
+  check-engine                   un appel réel au SDK (consomme un peu de quota)
 
 La config est lue dans ALICIA_CONFIG (défaut : alicia.config.yaml), les secrets dans l'environnement.`;
 
 const configPath = (): string => resolve(process.env["ALICIA_CONFIG"] ?? "alicia.config.yaml");
 
-/** `appairer`, `appareils` and `revoquer` do not need the engine: it must never be called. */
+/** `pair`, `devices` and `revoke` do not need the engine: it must never be called. */
 const UNUSED_ENGINE: Engine = {
   run: () => {
     throw new Error("Moteur inutilisé par cette commande.");
@@ -32,15 +32,15 @@ const UNUSED_ENGINE: Engine = {
 
 async function start(): Promise<void> {
   const config = loadConfig(configPath());
-  const engine = createSdkEngine(config, readAuthentication(config.moteur.mode, process.env));
+  const engine = createSdkEngine(config, readAuthentication(config.engine.mode, process.env));
   const app = await buildApplication(config, engine, { logging: true });
   try {
-    await app.server.listen({ port: config.port, host: config.hote });
+    await app.server.listen({ port: config.port, host: config.host });
   } catch (error) {
     await app.close();
     throw error;
   }
-  console.log(`Alicia écoute sur ${config.hote}:${config.port} (moteur : ${config.moteur.mode}).`);
+  console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
 
   // Graceful shutdown: close the WebSockets, the server and the database before exiting.
   const stop = (signal: NodeJS.Signals): void => {
@@ -58,7 +58,7 @@ async function start(): Promise<void> {
 }
 
 async function pair(person: string | undefined): Promise<void> {
-  if (person === undefined) throw new Error("Précisez la personne : appairer <kevin|elodie>");
+  if (person === undefined) throw new Error("Précisez la personne : pair <kevin|elodie>");
   const config = loadConfig(configPath());
   const app = await buildApplication(config, UNUSED_ENGINE);
   try {
@@ -80,8 +80,8 @@ async function listDevices(): Promise<void> {
     const date = (ms: number | null): string =>
       ms === null
         ? "—"
-        : new Date(ms).toLocaleString("fr-FR", { timeZone: config.fuseau, dateStyle: "short", timeStyle: "short" });
-    const nameOf = (id: string): string => config.personnes.find((p) => p.id === id)?.name ?? id;
+        : new Date(ms).toLocaleString("fr-FR", { timeZone: config.timezone, dateStyle: "short", timeStyle: "short" });
+    const nameOf = (id: string): string => config.people.find((p) => p.id === id)?.name ?? id;
     const rows = [
       ["id", "personne", "nom", "créé le", "vu le", "révoqué"],
       ...list.map((d) => [d.id, nameOf(d.personId), d.name, date(d.createdAt), date(d.lastSeenAt), date(d.revokedAt)]),
@@ -94,7 +94,7 @@ async function listDevices(): Promise<void> {
 }
 
 async function revoke(id: string | undefined): Promise<void> {
-  if (id === undefined) throw new Error("Précisez l'appareil : revoquer <id> (voir « appareils »)");
+  if (id === undefined) throw new Error("Précisez l'appareil : revoke <id> (voir « devices »)");
   const config = loadConfig(configPath());
   const app = await buildApplication(config, UNUSED_ENGINE);
   try {
@@ -107,8 +107,8 @@ async function revoke(id: string | undefined): Promise<void> {
 
 async function getToken(wsUrl: string, code: string | undefined): Promise<string> {
   if (code === undefined) {
-    const token = process.env["ALICIA_JETON"];
-    if (token === undefined || token === "") throw new Error("Donnez --code <6 chiffres> ou la variable ALICIA_JETON.");
+    const token = process.env["ALICIA_TOKEN"];
+    if (token === undefined || token === "") throw new Error("Donnez --code <6 chiffres> ou la variable ALICIA_TOKEN.");
     return token;
   }
   const httpUrl = wsUrl.replace(/^ws/, "http").replace(/\/ws$/, "/pairing");
@@ -119,7 +119,7 @@ async function getToken(wsUrl: string, code: string | undefined): Promise<string
   });
   if (!response.ok) throw new Error(`Appairage refusé (${response.status}).`);
   const { token } = PairingResponse.parse(await response.json());
-  console.log(`Jeton (à garder dans ALICIA_JETON) : ${token}`);
+  console.log(`Jeton (à garder dans ALICIA_TOKEN) : ${token}`);
   return token;
 }
 
@@ -221,8 +221,8 @@ async function chat(url: string, code: string | undefined): Promise<void> {
 
 async function checkEngine(): Promise<void> {
   const config = loadConfig(configPath());
-  const engine = createSdkEngine(config, readAuthentication(config.moteur.mode, process.env));
-  const person = config.personnes[0];
+  const engine = createSdkEngine(config, readAuthentication(config.engine.mode, process.env));
+  const person = config.people[0];
   if (person === undefined) throw new Error("Aucune personne dans la config.");
   const request: EngineRequest = {
     prompt: "Réponds juste « ok » si tu m'entends.",
@@ -239,26 +239,26 @@ async function main(): Promise<void> {
     options: {
       url: { type: "string", default: "ws://127.0.0.1:8780/ws" },
       code: { type: "string" },
-      aide: { type: "boolean", short: "h" },
+      help: { type: "boolean", short: "h" },
     },
   });
   const [command, argument] = positionals;
-  if (values.aide === true) {
+  if (values.help === true) {
     console.log(HELP);
     return;
   }
   switch (command) {
-    case "demarrer":
+    case "start":
       return start();
-    case "appairer":
+    case "pair":
       return pair(argument);
-    case "discuter":
+    case "chat":
       return chat(values.url, values.code);
-    case "appareils":
+    case "devices":
       return listDevices();
-    case "revoquer":
+    case "revoke":
       return revoke(argument);
-    case "verifier-moteur":
+    case "check-engine":
       return checkEngine();
     case undefined:
       console.log(HELP);

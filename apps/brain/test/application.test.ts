@@ -14,9 +14,9 @@ afterEach(() => {
 test("wires the database, people and server in the data directory", async () => {
   dir = mkdtempSync(join(tmpdir(), "alicia-"));
   const config = parseConfig(`
-dossierDonnees: ${JSON.stringify(dir)}
-personnes: [{ id: kevin, name: Kévin }]
-moteur: { mode: abonnement }
+dataDir: ${JSON.stringify(dir)}
+people: [{ id: kevin, name: Kévin }]
+engine: { mode: subscription }
 `);
   const app = await buildApplication(config, new FakeEngine(() => []));
   expect(app.pairing.generateCode("kevin")).toMatch(/^\d{6}$/);

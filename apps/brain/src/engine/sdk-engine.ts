@@ -44,7 +44,7 @@ function mask(text: string, secret: string): string {
 }
 
 function secretOf(auth: Authentication): string {
-  return auth.mode === "abonnement" ? auth.token : auth.key;
+  return auth.mode === "subscription" ? auth.token : auth.key;
 }
 
 /** Environment of the SDK process: the allow-list, plus a single secret, the one of the chosen mode. */
@@ -57,7 +57,7 @@ export function buildEnv(
     const value = base[name];
     if (value !== undefined) env[name] = value;
   }
-  if (auth.mode === "abonnement") env["CLAUDE_CODE_OAUTH_TOKEN"] = auth.token;
+  if (auth.mode === "subscription") env["CLAUDE_CODE_OAUTH_TOKEN"] = auth.token;
   else env["ANTHROPIC_API_KEY"] = auth.key;
   return env;
 }

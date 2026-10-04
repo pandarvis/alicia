@@ -17,7 +17,7 @@ import { VERSION } from "./version.ts";
 export const WORKSPACE_DIR = fileURLToPath(new URL("../workspace", import.meta.url));
 
 export interface ApplicationOptions {
-  /** Fastify logger (pino, Authorization masked): enabled by `demarrer`, off by default. */
+  /** Fastify logger (pino, Authorization masked): enabled by `start`, off by default. */
   logging?: boolean;
 }
 
@@ -29,7 +29,7 @@ export interface Application {
 }
 
 export function createSdkEngine(config: Config, auth: Authentication): Engine {
-  return new SdkEngine({ auth, models: config.modeles, workspaceDir: WORKSPACE_DIR });
+  return new SdkEngine({ auth, models: config.models, workspaceDir: WORKSPACE_DIR });
 }
 
 export async function buildApplication(
@@ -37,10 +37,10 @@ export async function buildApplication(
   engine: Engine,
   options: ApplicationOptions = {},
 ): Promise<Application> {
-  mkdirSync(config.dossierDonnees, { recursive: true });
-  const db = openDb(join(config.dossierDonnees, "alicia.db"));
+  mkdirSync(config.dataDir, { recursive: true });
+  const db = openDb(join(config.dataDir, "alicia.db"));
   try {
-    syncPeople(db, config.personnes);
+    syncPeople(db, config.people);
 
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);
@@ -48,7 +48,7 @@ export async function buildApplication(
       pairing,
       repository,
       version: VERSION,
-      chat: { repository, engine, clock: systemClock, timezone: config.fuseau },
+      chat: { repository, engine, clock: systemClock, timezone: config.timezone },
       ...(options.logging !== undefined ? { logging: options.logging } : {}),
     });
 

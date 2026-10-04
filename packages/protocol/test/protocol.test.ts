@@ -73,7 +73,7 @@ describe("client messages", () => {
     ).toBe(false);
   });
   test("rejects an unknown type", () => {
-    expect(ClientMessage.safeParse({ type: "pirater" }).success).toBe(false);
+    expect(ClientMessage.safeParse({ type: "hack" }).success).toBe(false);
   });
 });
 
