@@ -24,6 +24,8 @@ const QUOTA_MESSAGE = "Je me repose : le quota de l'abonnement est atteint.";
  * - "Failed to resume session <id>[: <reason>]": it exists but could not be loaded or processed;
  * - "--resume session load failed (...)": the same failure as logged by the CLI, kept in case it reaches stderr.
  * The SDK only keeps the last 2,048 characters of stderr: a very chatty process could push the line out.
+ * Trade-off: "Failed to resume session" also covers a transient I/O error while loading the transcript. The
+ * session is then dropped and the next turn starts from the database summary: it costs context, never data.
  * Re-check on every SDK update, like USAGE_LIMIT_ERROR_PREFIXES.
  */
 const UNREADABLE_SESSION_PATTERN = /No conversation found with session ID|Failed to resume session|--resume session load failed/i;

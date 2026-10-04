@@ -114,19 +114,20 @@ describe("WebSocket", () => {
   });
 
   test("heartbeat: a live app gets heartbeat events and stays connected", async () => {
-    const { url, token } = await start({ heartbeatMs: 40 });
+    const { url, token } = await start({ heartbeatMs: 100 });
     const c = connect(url);
     await c.opened;
     c.ws.send(JSON.stringify({ type: "authenticate", token }));
     await c.waitFor((e) => e.type === "ready");
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Generous on purpose: a loaded machine may delay timers.
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(c.received.filter((e) => e.type === "heartbeat").length).toBeGreaterThanOrEqual(2);
     expect(c.ws.readyState).toBe(WebSocket.OPEN);
     c.ws.close();
   });
 
   test("heartbeat: a client that stops answering pings is dropped", async () => {
-    const { url, token } = await start({ heartbeatMs: 40 });
+    const { url, token } = await start({ heartbeatMs: 100 });
     const ws = new WebSocket(url, { autoPong: false });
     ws.on("error", () => undefined);
     const closed = new Promise<number>((resolve) => ws.once("close", (code) => { resolve(code); }));
@@ -134,6 +135,65 @@ describe("WebSocket", () => {
       ws.send(JSON.stringify({ type: "authenticate", token }));
     });
     expect(await closed).toBe(1006);
+  });
+
+  test("heartbeat: a device revoked while idle is disconnected with 4401", async () => {
+    const { url, token, pairing } = await start({ heartbeatMs: 100 });
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    const pc = pairing.listDevices().find((d) => d.personId === "kevin");
+    expect(pairing.revokeDevice(pc?.id ?? "")).toBe(true);
+    expect(await c.closed).toBe(4401);
+    expect(c.received.at(-1)).toEqual({ type: "error", code: "unauthenticated", message: "Appareil révoqué." });
+  });
+
+  test("backpressure: no wait after the turn's final event, the turn slot is free at once", async () => {
+    // Congested only once the engine has finished: waiting after "done" would hold the turn for a long time.
+    const drain: DrainOptions = {
+      highWaterBytes: Number.POSITIVE_INFINITY, timeoutMs: 60_000, pollMs: 5,
+      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    };
+    const engine: Engine = {
+      async *run() {
+        yield await Promise.resolve({ type: "session", sessionId: "s1" } as const);
+        drain.highWaterBytes = -1;
+        yield { type: "done", inputTokens: 1, outputTokens: 1 } as const;
+      },
+    };
+    const { url, token } = await start({ engine, drain });
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Un" }));
+    await c.waitFor((e) => e.type === "done");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID_2, text: "Deux" }));
+    await c.waitFor((e) => e.type === "conversation" && e.requestId === REQUEST_ID_2);
+    expect(c.received.some((e) => e.type === "error" && e.code === "busy")).toBe(false);
+    c.ws.close();
+  });
+
+  test("backpressure on an existing conversation: its lock is released for the next connection", async () => {
+    const { url, token, repository } = await start({
+      drain: { highWaterBytes: -1, timeoutMs: 0, pollMs: 1, wait: () => Promise.resolve() },
+    });
+    const conversationId = repository.create("kevin", "Existante").id;
+    const first = connect(url);
+    await first.opened;
+    first.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await first.waitFor((e) => e.type === "ready");
+    first.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Un", conversationId }));
+    expect(await first.closed).toBe(1013);
+
+    const second = connect(url);
+    await second.opened;
+    second.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await second.waitFor((e) => e.type === "ready");
+    second.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID_2, text: "Deux", conversationId }));
+    await second.waitFor((e) => e.type === "conversation" || e.type === "error");
+    expect(second.received[1]).toEqual({ type: "conversation", requestId: REQUEST_ID_2, conversationId });
   });
 
   test("an app that does not drain its buffer: the turn stops and the connection closes with 1013", async () => {

@@ -18,11 +18,17 @@ class FakeSocket implements SocketLike {
   onopen: (() => void) | null = null;
   onmessage: ((data: string) => void) | null = null;
   onclose: ((code: number) => void) | null = null;
+  readonly #closeFiresAtOnce: boolean;
+  /** `closeFiresAtOnce`: close() reports the close event synchronously, as some implementations do. */
+  constructor(closeFiresAtOnce = false) {
+    this.#closeFiresAtOnce = closeFiresAtOnce;
+  }
   send(data: string): void {
     this.sent.push(data);
   }
   close(code?: number): void {
     this.closedWith = code;
+    if (this.#closeFiresAtOnce) this.onclose?.(code ?? 1005);
   }
   receive(event: unknown): void {
     this.onmessage?.(JSON.stringify(event));
@@ -35,7 +41,7 @@ interface Timer {
   cancelled: boolean;
 }
 
-function setup(onEvent?: (e: ServerEvent) => void) {
+function setup(onEvent?: (e: ServerEvent) => void, options: { closeFiresAtOnce?: boolean } = {}) {
   const sockets: FakeSocket[] = [];
   const allTimers: Timer[] = [];
   const events: ServerEvent[] = [];
@@ -44,7 +50,7 @@ function setup(onEvent?: (e: ServerEvent) => void) {
     url: "ws://127.0.0.1:8780/ws",
     token: TOKEN,
     openSocket: () => {
-      const s = new FakeSocket();
+      const s = new FakeSocket(options.closeFiresAtOnce === true);
       sockets.push(s);
       return s;
     },
@@ -241,6 +247,43 @@ describe("ChatConnection", () => {
     expect(timers.retries).toHaveLength(1);
     timers.retries[0]?.run();
     expect(sockets).toHaveLength(2);
+  });
+
+  test("ready timeout: the socket is lost at once, without waiting for its close event", () => {
+    const { connection, sockets, timers, statuses } = setup();
+    connection.start();
+    sockets[0]?.onopen?.();
+    timers.ready[0]?.run();
+    expect(sockets[0]?.closedWith).toBe(4000);
+    expect(statuses.at(-1)).toBe("offline");
+    expect(timers.retries.map((t) => t.ms)).toEqual([1000]);
+  });
+
+  test("ready timeout with a socket that reports its close synchronously: a single reconnect", () => {
+    const { connection, sockets, timers } = setup(undefined, { closeFiresAtOnce: true });
+    connection.start();
+    sockets[0]?.onopen?.();
+    timers.ready[0]?.run();
+    expect(timers.retries).toHaveLength(1);
+  });
+
+  test("silent brain with a socket that reports its close synchronously: a single reconnect", () => {
+    const { connection, sockets, timers } = setup(undefined, { closeFiresAtOnce: true });
+    connection.start();
+    sockets[0]?.receive(READY);
+    timers.heartbeats[0]?.run();
+    expect(timers.retries).toHaveLength(1);
+  });
+
+  test("any frame re-arms the watchdog, even one that cannot be read", () => {
+    const { connection, sockets, timers } = setup();
+    connection.start();
+    sockets[0]?.receive(READY);
+    sockets[0]?.onmessage?.("pas du JSON");
+    expect(timers.heartbeats).toHaveLength(2);
+    expect(timers.heartbeats[0]?.cancelled).toBe(true);
+    sockets[0]?.receive({ type: "nonsense" });
+    expect(timers.heartbeats).toHaveLength(3);
   });
 
   test("every message re-arms the watchdog; heartbeats are not forwarded", () => {

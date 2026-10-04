@@ -100,7 +100,11 @@ export class ChatConnection {
     this.#socket = socket;
     this.#cancelReadyTimeout = this.#options.schedule(() => {
       this.#cancelReadyTimeout = null;
-      if (this.#socket === socket && !this.#ready) socket.close(READY_TIMEOUT_CLOSE);
+      if (this.#socket !== socket || this.#ready) return;
+      // Lost at once (like the watchdog): #closed forgets the socket first, so its close event, late or
+      // synchronous, is ignored.
+      this.#closed(READY_TIMEOUT_CLOSE);
+      socket.close(READY_TIMEOUT_CLOSE);
     }, READY_TIMEOUT_MS);
     socket.onopen = () => {
       if (this.#socket !== socket) return;
@@ -132,14 +136,16 @@ export class ChatConnection {
     this.#cancelHeartbeat = this.#options.schedule(() => {
       this.#cancelHeartbeat = null;
       if (this.#socket !== socket) return;
-      // The system may take minutes to report a dead link: give the socket up now. Its late close event,
-      // if any, is ignored since it is no longer the current socket.
-      socket.close(HEARTBEAT_TIMEOUT_CLOSE);
+      // The system may take minutes to report a dead link: give the socket up now. #closed forgets it
+      // first, so its close event, late or synchronous, is ignored.
       this.#closed(HEARTBEAT_TIMEOUT_CLOSE);
+      socket.close(HEARTBEAT_TIMEOUT_CLOSE);
     }, HEARTBEAT_TIMEOUT_MS);
   }
 
   #receive(socket: SocketLike, data: string): void {
+    // Any frame proves the link is alive, even one this version of the app cannot read.
+    if (this.#ready) this.#watch(socket);
     let json: unknown;
     try {
       json = JSON.parse(data);
@@ -154,8 +160,8 @@ export class ChatConnection {
       this.#ready = true;
       this.#attempt = 0;
       this.#options.onStatus("ready");
+      this.#watch(socket);
     }
-    if (this.#ready) this.#watch(socket);
     // Liveness only: nothing for the consumers.
     if (event.type === "heartbeat") return;
     try {

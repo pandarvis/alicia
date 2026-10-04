@@ -56,6 +56,11 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
       socket.terminate();
       return;
     }
+    // A device revoked while idle is cut off here, not only on its next send.
+    if (session !== undefined && !deps.pairing.isActive(session.deviceId)) {
+      reject("Appareil révoqué.");
+      return;
+    }
     alive = false;
     socket.ping();
     if (session !== undefined) send({ type: "heartbeat" });
@@ -131,6 +136,9 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
             locked = e.conversationId;
           }
           send(e);
+          // The final event: nothing left to send, so no reason to hold the turn (and its lock) while the
+          // app catches up.
+          if (e.type === "done" || e.type === "error") continue;
           // Backpressure: reading the engine pauses while the app catches up; an app that stays behind
           // (or is gone) ends the turn instead of growing the buffer without limit. It reconnects and resyncs.
           if (!(await waitForDrain(socket, deps.drain ?? DEFAULT_DRAIN))) {
