@@ -298,6 +298,11 @@ export class MemoryStore {
     this.#db.$client.exec("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')");
   }
 
+  /** Loads the embedding model ahead of time (the first load may download it). */
+  async warmUp(): Promise<void> {
+    await this.#embed("préchauffage", "query");
+  }
+
   /** What the permanent sheet shows for this person (house rules, pinned memories). */
   sheetMemories(personId: string): SheetMemories {
     const pinnedOrRule = this.#db

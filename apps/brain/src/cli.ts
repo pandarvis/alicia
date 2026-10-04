@@ -44,6 +44,12 @@ async function start(): Promise<void> {
     throw error;
   }
   console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
+  // Load (first time: download) the memory model now, not in the middle of an answer.
+  const warmStart = Date.now();
+  app.memory.warmUp().then(
+    () => { console.log(`Mémoire prête (${Math.round((Date.now() - warmStart) / 1000)} s).`); },
+    (error: unknown) => { console.error(`Modèle de mémoire indisponible pour l'instant : ${error instanceof Error ? error.name : "erreur"}`); },
+  );
 
   // Graceful shutdown: close the WebSockets, the server and the database before exiting.
   const stop = (signal: NodeJS.Signals): void => {

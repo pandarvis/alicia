@@ -226,3 +226,18 @@ describe("MemoryStore index upkeep", () => {
     expect(count()).toBe(1);
   });
 });
+
+describe("MemoryStore warm-up", () => {
+  test("warmUp asks the embedder for one vector", async () => {
+    const calls: string[] = [];
+    const counting: Embedder = {
+      model: "counting", dimensions: 2,
+      embed: (texts) => {
+        calls.push(...texts);
+        return Promise.resolve(texts.map(() => new Float32Array([1, 0])));
+      },
+    };
+    await new MemoryStore(createTestDb(), counting, createTestClock().clock).warmUp();
+    expect(calls).toHaveLength(1);
+  });
+});
