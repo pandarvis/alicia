@@ -28,6 +28,8 @@ function isOrigin(value: string): boolean {
 export const ConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).default(8780),
   host: z.string().default("0.0.0.0"),
+  /** Announce the brain on the local network (mDNS), so the desktop app finds it on first launch. */
+  discovery: z.boolean().default(true),
   dataDir: z.string().default("./data"),
   timezone: z
     .string()

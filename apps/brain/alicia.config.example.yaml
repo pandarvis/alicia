@@ -1,6 +1,7 @@
 # Copier en alicia.config.yaml (non versionné). Les secrets vont dans .env.
 port: 8780
 host: "0.0.0.0"
+discovery: true           # annonce le cerveau sur le réseau local (mDNS) : l'app le trouve toute seule au premier lancement
 dataDir: "./data"
 timezone: "Europe/Paris"
 people:

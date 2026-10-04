@@ -18,9 +18,13 @@ describe("parseConfig", () => {
     const c = parseConfig(MINIMAL_YAML);
     expect(c.port).toBe(8780);
     expect(c.host).toBe("0.0.0.0");
+    expect(c.discovery).toBe(true);
     expect(c.timezone).toBe("Europe/Paris");
     expect(c.models).toEqual({ sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" });
     expect(c.people.map((p) => p.id)).toEqual(["kevin", "elodie"]);
+  });
+  test("discovery can be turned off", () => {
+    expect(parseConfig(`${MINIMAL_YAML}discovery: false\n`).discovery).toBe(false);
   });
   test("rejects a config without any person", () => {
     expect(() => parseConfig("people: []\nengine: { mode: subscription }")).toThrow();

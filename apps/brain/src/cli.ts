@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
@@ -7,9 +8,11 @@ import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import { buildApplication, createSdkEngine, openMemory } from "./application.ts";
 import { loadConfig, readAuthentication } from "./config.ts";
+import { advertiseBrain, bonjourPublisher, shouldAdvertise } from "./discovery.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
 import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
 import { toText } from "./server/ws.ts";
+import { VERSION } from "./version.ts";
 
 const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
 
@@ -45,6 +48,16 @@ async function start(): Promise<void> {
     throw error;
   }
   console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
+  // The desktop app finds the brain on its pairing screen (mDNS), unless turned off or loopback only.
+  const advertisement = shouldAdvertise(config)
+    ? advertiseBrain(
+        { port: config.port, version: VERSION, hostname: hostname() },
+        bonjourPublisher((error) => {
+          console.error(`Annonce sur le réseau local impossible : ${error instanceof Error ? error.message : "erreur"}`);
+        }),
+      )
+    : null;
+  if (advertisement !== null) console.log(`Annoncée sur le réseau local : « Alicia sur ${hostname()} ».`);
   // Nightly job (backup, journal rotation); catches up at once if the brain was off at 3:00.
   void app.maintenance.start();
   // Load (first time: download) the memory model now, not in the middle of an answer.
@@ -57,7 +70,7 @@ async function start(): Promise<void> {
   // Graceful shutdown: close the WebSockets, the server and the database before exiting.
   const stop = (signal: NodeJS.Signals): void => {
     console.log(`\n${signal} reçu : arrêt d'Alicia…`);
-    app.close().then(
+    (advertisement === null ? app.close() : advertisement.stop().then(() => app.close())).then(
       () => process.exit(0),
       (error: unknown) => {
         console.error(error instanceof Error ? error.message : error);
