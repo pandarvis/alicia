@@ -81,6 +81,21 @@ describe("ChatStore", () => {
     expect(sent[0]?.model).toBe("opus");
   });
 
+  test("« Réfléchir » applies to one message only", () => {
+    const { store, sent } = setup();
+    store.opus = true;
+    store.send("Une question difficile");
+    expect(store.opus).toBe(false);
+    expect(sent[0]?.model).toBe("opus");
+  });
+
+  test("« Réfléchir » stays on if the message could not be sent", () => {
+    const { store } = setup();
+    store.opus = true;
+    expect(store.send("   ")).toBe(false);
+    expect(store.opus).toBe(true);
+  });
+
   test("full turn: conversation id, streamed text, done → success then idle", async () => {
     const { store, sent, timers, setConversations } = setup();
     store.send("Salut");

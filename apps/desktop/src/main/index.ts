@@ -10,6 +10,8 @@ import { isTrustedSenderUrl } from "./trusted-sender.ts";
 const RENDERER_INDEX = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
 /** Mascot head icon (design/mascotte/icone/v1), exported to build/ for electron-builder too. */
 const APP_ICON = join(app.getAppPath(), "build", "icon.png");
+// Own taskbar identity on Windows: otherwise the window is grouped under Electron's icon.
+app.setAppUserModelId("fr.pandarvis.alicia");
 
 // Lets the end-to-end test isolate its profile; ignored in a packaged app.
 const userDataOverride = process.env["ALICIA_USER_DATA"];

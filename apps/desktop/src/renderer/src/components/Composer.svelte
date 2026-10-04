@@ -53,13 +53,16 @@
   ></textarea>
   <button
     type="button"
-    class="opus"
+    class="think"
     class:on={store.opus}
-    aria-pressed={store.opus}
-    title="Réfléchir plus longtemps (Opus)"
+    role="switch"
+    aria-checked={store.opus}
+    title="Pour ce message, Alicia prend plus de temps et réfléchit plus en profondeur (consomme plus de quota)."
     onclick={toggleOpus}
     data-testid="composer-opus"
-  >Opus</button>
+  >
+    <span class="spark" aria-hidden="true">✦</span>Réfléchir<span class="switch" aria-hidden="true"><span class="knob"></span></span>
+  </button>
   <button type="submit" class="send" disabled={!canSend} data-testid="composer-send">
     Envoyer
   </button>
@@ -79,9 +82,23 @@
   }
   textarea:disabled { opacity: 0.6; }
   button { border: 0; border-radius: 9px; padding: 7px 12px; cursor: pointer; transition: background var(--duration) ease, color var(--duration) ease, opacity var(--duration) ease; }
-  .opus { background: none; color: var(--muted); font-size: 13px; }
-  .opus:hover { color: var(--cream-muted); }
-  .opus.on { background: var(--surface-raised); color: var(--amber); font-weight: 700; }
+  .think {
+    display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--cream-muted);
+    background: var(--night-deep); border: 1px solid var(--surface-raised); border-radius: 999px; padding: 5px 8px 5px 10px;
+  }
+  .think:hover { border-color: var(--muted); }
+  .think.on { color: var(--amber); border-color: var(--amber); }
+  .spark { font-size: 12px; }
+  .switch {
+    position: relative; width: 24px; height: 14px; border-radius: 999px; margin-left: 2px;
+    background: var(--surface-raised); transition: background var(--duration) ease;
+  }
+  .knob {
+    position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--cream-muted); transition: transform var(--duration) ease, background var(--duration) ease;
+  }
+  .think.on .switch { background: color-mix(in srgb, var(--amber) 45%, transparent); }
+  .think.on .knob { transform: translateX(10px); background: var(--amber); }
   .send { background: var(--sage); color: var(--night); font-weight: 700; }
   .send:disabled { opacity: 0.45; cursor: default; }
 </style>

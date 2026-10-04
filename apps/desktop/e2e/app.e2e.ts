@@ -136,9 +136,11 @@ test("pair, chat with streaming, use Opus, then find the conversation again afte
   await expect.poll(() => first.getByTestId("mascot").last().getAttribute("data-mood"), POLL).toMatch(/^(success|idle)$/);
 
   await first.getByTestId("composer-opus").click();
-  await expect.poll(() => first.getByTestId("composer-opus").getAttribute("aria-pressed"), POLL).toBe("true");
+  await expect.poll(() => first.getByTestId("composer-opus").getAttribute("aria-checked"), POLL).toBe("true");
   await send(first, "Et ensuite ?");
   await answered(first, 2);
+  // « Réfléchir » applies to one message only.
+  await expect.poll(() => first.getByTestId("composer-opus").getAttribute("aria-checked"), POLL).toBe("false");
   expect(brain.engine.requests.map((request) => request.model)).toEqual(["sonnet", "opus"]);
   await first.close();
 

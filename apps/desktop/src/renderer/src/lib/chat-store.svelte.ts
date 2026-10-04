@@ -110,6 +110,8 @@ export class ChatStore {
     }
     this.#pendingRequestId = requestId;
     this.busy = true;
+    // « Réfléchir » is for one message: the next one goes back to the default model.
+    this.opus = false;
     this.notice = null;
     this.activity = null;
     this.messages.push({ id: this.#ports.newId(), role: "user", text, streaming: false });
