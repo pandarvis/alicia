@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { EvenementServeur } from "@alicia/protocole";
 import type { FastifyInstance } from "fastify";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 import { DepotConversations } from "../src/conversations/depot.ts";
 import { ServiceAppairage } from "../src/identites/appairage.ts";
@@ -11,6 +11,8 @@ import { creerServeur } from "../src/serveur/serveur.ts";
 import { creerBaseTest, creerHorlogeTest } from "./aides.ts";
 
 const ID_REQUETE = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
+const ID_REQUETE_2 = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
+const ID_REQUETE_3 = "c9d8e7f6-5a4b-4c3d-9e2f-0a1b2c3d4e5f";
 let app: FastifyInstance | undefined;
 
 afterEach(async () => {
@@ -28,13 +30,12 @@ async function demarrer(options: OptionsDemarrage = {}) {
   const temps = creerHorlogeTest();
   const depot = new DepotConversations(base, temps.horloge);
   const appairage = new ServiceAppairage(base, temps.horloge);
-  const moteur =
-    options.moteur ??
-    new FauxMoteur(() => [
-      { type: "session", sessionId: "s1" },
-      { type: "texte", texte: "Coucou !" },
-      { type: "fin", tokensEntree: 3, tokensSortie: 2 },
-    ]);
+  const fauxMoteur = new FauxMoteur(() => [
+    { type: "session", sessionId: "s1" },
+    { type: "texte", texte: "Coucou !" },
+    { type: "fin", tokensEntree: 3, tokensSortie: 2 },
+  ]);
+  const moteur = options.moteur ?? fauxMoteur;
   app = await creerServeur({
     appairage,
     depot,
@@ -48,7 +49,9 @@ async function demarrer(options: OptionsDemarrage = {}) {
   const { port } = app.server.address() as AddressInfo;
   const r = appairage.echanger(appairage.genererCode("kevin"), "PC");
   if ("erreur" in r) throw new Error(r.erreur);
-  return { url: `ws://127.0.0.1:${port}/ws`, jeton: r.jeton };
+  const jetonElodie = appairage.echanger(appairage.genererCode("elodie"), "Tablette");
+  if ("erreur" in jetonElodie) throw new Error(jetonElodie.erreur);
+  return { url: `ws://127.0.0.1:${port}/ws`, jeton: r.jeton, jetonElodie: jetonElodie.jeton, appairage, fauxMoteur };
 }
 
 /** Ouvre une connexion et accumule les événements reçus (validés par le protocole). */
@@ -99,9 +102,17 @@ describe("WebSocket", () => {
     const c = connecter(url);
     await c.ouvert;
     c.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Salut" }));
-    await c.attendre((e) => e.type === "erreur");
-    expect(c.recus[0]).toMatchObject({ type: "erreur", code: "non_authentifie" });
-    c.ws.close();
+    expect(await c.ferme).toBe(4401);
+    expect(c.recus).toEqual([{ type: "erreur", code: "non_authentifie", message: "Authentification attendue." }]);
+  });
+
+  test("message illisible avant authentification : refusé et fermeture 4401", async () => {
+    const { url } = await demarrer();
+    const c = connecter(url);
+    await c.ouvert;
+    c.ws.send("pas du json");
+    expect(await c.ferme).toBe(4401);
+    expect(c.recus).toEqual([{ type: "erreur", code: "non_authentifie", message: "Authentification attendue." }]);
   });
 
   test("message mal formé : requete_invalide, la connexion reste ouverte", async () => {
@@ -161,5 +172,84 @@ describe("WebSocket", () => {
     c.ws.close();
     await fermee;
     expect(signalDuTour?.aborted).toBe(true);
+  });
+  test("l'identité est figée : un second authentifier est refusé", async () => {
+    const { url, jeton, jetonElodie, fauxMoteur } = await demarrer();
+    const c = connecter(url);
+    await c.ouvert;
+    c.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    await c.attendre((e) => e.type === "pret");
+    c.ws.send(JSON.stringify({ type: "authentifier", jeton: jetonElodie }));
+    await c.attendre((e) => e.type === "erreur");
+    expect(c.recus.at(-1)).toEqual({ type: "erreur", code: "requete_invalide", message: "Déjà authentifié." });
+    expect(c.recus.filter((e) => e.type === "pret")).toHaveLength(1);
+    expect(c.ws.readyState).toBe(WebSocket.OPEN);
+
+    c.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Salut" }));
+    await c.attendre((e) => e.type === "fin");
+    expect(fauxMoteur.requetes[0]?.consigneSysteme).toContain("Tu parles avec Kévin.");
+    c.ws.close();
+  });
+
+  test("un seul tour à la fois par connexion", async () => {
+    let appels = 0;
+    let liberer: () => void = () => undefined;
+    const liberation = new Promise<void>((resoudre) => {
+      liberer = resoudre;
+    });
+    let demarre: () => void = () => undefined;
+    const premierDemarre = new Promise<void>((resoudre) => {
+      demarre = resoudre;
+    });
+    const moteur: Moteur = {
+      executer(): AsyncIterable<EvenementMoteur> {
+        appels += 1;
+        const numero = appels;
+        return (async function* () {
+          yield { type: "texte", texte: "…" } satisfies EvenementMoteur;
+          if (numero === 1) {
+            demarre();
+            await liberation;
+          }
+          yield { type: "fin", tokensEntree: 1, tokensSortie: 1 } satisfies EvenementMoteur;
+        })();
+      },
+    };
+    const { url, jeton } = await demarrer({ moteur });
+    const c = connecter(url);
+    await c.ouvert;
+    c.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    await c.attendre((e) => e.type === "pret");
+    c.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Un" }));
+    await premierDemarre;
+
+    c.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE_2, texte: "Deux" }));
+    await c.attendre((e) => e.type === "erreur");
+    expect(c.recus.at(-1)).toEqual({
+      type: "erreur",
+      idRequete: ID_REQUETE_2,
+      code: "occupe",
+      message: "Alicia répond déjà ; réessaie après sa réponse.",
+    });
+    expect(appels).toBe(1);
+
+    liberer();
+    await c.attendre((e) => e.type === "fin");
+    c.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE_3, texte: "Trois" }));
+    await c.attendre((e) => e.type === "conversation" && e.idRequete === ID_REQUETE_3);
+    expect(appels).toBe(2);
+    c.ws.close();
+  });
+
+  test("une exception synchrone ne fait pas tomber le processus : erreur interne et fermeture 1011", async () => {
+    const { url, jeton, appairage } = await demarrer();
+    vi.spyOn(appairage, "authentifier").mockImplementation(() => {
+      throw new Error("base cassée");
+    });
+    const c = connecter(url);
+    await c.ouvert;
+    c.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    expect(await c.ferme).toBe(1011);
+    expect(c.recus).toEqual([{ type: "erreur", code: "interne", message: "Erreur interne." }]);
   });
 });

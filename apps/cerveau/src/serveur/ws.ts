@@ -5,6 +5,7 @@ import type { DependancesServeur } from "./serveur.ts";
 
 const DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS = 5000;
 const FERMETURE_NON_AUTHENTIFIE = 4401;
+const FERMETURE_ERREUR_INTERNE = 1011;
 
 function enTexte(donnees: RawData): string {
   if (Buffer.isBuffer(donnees)) return donnees.toString("utf8");
@@ -37,14 +38,14 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
     if (personne === undefined) refuser("Authentification attendue.");
   }, deps.delaiAuthentificationMs ?? DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS);
 
-  socket.on("message", (donnees: RawData) => {
+  const traiter = (donnees: RawData): void => {
     const message = lire(donnees);
-    if (message === undefined) {
-      envoyer({ type: "erreur", code: "requete_invalide", message: "Message invalide." });
-      return;
-    }
 
-    if (message.type === "authentifier") {
+    if (personne === undefined) {
+      if (message?.type !== "authentifier") {
+        refuser("Authentification attendue.");
+        return;
+      }
       const trouvee = deps.appairage.authentifier(message.jeton);
       if (trouvee === undefined) {
         refuser("Jeton refusé.");
@@ -56,12 +57,26 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
       return;
     }
 
-    const auteur = personne;
-    if (auteur === undefined) {
-      envoyer({ type: "erreur", code: "non_authentifie", message: "Authentification attendue." });
+    if (message === undefined) {
+      envoyer({ type: "erreur", code: "requete_invalide", message: "Message invalide." });
+      return;
+    }
+    if (message.type === "authentifier") {
+      // L'identité est figée pour toute la durée de la connexion.
+      envoyer({ type: "erreur", code: "requete_invalide", message: "Déjà authentifié." });
+      return;
+    }
+    if (tours.size > 0) {
+      envoyer({
+        type: "erreur",
+        idRequete: message.idRequete,
+        code: "occupe",
+        message: "Alicia répond déjà ; réessaie après sa réponse.",
+      });
       return;
     }
 
+    const auteur = personne;
     const tour = new AbortController();
     tours.add(tour);
     void (async () => {
@@ -73,6 +88,17 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
         tours.delete(tour);
       }
     })();
+  };
+
+  socket.on("message", (donnees: RawData) => {
+    if (socket.readyState !== socket.OPEN) return;
+    try {
+      traiter(donnees);
+    } catch {
+      // Une exception synchrone ne doit jamais faire tomber le processus.
+      envoyer({ type: "erreur", code: "interne", message: "Erreur interne." });
+      socket.close(FERMETURE_ERREUR_INTERNE, "erreur interne");
+    }
   });
 
   const abandonner = (): void => {

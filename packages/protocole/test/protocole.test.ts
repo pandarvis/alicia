@@ -104,6 +104,9 @@ describe("événements serveur", () => {
       }).success,
     ).toBe(false);
   });
+  test("accepte le code d'erreur occupe", () => {
+    expect(EvenementServeur.safeParse({ type: "erreur", code: "occupe", message: "x" }).success).toBe(true);
+  });
   test("refuse un code d'erreur inconnu", () => {
     expect(EvenementServeur.safeParse({ type: "erreur", code: "bizarre", message: "x" }).success).toBe(false);
   });

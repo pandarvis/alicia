@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Modele, Personne } from "./identite.ts";
 
-export const CodeErreur = z.enum(["quota", "moteur", "requete_invalide", "non_authentifie", "interne"]);
+export const CodeErreur = z.enum(["quota", "moteur", "requete_invalide", "non_authentifie", "occupe", "interne"]);
 export type CodeErreur = z.infer<typeof CodeErreur>;
 
 const entier = z.number().int().nonnegative();
