@@ -8,7 +8,7 @@
 <!-- Every pose is stacked; only the current one is opaque, so mood changes cross-fade. -->
 <div class="mascot" style:width="{size}px" style:height="{size}px" role="img" aria-label="Alicia" data-testid="mascot" data-mood={mood}>
   {#each MASCOT_STATES as state (state)}
-    <img src={MASCOT_IMAGES[state]} alt="" draggable="false" class:visible={state === mood} />
+    <img src={MASCOT_IMAGES[state]} alt="" aria-hidden="true" draggable="false" class:visible={state === mood} />
   {/each}
 </div>
 

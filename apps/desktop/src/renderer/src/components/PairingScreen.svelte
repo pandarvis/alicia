@@ -25,8 +25,11 @@
   let deviceName = $state("");
   let error = $state<string | null>(null);
   let pending = $state(false);
+  let codeInput = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
+    // Address and device name are prefilled: the code is the only thing left to type.
+    codeInput?.focus();
     void window.alicia.deviceName().then((name) => {
       if (deviceName === "") deviceName = name;
     });
@@ -34,7 +37,7 @@
 
   /** Pairs with the brain and stores the session; returns an error message, or null once paired. */
   async function pairAndSave(): Promise<string | null> {
-    const result = await pair(fetch, serverUrl, code.trim(), deviceName.trim());
+    const result = await pair(fetch, serverUrl, code, deviceName.trim());
     if (!result.ok) return PAIRING_MESSAGES[result.reason];
     let saved: SaveSessionResult;
     try {
@@ -47,8 +50,17 @@
     return null;
   }
 
+  /** Keeps digits only, so a pasted "123 456" becomes "123456". */
+  function onCodeInput(event: Event & { currentTarget: HTMLInputElement }): void {
+    code = event.currentTarget.value.replace(/\D/g, "").slice(0, 6);
+    // The state may not change (e.g. a letter typed), so the field is reset explicitly.
+    event.currentTarget.value = code;
+  }
+
   async function submit(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    // Enter in a field submits the form even while a pairing is in flight.
+    if (pending || code.length !== 6) return;
     pending = true;
     error = null;
     error = await pairAndSave();
@@ -58,16 +70,18 @@
 
 <div class="screen" in:fade={{ duration: 200 }}>
   <div class="drag"></div>
-  <form class="card" onsubmit={submit}>
+  <form class="card" onsubmit={submit} aria-describedby="pairing-error-live">
     <Mascot mood={error === null ? "listening" : "alert"} size={160} />
     <h1>Bonjour, je suis Alicia</h1>
     <p class="lead">Pour faire connaissance, demande un code d'appairage au cerveau (commande <code>pair</code>).</p>
     {#if notice}<p class="notice" data-testid="pairing-notice">{notice}</p>{/if}
     <label>Adresse d'Alicia<input bind:value={serverUrl} data-testid="pairing-server" autocomplete="off" spellcheck="false" /></label>
-    <label>Code à 6 chiffres<input bind:value={code} inputmode="numeric" maxlength="6" data-testid="pairing-code" autocomplete="off" /></label>
+    <label>Code à 6 chiffres<input bind:this={codeInput} value={code} oninput={onCodeInput} inputmode="numeric" data-testid="pairing-code" autocomplete="off" /></label>
     <label>Nom de cet appareil<input bind:value={deviceName} maxlength="60" data-testid="pairing-device" /></label>
-    {#if error}<p class="error" role="alert" data-testid="pairing-error" transition:fade={{ duration: 150 }}>{error}</p>{/if}
-    <button type="submit" disabled={pending || code.trim().length !== 6} data-testid="pairing-submit">
+    <!-- Always in the DOM so screen readers reliably announce each new error; the visible copy below fades. -->
+    <p id="pairing-error-live" class="sr-only" aria-live="assertive">{error ?? ""}</p>
+    {#if error}<p class="error" aria-hidden="true" data-testid="pairing-error" transition:fade={{ duration: 150 }}>{error}</p>{/if}
+    <button type="submit" disabled={pending || code.length !== 6} data-testid="pairing-submit">
       {pending ? "Connexion…" : "Appairer"}
     </button>
   </form>
@@ -96,5 +110,9 @@
   }
   button:disabled { opacity: 0.5; cursor: default; }
   .error { margin: 0; color: var(--amber); font-size: 14px; text-align: center; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
   .notice { margin: 0; color: var(--amber); font-size: 14px; text-align: center; }
 </style>
