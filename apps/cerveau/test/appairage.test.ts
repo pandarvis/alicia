@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { appareils } from "../src/base/schema.ts";
-import { ServiceAppairage } from "../src/identites/appairage.ts";
-import { creerBaseTest, creerHorlogeTest, KEVIN } from "./aides.ts";
+import { appareils, codesAppairage } from "../src/base/schema.ts";
+import { hacher, ServiceAppairage } from "../src/identites/appairage.ts";
+import { creerBaseTest, creerHorlogeTest, ELODIE, KEVIN } from "./aides.ts";
 
 function creerService() {
   const base = creerBaseTest();
@@ -56,6 +56,37 @@ describe("ServiceAppairage", () => {
   test("personne inconnue : refus de générer un code", () => {
     const { service } = creerService();
     expect(() => service.genererCode("inconnu")).toThrow(/inconnue/);
+  });
+
+  test("un code en collision n'est jamais réattribué à une autre personne", () => {
+    const base = creerBaseTest();
+    const temps = creerHorlogeTest();
+    base
+      .insert(codesAppairage)
+      .values({ codeHache: hacher("111111"), personneId: "elodie", expireLe: temps.horloge() + 60_000 })
+      .run();
+    const tirages = ["111111", "222222"];
+    const service = new ServiceAppairage(base, temps.horloge, () => tirages.shift() ?? "333333");
+
+    expect(service.genererCode("kevin")).toBe("222222");
+
+    const pourElodie = service.echanger("111111", "Téléphone Élodie");
+    if ("erreur" in pourElodie) throw new Error(pourElodie.erreur);
+    expect(pourElodie.personne).toEqual(ELODIE);
+    const pourKevin = service.echanger("222222", "PC Kévin");
+    if ("erreur" in pourKevin) throw new Error(pourKevin.erreur);
+    expect(pourKevin.personne).toEqual(KEVIN);
+  });
+
+  test("si aucun code unique n'est trouvable, on abandonne", () => {
+    const base = creerBaseTest();
+    const temps = creerHorlogeTest();
+    base
+      .insert(codesAppairage)
+      .values({ codeHache: hacher("111111"), personneId: "elodie", expireLe: temps.horloge() + 60_000 })
+      .run();
+    const service = new ServiceAppairage(base, temps.horloge, () => "111111");
+    expect(() => service.genererCode("kevin")).toThrow(/unique/);
   });
 
   test("jeton inconnu ou révoqué : pas d'authentification", () => {

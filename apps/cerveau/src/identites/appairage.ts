@@ -9,6 +9,9 @@ import { trouverPersonne } from "./personnes.ts";
 const DUREE_CODE_MS = 10 * 60_000;
 const FENETRE_ECHECS_MS = 60_000;
 const MAX_ECHECS = 5;
+const MAX_TIRAGES = 20;
+
+const tirerCodeAleatoire = (): string => randomInt(0, 1_000_000).toString().padStart(6, "0");
 
 export const hacher = (valeur: string): string => createHash("sha256").update(valeur).digest("hex");
 
@@ -19,11 +22,13 @@ export type ResultatAppairage =
 export class ServiceAppairage {
   readonly #base: Base;
   readonly #horloge: Horloge;
+  readonly #tirerCode: () => string;
   #echecs: number[] = [];
 
-  constructor(base: Base, horloge: Horloge) {
+  constructor(base: Base, horloge: Horloge, tirerCode: () => string = tirerCodeAleatoire) {
     this.#base = base;
     this.#horloge = horloge;
+    this.#tirerCode = tirerCode;
   }
 
   /** Code à 6 chiffres, valable 10 minutes, usage unique. */
@@ -33,16 +38,17 @@ export class ServiceAppairage {
     }
     const maintenant = this.#horloge();
     this.#base.delete(codesAppairage).where(lt(codesAppairage.expireLe, maintenant)).run();
-    const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
-    this.#base
-      .insert(codesAppairage)
-      .values({ codeHache: hacher(code), personneId, expireLe: maintenant + DUREE_CODE_MS })
-      .onConflictDoUpdate({
-        target: codesAppairage.codeHache,
-        set: { personneId, expireLe: maintenant + DUREE_CODE_MS },
-      })
-      .run();
-    return code;
+    // Un code déjà en attente (pour quiconque) n'est jamais réattribué : on en tire un autre.
+    for (let essai = 0; essai < MAX_TIRAGES; essai++) {
+      const code = this.#tirerCode();
+      const resultat = this.#base
+        .insert(codesAppairage)
+        .values({ codeHache: hacher(code), personneId, expireLe: maintenant + DUREE_CODE_MS })
+        .onConflictDoNothing()
+        .run();
+      if (resultat.changes === 1) return code;
+    }
+    throw new Error("Impossible de générer un code d'appairage unique.");
   }
 
   echanger(code: string, nomAppareil: string): ResultatAppairage {
