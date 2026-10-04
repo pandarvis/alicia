@@ -2,5 +2,5 @@ node_modules/
 .superpowers/
 design/mascotte/references/
 .env
-apps/cerveau/alicia.config.yaml
-apps/cerveau/donnees/
+apps/brain/alicia.config.yaml
+apps/brain/donnees/

@@ -21,7 +21,7 @@ importers:
         specifier: ^8.71.0
         version: 8.71.0(eslint@10.12.0)(typescript@6.0.3)
 
-  apps/cerveau:
+  apps/brain:
     dependencies:
       '@alicia/protocol':
         specifier: workspace:*
