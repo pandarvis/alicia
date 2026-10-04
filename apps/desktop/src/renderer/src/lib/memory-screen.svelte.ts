@@ -28,7 +28,7 @@ export interface MemoryPorts {
 export const DORMANT_AFTER_MS = 60 * 24 * 3_600_000;
 
 /** Floor of the brain's semantic search: below it, a memory is not considered close. */
-const SIMILARITY_FLOOR = 0.82;
+export const SIMILARITY_FLOOR = 0.82;
 
 const WRITE_ERRORS: Record<Extract<MemoryWriteResult, { ok: false }>["reason"], string> = {
   duplicate: "Alicia sait déjà ça.",
@@ -224,6 +224,11 @@ export class MemoryScreen {
   async save(): Promise<void> {
     const draft = this.draft;
     if (draft === null || this.saving || this.tab === "trash") return;
+    if (draft.text.trim() === "") {
+      // The brain would refuse it anyway, with a less helpful reason.
+      this.error = WRITE_ERRORS.empty;
+      return;
+    }
     if (this.creating) {
       await this.#create(draft);
       return;

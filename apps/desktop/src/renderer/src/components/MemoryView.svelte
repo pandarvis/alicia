@@ -1,27 +1,31 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { MemoryScreen } from "../lib/memory-screen.svelte.ts";
+  import MemoryDetail from "./MemoryDetail.svelte";
+  import MemoryList from "./MemoryList.svelte";
 
   let { screen, onOpenConversation }: {
     screen: MemoryScreen;
     onOpenConversation: (conversationId: string) => void;
   } = $props();
 
+  // Every visit shows the memories as they are now (Alicia may have remembered something meanwhile).
   onMount(() => {
     void screen.load();
   });
 </script>
 
 <section class="memories" data-testid="memory-view">
-  <p>{screen.items.length} souvenirs</p>
-  {#each screen.items as memory (memory.id)}
-    {#if memory.conversationId !== null && memory.conversationTitle !== null}
-      {@const conversationId = memory.conversationId}
-      <button onclick={() => { onOpenConversation(conversationId); }}>{memory.conversationTitle}</button>
-    {/if}
-  {/each}
+  <div class="list"><MemoryList {screen} /></div>
+  <div class="detail"><MemoryDetail {screen} {onOpenConversation} /></div>
 </section>
 
 <style>
-  .memories { flex: 1; min-height: 0; overflow-y: auto; padding: 24px; color: var(--cream-muted); }
+  /* Layout B: the list on the left, the selected memory on the right; only the columns scroll. */
+  .memories { flex: 1; min-height: 0; display: flex; }
+  .list { flex: 0 0 48%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .detail {
+    flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+    background: var(--night-deep); border-left: 1px solid var(--surface);
+  }
 </style>

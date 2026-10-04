@@ -322,6 +322,16 @@ describe("MemoryScreen: draft and save", () => {
     expect(screen.dirty).toBe(false);
   });
 
+  test("a blank text is not sent: the memory is empty", async () => {
+    const { screen, calls } = await ready([memory(1, { text: "Thé" })]);
+    screen.select(id(1));
+    if (screen.draft !== null) screen.draft.text = "   ";
+    expect(screen.dirty).toBe(true);
+    await screen.save();
+    expect(calls.update).toEqual([]);
+    expect(screen.error).toBe("Le souvenir est vide.");
+  });
+
   test("selecting an unknown id does nothing", async () => {
     const { screen } = await ready([memory(1)]);
     screen.select(id(7));
