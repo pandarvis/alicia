@@ -26,6 +26,13 @@
   let list = $state<HTMLUListElement | null>(null);
   let newButton = $state<HTMLButtonElement | null>(null);
   let keepButton = $state<HTMLButtonElement | null>(null);
+  /** Why a deletion did not happen, shown in its row for a moment (the chat notice may not be on screen). */
+  let refusal = $state<{ id: string; text: string } | null>(null);
+  const REFUSAL_MS = 5000;
+  const REFUSALS = {
+    busy: "Alicia répond ici : réessaie après sa réponse.",
+    failed: "Impossible de supprimer pour l'instant.",
+  } as const;
 
   /** Opens and closes by width, so the chat area beside it glides instead of jumping. */
   function reveal(node: Element): TransitionConfig {
@@ -65,15 +72,27 @@
     const id = deletingId;
     if (id === null || deleting) return;
     deleting = true;
+    refusal = null;
     const result = await store.removeConversation(id);
     deleting = false;
     if (result === "deleted" || result === "not_found") {
       deletingId = null;
       newButton?.focus();
     } else {
+      refusal = { id, text: REFUSALS[result] };
       keep();
     }
   }
+
+  $effect(() => {
+    if (refusal === null) return;
+    const timer = setTimeout(() => {
+      refusal = null;
+    }, REFUSAL_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  });
 
   function handleDeleteKeydown(event: KeyboardEvent): void {
     if (event.key !== "Escape") return;
@@ -141,29 +160,34 @@
     <ul bind:this={list} data-testid="conversation-list">
       {#each store.conversations as conversation (conversation.id)}
         <li class:active={view === "chat" && conversation.id === store.activeId} out:slide={{ duration: motion(180) }}>
-          {#if deletingId === conversation.id}
-            <div class="ask" role="group" aria-label="Supprimer la conversation « {conversation.title} » ?" in:fade={{ duration: motion(150) }}>
-              <span class="question">Supprimer ?</span>
-              <button class="yes" onclick={() => void confirmDelete()} onkeydown={handleDeleteKeydown} disabled={store.busy || deleting} data-testid="delete-conversation-yes">Oui</button>
-              <button class="no" bind:this={keepButton} onclick={keep} onkeydown={handleDeleteKeydown} disabled={deleting} data-testid="delete-conversation-no">Non</button>
-            </div>
-          {:else}
-            <button
-              class="open"
-              onclick={() => { open(conversation.id); }}
-              disabled={store.busy}
-              title={conversation.title}
-              aria-current={conversation.id === store.activeId ? "true" : undefined}
-            >{conversation.title}</button>
-            <button
-              class="delete"
-              onclick={() => { askDelete(conversation.id); }}
-              disabled={store.busy}
-              title="Supprimer"
-              aria-label="Supprimer la conversation « {conversation.title} »"
-              data-conversation-id={conversation.id}
-              data-testid="delete-conversation"
-            >🗑</button>
+          <div class="line">
+            {#if deletingId === conversation.id}
+              <div class="ask" role="group" aria-label="Supprimer la conversation « {conversation.title} » ?" in:fade={{ duration: motion(150) }}>
+                <span class="question">Supprimer ?</span>
+                <button class="yes" onclick={() => void confirmDelete()} onkeydown={handleDeleteKeydown} disabled={store.busy || deleting} data-testid="delete-conversation-yes">Oui</button>
+                <button class="no" bind:this={keepButton} onclick={keep} onkeydown={handleDeleteKeydown} disabled={deleting} data-testid="delete-conversation-no">Non</button>
+              </div>
+            {:else}
+              <button
+                class="open"
+                onclick={() => { open(conversation.id); }}
+                disabled={store.busy}
+                title={conversation.title}
+                aria-current={view === "chat" && conversation.id === store.activeId ? "true" : undefined}
+              >{conversation.title}</button>
+              <button
+                class="delete"
+                onclick={() => { askDelete(conversation.id); }}
+                disabled={store.busy}
+                title="Supprimer"
+                aria-label="Supprimer la conversation « {conversation.title} »"
+                data-conversation-id={conversation.id}
+                data-testid="delete-conversation"
+              >🗑</button>
+            {/if}
+          </div>
+          {#if refusal?.id === conversation.id}
+            <p class="refusal" role="status" data-testid="delete-conversation-refusal" transition:slide={{ duration: motion(150) }}>{refusal.text}</p>
           {/if}
         </li>
       {:else}
@@ -207,7 +231,9 @@
   .new:hover:not(:disabled) { background: var(--surface); }
   .label { margin: 12px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
-  li { position: relative; display: flex; align-items: center; border-radius: 8px; transition: background var(--duration) ease; }
+  li { border-radius: 8px; transition: background var(--duration) ease; }
+  .line { position: relative; display: flex; align-items: center; }
+  .refusal { margin: 0; padding: 0 10px 6px; font-size: 12px; line-height: 1.35; color: var(--amber); }
   li:not(.empty):hover, li.active { background: var(--surface); }
   .open {
     flex: 1; min-width: 0; padding: 7px 10px; color: var(--cream-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

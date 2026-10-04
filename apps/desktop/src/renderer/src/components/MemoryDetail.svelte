@@ -2,11 +2,14 @@
   import { MEMORY_KINDS, type MemoryScope } from "@alicia/protocol";
   import { fade } from "svelte/transition";
   import { KIND_LABEL, provenance, SCOPE_LABEL, usage } from "../lib/memory-labels.ts";
+  import { focusMemory, neighbourId } from "../lib/memory-focus.ts";
   import type { MemoryScreen } from "../lib/memory-screen.svelte.ts";
   import { motion } from "../lib/motion.ts";
 
-  let { screen, onOpenConversation }: {
+  let { screen, conversationBusy, onOpenConversation }: {
     screen: MemoryScreen;
+    /** True while Alicia answers: the source conversation cannot be opened meanwhile. */
+    conversationBusy: boolean;
     onOpenConversation: (conversationId: string) => void;
   } = $props();
 
@@ -56,7 +59,7 @@
   function handleTextKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && event.ctrlKey && !event.isComposing) {
       event.preventDefault();
-      void screen.save();
+      void save();
     }
   }
 
@@ -75,10 +78,40 @@
     askingOn = null;
   }
 
+  /** The next card when the shown memory leaves the list (forgotten, or moved out of this tab). */
+  function nextAfter(id: string): string | null {
+    return neighbourId(screen.visible.map((m) => m.id), id);
+  }
+
+  /** Saves; when the memory moved out of this tab, the focus goes to the next card. */
+  async function save(): Promise<void> {
+    const id = screen.creating ? null : screen.selectedId;
+    const listed = id !== null && screen.items.some((m) => m.id === id);
+    const next = id === null ? null : nextAfter(id);
+    await screen.save();
+    if (listed && !screen.items.some((m) => m.id === id)) await focusMemory(next);
+  }
+
+  /** Arrow keys move the choice between Moi and Famille (one tab stop for the group). */
+  function handleScopeKeydown(event: KeyboardEvent): void {
+    if (screen.draft === null) return;
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+    if (step === 0) return;
+    event.preventDefault();
+    const index = SCOPES.indexOf(screen.draft.scope);
+    const scope = SCOPES[(index + step + SCOPES.length) % SCOPES.length];
+    if (scope === undefined) return;
+    setScope(scope);
+    document.getElementById(`${uid}-scope-${scope}`)?.focus();
+  }
+
   async function confirmForget(): Promise<void> {
     if (forgetting) return;
     forgetting = true;
+    const id = screen.selectedId;
+    const next = id === null ? null : nextAfter(id);
     await screen.forget();
+    if (id !== null && !screen.items.some((m) => m.id === id)) await focusMemory(next);
     forgetting = false;
     askingOn = null;
   }
@@ -95,7 +128,7 @@
     <div class="pane" transition:fade={{ duration: motion(160) }}>
       {#if screen.draft !== null}
         {@const draft = screen.draft}
-        <form class="sheet" onsubmit={(event) => { event.preventDefault(); void screen.save(); }} data-testid="memory-detail">
+        <form class="sheet" onsubmit={(event) => { event.preventDefault(); void save(); }} data-testid="memory-detail">
           <h3>{screen.creating ? "Nouveau souvenir" : "Le souvenir"}</h3>
           <textarea
             value={draft.text}
@@ -113,6 +146,9 @@
                 <button
                   type="button"
                   role="radio"
+                  id="{uid}-scope-{scope}"
+                  tabindex={draft.scope === scope ? 0 : -1}
+                  onkeydown={handleScopeKeydown}
                   class:on={draft.scope === scope}
                   aria-checked={draft.scope === scope}
                   onclick={() => { setScope(scope); }}
@@ -143,7 +179,14 @@
               <p data-testid="memory-provenance">
                 {#if origin.conversation !== null}
                   {@const conversation = origin.conversation}
-                  {origin.text} <button type="button" class="link" onclick={() => { onOpenConversation(conversation.id); }} data-testid="memory-provenance-link">“{conversation.title}”</button>
+                  {origin.text} <button
+                    type="button"
+                    class="link"
+                    onclick={() => { onOpenConversation(conversation.id); }}
+                    disabled={conversationBusy}
+                    title={conversationBusy ? "Disponible après la réponse d'Alicia" : conversation.title}
+                    data-testid="memory-provenance-link"
+                  >“{conversation.title}”</button>
                 {:else}
                   {origin.text}
                 {/if}
@@ -232,8 +275,13 @@
   .pin.on .knob { transform: translateX(10px); background: var(--amber); }
   .facts { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
   .facts p { margin: 0; }
-  .link { padding: 0; border-radius: 4px; color: var(--sage); text-decoration: underline; text-underline-offset: 2px; font-size: inherit; }
-  .link:hover { color: var(--cream); }
+  /* A long title is cut with an ellipsis (the whole title is in the tooltip). */
+  .link {
+    display: inline-block; max-width: 100%; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 0; border-radius: 4px; color: var(--sage); text-decoration: underline; text-underline-offset: 2px; font-size: inherit;
+  }
+  .link:hover:not(:disabled) { color: var(--cream); }
+  .link:disabled { cursor: not-allowed; }
   .error { margin: 0; padding: 6px 10px; border-radius: 8px; background: var(--surface); color: var(--amber); font-size: 13px; }
   .actions { display: flex; gap: 8px; align-items: center; min-height: 34px; }
   .save { background: var(--sage); color: var(--night); font-weight: 700; padding: 7px 14px; }

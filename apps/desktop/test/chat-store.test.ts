@@ -255,7 +255,7 @@ describe("ChatStore", () => {
   test("a failing open sets a notice and ends loading", async () => {
     const { store } = setup([], { history: () => Promise.reject(new Error("boom")) });
     await store.open(CONV);
-    expect(store.notice).toBe("Impossible de charger cette conversation.");
+    expect(store.notice).toBe("Impossible de charger cette conversation pour l'instant.");
     expect(store.loading).toBe(false);
   });
 
@@ -341,7 +341,7 @@ describe("ChatStore", () => {
     history.mockRejectedValue(new Error("boom"));
     await store.resync();
     expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
-    expect(store.notice).toBe("Impossible de charger cette conversation.");
+    expect(store.notice).toBe("Impossible de charger cette conversation pour l'instant.");
   });
 
   describe("removeConversation", () => {
@@ -413,7 +413,7 @@ describe("ChatStore", () => {
       await store.refreshConversations();
       expect(await store.removeConversation(CONV)).toBe("failed");
       expect(store.conversations).toHaveLength(2);
-      expect(store.notice).toBe("Impossible de supprimer cette conversation.");
+      expect(store.notice).toBe("Impossible de supprimer cette conversation pour l'instant.");
     });
   });
 });

@@ -4,8 +4,9 @@
   import MemoryDetail from "./MemoryDetail.svelte";
   import MemoryList from "./MemoryList.svelte";
 
-  let { screen, onOpenConversation }: {
+  let { screen, conversationBusy, onOpenConversation }: {
     screen: MemoryScreen;
+    conversationBusy: boolean;
     onOpenConversation: (conversationId: string) => void;
   } = $props();
 
@@ -17,7 +18,7 @@
 
 <section class="memories" data-testid="memory-view">
   <div class="list"><MemoryList {screen} /></div>
-  <div class="detail"><MemoryDetail {screen} {onOpenConversation} /></div>
+  <div class="detail"><MemoryDetail {screen} {conversationBusy} {onOpenConversation} /></div>
 </section>
 
 <style>

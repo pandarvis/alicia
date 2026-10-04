@@ -107,6 +107,8 @@
 
   /** From a memory, back to the conversation it was remembered in. */
   function openConversation(conversationId: string): void {
+    // While Alicia answers, the chat cannot switch conversation: stay here rather than show the wrong one.
+    if (store.busy) return;
     view = "chat";
     void store.open(conversationId);
   }
@@ -142,7 +144,7 @@
       </div>
       {#if view === "memories"}
         <div class="pane" transition:fade={{ duration: motion(180) }}>
-          <MemoryView screen={memories} onOpenConversation={openConversation} />
+          <MemoryView screen={memories} conversationBusy={store.busy} onOpenConversation={openConversation} />
         </div>
       {/if}
     </main>

@@ -6,6 +6,7 @@
     formatDate, KIND_LABEL, KIND_PLURAL, SCOPE_LABEL, SORT_LABEL, TAB_LABEL,
   } from "../lib/memory-labels.ts";
   import type { MemoryScreen, MemorySort, MemoryTab } from "../lib/memory-screen.svelte.ts";
+  import { focusMemory, neighbourId } from "../lib/memory-focus.ts";
   import { motion } from "../lib/motion.ts";
   import MemoryBench from "./MemoryBench.svelte";
 
@@ -42,6 +43,13 @@
   /** "Famille · Règle", and the extra word when there is one. */
   function meta(memory: MemorySummary, extra: string | null): string {
     return [SCOPE_LABEL[memory.scope], KIND_LABEL[memory.kind], ...(extra === null ? [] : [extra])].join(" · ");
+  }
+
+  /** Restores, then moves the focus to the next card of the trash (or the search field). */
+  async function restore(id: string): Promise<void> {
+    const next = neighbourId(visible.map((m) => m.id), id);
+    await screen.restore(id);
+    if (!screen.items.some((m) => m.id === id)) await focusMemory(next);
   }
 
   function toggleKind(kind: MemoryKind): void {
@@ -137,7 +145,7 @@
                   <span class="text">{memory.text}</span>
                   <span class="meta">{meta(memory, memory.forgottenAt === null ? null : `oublié le ${formatDate(memory.forgottenAt)}`)}</span>
                 </span>
-                <button class="restore" onclick={() => void screen.restore(memory.id)} data-testid="memory-restore">Récupérer</button>
+                <button class="restore" onclick={() => void restore(memory.id)} data-focus-memory={memory.id} data-testid="memory-restore">Récupérer</button>
               </div>
             {:else}
               <button
@@ -147,6 +155,7 @@
                 aria-current={memory.id === screen.selectedId ? "true" : undefined}
                 title={dormant ? "Pas rappelé depuis longtemps (ou jamais)" : undefined}
                 onclick={() => { screen.select(memory.id); }}
+                data-focus-memory={memory.id}
                 data-testid="memory-card"
                 data-dormant={dormant ? "true" : "false"}
               >

@@ -94,7 +94,7 @@ export class ChatStore {
     try {
       result = await this.#ports.deleteConversation(conversationId);
     } catch {
-      this.notice = "Impossible de supprimer cette conversation.";
+      this.notice = "Impossible de supprimer cette conversation pour l'instant.";
       return "failed";
     }
     if (result === "busy") {
@@ -203,7 +203,7 @@ export class ChatStore {
       this.messages = history.map((m) => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
     } catch {
       if (token !== this.#loadToken) return;
-      this.notice = "Impossible de charger cette conversation.";
+      this.notice = "Impossible de charger cette conversation pour l'instant.";
     } finally {
       if (token === this.#loadToken) this.loading = false;
     }

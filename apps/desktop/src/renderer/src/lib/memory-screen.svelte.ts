@@ -37,7 +37,14 @@ const WRITE_ERRORS: Record<Extract<MemoryWriteResult, { ok: false }>["reason"], 
   not_found: "Ce souvenir n'existe plus (supprimé ailleurs ?).",
   invalid: "Vérifie le texte (1 000 caractères au plus).",
 };
-const UNREACHABLE = "Alicia n'est pas joignable pour l'instant.";
+/** When a call fails (brain unreachable or answering oddly): what could not be done, in a neutral voice. */
+const FAILED = {
+  load: "Impossible de charger les souvenirs pour l'instant.",
+  save: "Impossible d'enregistrer ce souvenir pour l'instant.",
+  forget: "Impossible d'oublier ce souvenir pour l'instant.",
+  restore: "Impossible de récupérer ce souvenir pour l'instant.",
+  test: "Impossible de faire le test pour l'instant.",
+} as const;
 
 /** Closeness of a test-bench hit, 0–100, normalised between the search floor and a perfect match. */
 export function proximity(hit: MemoryTestHit): number {
@@ -191,7 +198,7 @@ export class MemoryScreen {
       if (this.selectedId !== null && !this.creating && this.selected === null) this.#deselect();
     } catch {
       if (token !== this.#loadToken) return;
-      this.error = "Impossible de charger les souvenirs.";
+      this.error = FAILED.load;
     } finally {
       if (token === this.#loadToken) this.loading = false;
     }
@@ -265,7 +272,7 @@ export class MemoryScreen {
     try {
       await this.#ports.forget(id);
     } catch {
-      this.error = UNREACHABLE;
+      this.error = FAILED.forget;
       return;
     }
     // Forgotten, or already gone: either way it leaves the list.
@@ -277,7 +284,7 @@ export class MemoryScreen {
     try {
       restored = await this.#ports.restore(id);
     } catch {
-      this.error = UNREACHABLE;
+      this.error = FAILED.restore;
       return;
     }
     this.#remove(id);
@@ -296,13 +303,15 @@ export class MemoryScreen {
       this.error = null;
     } catch {
       if (token !== this.#benchToken) return;
-      this.error = "Le test n'a pas pu se faire.";
+      this.error = FAILED.test;
     }
   }
 
+  /** Back to the list; a hit selected from the bench that is not in it is let go. */
   closeBench(): void {
     this.#benchToken++;
     this.bench = null;
+    if (this.selectedId !== null && !this.creating && !this.items.some((m) => m.id === this.selectedId)) this.#deselect();
   }
 
   async #create(draft: MemoryDraft): Promise<void> {
@@ -336,7 +345,7 @@ export class MemoryScreen {
     try {
       return await run();
     } catch {
-      this.error = UNREACHABLE;
+      this.error = FAILED.save;
       return null;
     } finally {
       this.saving = false;

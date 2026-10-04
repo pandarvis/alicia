@@ -261,7 +261,7 @@ describe("MemoryScreen: loading", () => {
   test("a failed load says so in French and keeps nothing wrong", async () => {
     const { screen } = setup([], { list: () => Promise.reject(new Error("down")) });
     await screen.load();
-    expect(screen.error).toBe("Impossible de charger les souvenirs.");
+    expect(screen.error).toBe("Impossible de charger les souvenirs pour l'instant.");
     expect(screen.loading).toBe(false);
   });
 
@@ -405,12 +405,12 @@ describe("MemoryScreen: draft and save", () => {
     expect(calls.update).toEqual([]);
   });
 
-  test("an unreachable brain reports it and keeps the draft", async () => {
+  test("a failed save says so and keeps the draft", async () => {
     const { screen } = await ready([memory(1)], { update: () => Promise.reject(new Error("down")) });
     screen.select(id(1));
     if (screen.draft !== null) screen.draft.text = "Autre";
     await screen.save();
-    expect(screen.error).toBe("Alicia n'est pas joignable pour l'instant.");
+    expect(screen.error).toBe("Impossible d'enregistrer ce souvenir pour l'instant.");
     expect(screen.draft?.text).toBe("Autre");
     expect(screen.saving).toBe(false);
   });
@@ -568,8 +568,16 @@ describe("MemoryScreen: forget and restore", () => {
     expect(calls.forget).toEqual([]);
     screen.select(id(1));
     await screen.forget();
-    expect(screen.error).toBe("Alicia n'est pas joignable pour l'instant.");
+    expect(screen.error).toBe("Impossible d'oublier ce souvenir pour l'instant.");
     expect(screen.items).toHaveLength(1);
+  });
+
+  test("a failed restore keeps it in the trash and says so", async () => {
+    const { screen } = setup([memory(1, { forgottenAt: ago(1) })], { restore: () => Promise.reject(new Error("down")) });
+    await screen.setTab("trash");
+    await screen.restore(id(1));
+    expect(screen.items.map((m) => m.id)).toEqual([id(1)]);
+    expect(screen.error).toBe("Impossible de récupérer ce souvenir pour l'instant.");
   });
 
   test("restore takes it out of the trash list", async () => {
@@ -636,6 +644,35 @@ describe("MemoryScreen: test bench", () => {
     expect(screen.bench).toBeNull();
   });
 
+  test("closeBench deselects a hit that is not in the list, keeps a listed one", async () => {
+    const elsewhere = memory(5, { scope: "common" });
+    const { screen } = await ready([memory(1)], {
+      test: () => Promise.resolve([hit(0.95, elsewhere), hit(0.9, memory(1))]),
+    });
+    screen.query = "souvenir";
+    await screen.runBench();
+    screen.select(id(5));
+    screen.closeBench();
+    expect(screen.selectedId).toBeNull();
+    expect(screen.draft).toBeNull();
+    await screen.runBench();
+    screen.select(id(1));
+    screen.closeBench();
+    expect(screen.selectedId).toBe(id(1));
+    expect(screen.selected?.id).toBe(id(1));
+  });
+
+  test("closeBench keeps a new memory being typed", async () => {
+    const { screen } = await ready([memory(1)], { test: () => Promise.resolve([hit(0.9, memory(5))]) });
+    screen.query = "souvenir";
+    await screen.runBench();
+    screen.startCreate();
+    if (screen.draft !== null) screen.draft.text = "Moka";
+    screen.closeBench();
+    expect(screen.creating).toBe(true);
+    expect(screen.draft?.text).toBe("Moka");
+  });
+
   test("the latest question wins over an older, slower one", async () => {
     const first = deferred<MemoryTestHit[]>();
     const second = deferred<MemoryTestHit[]>();
@@ -658,7 +695,7 @@ describe("MemoryScreen: test bench", () => {
     const { screen } = setup([], { test: () => Promise.reject(new Error("down")) });
     screen.query = "lasagnes";
     await screen.runBench();
-    expect(screen.error).toBe("Le test n'a pas pu se faire.");
+    expect(screen.error).toBe("Impossible de faire le test pour l'instant.");
     expect(screen.bench).toBeNull();
   });
 

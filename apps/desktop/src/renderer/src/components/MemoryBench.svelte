@@ -76,7 +76,10 @@
   .hit.selected { box-shadow: 0 0 0 1px var(--sage); }
   .rank { flex: none; width: 20px; color: var(--sage); font-weight: 800; }
   .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-  .text { color: var(--cream); line-height: 1.4; overflow-wrap: anywhere; }
+  .text {
+    color: var(--cream); line-height: 1.4; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
   .pin { color: var(--amber); }
   .meta { font-size: 12px; color: var(--muted); }
   .why { font-size: 12px; color: var(--amber); }
