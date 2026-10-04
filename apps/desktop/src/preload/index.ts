@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { z } from "zod";
 import { type AliciaBridge, INVOKE, PUSH } from "../shared/bridge.ts";
 import { ConnectionStatus } from "../shared/chat-connection.ts";
+import { HoloView } from "../shared/holo.ts";
 import { MascotState } from "../shared/mascot.ts";
 import { SaveSessionResult, StoredSession } from "../shared/session.ts";
 
@@ -65,6 +66,21 @@ const bridge: AliciaBridge = {
     showMain: () => call(z.undefined(), INVOKE.showMain),
     openConversation: (conversationId) => call(z.undefined(), INVOKE.openConversation, conversationId),
     onOpenConversation: (listener) => subscribe(PUSH.openConversation, z.uuid(), listener),
+  },
+  surface: {
+    onShown: (listener) => subscribe(PUSH.shown, z.undefined(), () => {
+      listener();
+    }),
+    onHideRequest: (listener) => subscribe(PUSH.hideRequest, z.undefined(), () => {
+      listener();
+    }),
+    hideSelf: () => call(z.undefined(), INVOKE.hideSelf),
+  },
+  holo: {
+    dragStart: () => call(z.undefined(), INVOKE.holoDragStart),
+    dragTo: (delta) => call(z.undefined(), INVOKE.holoDragTo, delta),
+    dragEnd: () => call(z.undefined(), INVOKE.holoDragEnd),
+    setExpanded: (expanded) => call(HoloView, INVOKE.holoSetExpanded, expanded),
   },
 };
 

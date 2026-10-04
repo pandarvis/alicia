@@ -87,6 +87,9 @@ function start(): void {
     rendererIndex: RENDERER_INDEX,
     devUrl: devServerUrl(),
     icon: existsSync(ICON_PNG) ? ICON_PNG : undefined,
+    onHoloDismissed: () => {
+      updateFromOutside({ showHolo: false });
+    },
   });
   const presence = new Presence({
     schedule,
@@ -141,6 +144,7 @@ function start(): void {
       os.setLoginItem(openAtLogin);
     },
     onChange: () => {
+      applyHolo();
       refreshTray();
     },
   });
@@ -154,8 +158,16 @@ function start(): void {
     tray?.update(trayItems());
   }
 
-  /** A change asked from the tray menu; the menu has no room for an error, so a refusal is a notification. */
-  function updateFromTray(patch: SettingsPatch): void {
+  /** The Holo floats on the desktop when the device is paired and the person wants it. */
+  function applyHolo(): void {
+    windows.setHoloVisible(current !== null && settings.snapshot.settings.showHolo);
+  }
+
+  /**
+   * A change asked from outside the Réglages screen (tray menu, Alt+F4 on the Holo), where there is no room for
+   * an error: a refusal is a notification.
+   */
+  function updateFromOutside(patch: SettingsPatch): void {
     if (settings.update(patch).ok) return;
     os.notify({
       title: "Alicia",
@@ -172,10 +184,10 @@ function start(): void {
         windows.showMain();
         return;
       case "toggle-holo":
-        updateFromTray({ showHolo: !settings.snapshot.settings.showHolo });
+        updateFromOutside({ showHolo: !settings.snapshot.settings.showHolo });
         return;
       case "toggle-startup":
-        updateFromTray({ launchAtStartup: !settings.snapshot.settings.launchAtStartup });
+        updateFromOutside({ launchAtStartup: !settings.snapshot.settings.launchAtStartup });
         return;
       case "install-update":
         // Offered once updates exist (task 15).
@@ -192,6 +204,7 @@ function start(): void {
     if (next === null) hub.disconnect();
     else hub.connect(next);
     windows.broadcast(PUSH.session, next);
+    applyHolo();
     refreshTray();
   }
 
@@ -221,9 +234,12 @@ function start(): void {
     windows,
     hub,
     presence,
+    settings,
   });
 
   windows.createMain({ show: !startHidden });
+  windows.setHoloAnchor(settings.snapshot.settings.holoAnchor);
+  applyHolo();
   tray = os.createTray(trayItems(), onTrayAction, () => {
     windows.showMain();
   });

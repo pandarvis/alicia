@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   callHook, closeWindow, deferred, GREETING_EVENTS, launch, pair, POLL, recorded, secondInstance, send, startBrain,
-  tempDir, windowVisible,
+  surfacePage, tempDir, windowBounds, windowVisible,
 } from "./support.ts";
 
 test("closing the main window hides it in the tray; launching Alicia again brings it back", async () => {
@@ -81,4 +81,61 @@ test("a tray change that cannot be saved says so in a notification, and changes 
   ]);
   expect((await recorded(app)).loginItem).toBe(false);
   expect((await recorded(app)).tray.find((item) => item.id === "toggle-startup")?.checked).toBe(false);
+});
+
+test("Holo: follows Alicia's mood, opens a mini-chat, hides from the tray, and keeps its place", async () => {
+  const gate = deferred();
+  const brain = await startBrain(async () => {
+    await gate.promise;
+    return GREETING_EVENTS;
+  });
+  const userData = tempDir("alicia-e2e-profile-");
+  const { app, page } = await launch(userData);
+  await pair(page, brain);
+
+  const holo = await surfacePage(app, "holo");
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+  const mood = (): Promise<string | null> => holo.getByTestId("holo-mascot").getByTestId("mascot").getAttribute("data-mood");
+  await expect.poll(mood, POLL).toBe("idle");
+
+  // A turn from the main window: the Holo thinks, then celebrates, then rests.
+  await send(page, "Salut");
+  await expect.poll(mood, POLL).toBe("thinking");
+  gate.resolve();
+  await expect.poll(mood, POLL).toBe("success");
+  await expect.poll(mood, POLL).toBe("idle");
+
+  // A click opens the mini-chat, which talks to the same Alicia.
+  await holo.getByTestId("holo-mascot").click();
+  await holo.getByTestId("holo-chat").waitFor();
+  expect((await windowBounds(app, "holo")).width).toBeGreaterThan(400);
+  await expect.poll(() => holo.getByTestId("holo-input").isEnabled(), POLL).toBe(true);
+  await holo.getByTestId("holo-input").fill("Et toi ?");
+  await holo.getByTestId("holo-input").press("Enter");
+  await holo.getByTestId("holo-message-assistant").filter({ hasText: "je suis là !" }).waitFor();
+  // Its answer reached the open mini-chat: no notification, and the main window never showed it.
+  expect((await recorded(app)).notifications).toEqual([]);
+  expect(await page.getByTestId("message-user").allTextContents()).toEqual(["Salut"]);
+  await holo.getByTestId("holo-chat-close").click();
+  await holo.getByTestId("holo-chat").waitFor({ state: "detached" });
+  await expect.poll(async () => (await windowBounds(app, "holo")).width, POLL).toBe(136);
+
+  // Moved by hand (the drag itself is unit-tested), hidden and shown again from the tray.
+  await holo.evaluate(async () => {
+    await window.alicia.holo.dragStart();
+    await window.alicia.holo.dragTo({ dx: -300, dy: -200 });
+    await window.alicia.holo.dragEnd();
+  });
+  const moved = await windowBounds(app, "holo");
+  await callHook(app, "trayAction", "toggle-holo");
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(false);
+  await callHook(app, "trayAction", "toggle-holo");
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+  await app.close();
+
+  // Its place is remembered.
+  const again = await launch(userData);
+  await surfacePage(again.app, "holo");
+  await expect.poll(() => windowVisible(again.app, "holo"), POLL).toBe(true);
+  expect(await windowBounds(again.app, "holo")).toEqual(moved);
 });

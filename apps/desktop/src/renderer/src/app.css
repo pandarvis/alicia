@@ -26,3 +26,9 @@ button, input, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* The Holo and the Spotlight bar float on the desktop: their windows are transparent. */
+:root[data-surface="holo"],
+:root[data-surface="spotlight"] { background: transparent; }
+:root[data-surface="holo"] body,
+:root[data-surface="spotlight"] body { overflow: hidden; user-select: none; }

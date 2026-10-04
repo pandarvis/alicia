@@ -1,5 +1,6 @@
 import type { SendMessage, ServerEvent } from "@alicia/protocol";
 import type { ConnectionStatus } from "./chat-connection.ts";
+import type { DragDelta, HoloView } from "./holo.ts";
 import type { MascotState } from "./mascot.ts";
 import type { SaveSessionResult, StoredSession } from "./session.ts";
 
@@ -32,6 +33,25 @@ export interface AppBridge {
   onOpenConversation(listener: (conversationId: string) => void): Unsubscribe;
 }
 
+/** For the floating windows (Holo, Spotlight): entrance and exit animations around show/hide. */
+export interface SurfaceBridge {
+  /** The window was just shown: play the entrance. */
+  onShown(listener: () => void): Unsubscribe;
+  /** The main process wants this window hidden: play the exit, then call hideSelf. */
+  onHideRequest(listener: () => void): Unsubscribe;
+  hideSelf(): Promise<void>;
+}
+
+export interface HoloBridge {
+  dragStart(): Promise<void>;
+  /** Offset from where the drag started, in screen pixels. */
+  dragTo(delta: DragDelta): Promise<void>;
+  /** Ends the drag; the new place is remembered. */
+  dragEnd(): Promise<void>;
+  /** Grows or shrinks the window around the mascot; answers how to lay the page out. */
+  setExpanded(expanded: boolean): Promise<HoloView>;
+}
+
 /** API exposed to every page as `window.alicia` by the preload script. */
 export interface AliciaBridge {
   getSession(): Promise<StoredSession | null>;
@@ -43,6 +63,8 @@ export interface AliciaBridge {
   brain: BrainBridge;
   presence: PresenceBridge;
   app: AppBridge;
+  surface: SurfaceBridge;
+  holo: HoloBridge;
 }
 
 /** Page → main process (ipcRenderer.invoke); every handler checks the sender and validates the payload. */
@@ -58,6 +80,11 @@ export const INVOKE = {
   appVersion: "app:version",
   showMain: "app:show-main",
   openConversation: "app:open-conversation",
+  hideSelf: "window:hide-self",
+  holoDragStart: "holo:drag-start",
+  holoDragTo: "holo:drag-to",
+  holoDragEnd: "holo:drag-end",
+  holoSetExpanded: "holo:set-expanded",
 } as const;
 
 /** Main process → pages (webContents.send); the preload validates every payload. */
@@ -67,4 +94,6 @@ export const PUSH = {
   brainStatus: "push:brain-status",
   presence: "push:presence",
   openConversation: "push:open-conversation",
+  shown: "push:shown",
+  hideRequest: "push:hide-request",
 } as const;

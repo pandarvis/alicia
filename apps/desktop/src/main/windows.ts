@@ -1,10 +1,14 @@
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, shell, type WebContents, type WebPreferences } from "electron";
+import { BrowserWindow, screen, shell, type WebContents, type WebPreferences } from "electron";
 import { PUSH } from "../shared/bridge.ts";
+import type { DragDelta, HoloView, Point } from "../shared/holo.ts";
 import type { Surface } from "../shared/surface.ts";
+import { clampAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type Rect } from "./layout.ts";
 import type { Visibility } from "./turn-notifications.ts";
 
 const PRELOAD = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
+/** A window asked to fade out hides anyway after this delay. */
+const HIDE_FALLBACK_MS = 400;
 
 export interface WindowManagerOptions {
   /** The bundled page (production). */
@@ -13,6 +17,8 @@ export interface WindowManagerOptions {
   devUrl: string | undefined;
   /** Window and taskbar icon, when present. */
   icon: string | undefined;
+  /** Alt+F4 on the Holo: the person does not want it any more (same as unticking it). */
+  onHoloDismissed(): void;
 }
 
 /** Only web links leave the app; anything else (file:, custom schemes) is refused. */
@@ -26,19 +32,31 @@ function isWebUrl(url: string): boolean {
 }
 
 /** A window whose page can still receive messages (a closing window's contents may already be gone). */
-function isAlive(window: BrowserWindow): boolean {
-  return !window.isDestroyed() && !window.webContents.isDestroyed();
+function isAlive(window: BrowserWindow | null): window is BrowserWindow {
+  return window !== null && !window.isDestroyed() && !window.webContents.isDestroyed();
 }
 
 function secureWebPreferences(): WebPreferences {
   return { preload: PRELOAD, sandbox: true, contextIsolation: true, nodeIntegration: false };
 }
 
+/** The work areas of the connected screens, and the primary one (the Holo may live on any of them). */
+function workAreas(): { areas: Rect[]; primary: Rect } {
+  return { areas: screen.getAllDisplays().map((display) => display.workArea), primary: screen.getPrimaryDisplay().workArea };
+}
+
 /** The app's windows. They all load the same page, each as its own surface (`?surface=`). */
 export class WindowManager {
   readonly #options: WindowManagerOptions;
   #main: BrowserWindow | null = null;
+  #holo: BrowserWindow | null = null;
   #quitting = false;
+  /** Where the collapsed Holo sits (null: the default corner). */
+  #anchor: Point | null = null;
+  #expanded = false;
+  #dragOrigin: Point | null = null;
+  /** Windows asked to fade out, with their fallback timer. */
+  readonly #hiding = new Map<BrowserWindow, ReturnType<typeof setTimeout>>();
 
   constructor(options: WindowManagerOptions) {
     this.#options = options;
@@ -81,7 +99,7 @@ export class WindowManager {
   /** Brings the main window forward (second launch, tray, notification click). */
   showMain(): void {
     const window = this.#main;
-    if (window === null || window.isDestroyed()) return;
+    if (!isAlive(window)) return;
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
@@ -89,51 +107,199 @@ export class WindowManager {
 
   /** Asks the main window to show a conversation (it is already shown by then). */
   openConversation(conversationId: string): void {
-    const window = this.#main;
-    if (window !== null && !window.isDestroyed()) window.webContents.send(PUSH.openConversation, conversationId);
+    this.sendTo("main", PUSH.openConversation, conversationId);
   }
 
   /** What the person can see right now (decides notifications). */
   visibility(): Visibility {
-    return { main: this.#mainVisible(), holoChat: false };
+    const holo = this.#holo;
+    const holoShown = isAlive(holo) && holo.isVisible() && !this.#hiding.has(holo);
+    return { main: this.#mainVisible(), holoChat: holoShown && this.#expanded };
   }
 
   /** Which of our windows sent an IPC message (undefined: not one of ours). */
   surfaceOf(contents: WebContents): Surface | undefined {
-    const main = this.#main;
-    if (main !== null && !main.isDestroyed() && main.webContents === contents) return "main";
+    for (const [surface, window] of this.#all()) {
+      if (window.webContents === contents) return surface;
+    }
     return undefined;
   }
 
   /** The surfaces whose window is open (created and not destroyed). */
   surfaces(): Surface[] {
-    return this.#main !== null && isAlive(this.#main) ? ["main"] : [];
+    return this.#all().map(([surface]) => surface);
   }
 
   /** Sends to one surface's window, if it is open. */
   sendTo(surface: Surface, channel: string, payload?: unknown): void {
-    const window = this.#window(surface);
-    if (window !== null) window.webContents.send(channel, payload);
+    const found = this.#all().find(([candidate]) => candidate === surface);
+    found?.[1].webContents.send(channel, payload);
   }
 
   /** Sends to every open window. */
   broadcast(channel: string, payload?: unknown): void {
-    for (const window of this.#windows()) window.webContents.send(channel, payload);
+    for (const [, window] of this.#all()) window.webContents.send(channel, payload);
   }
 
-  #window(surface: Surface): BrowserWindow | null {
-    const window = surface === "main" ? this.#main : null;
-    return window !== null && isAlive(window) ? window : null;
+  /** The remembered place of the Holo (null: default corner). */
+  setHoloAnchor(anchor: Point | null): void {
+    this.#anchor = anchor;
+  }
+
+  /** Shows the Holo (fading in, never taking the focus) or asks it to fade out. */
+  setHoloVisible(visible: boolean): void {
+    const current = this.#holo;
+    if (!visible) {
+      if (isAlive(current) && current.isVisible()) this.#requestHide(current);
+      return;
+    }
+    const window = this.#ensureHolo();
+    const wasHiding = this.#cancelHide(window);
+    if (window.isVisible()) {
+      // Shown again while fading out: fade back in.
+      if (wasHiding) window.webContents.send(PUSH.shown);
+      return;
+    }
+    this.#expanded = false;
+    this.#layoutHolo();
+    // Never steals the focus from what the person is doing.
+    window.showInactive();
+    this.#sendWhenLoaded(window, PUSH.shown);
+  }
+
+  holoDragStart(): void {
+    this.#dragOrigin = this.#holoAnchor();
+  }
+
+  holoDragTo(delta: DragDelta): void {
+    const origin = this.#dragOrigin;
+    if (origin === null) return;
+    const target = { x: Math.round(origin.x + delta.dx), y: Math.round(origin.y + delta.dy) };
+    const { areas, primary } = workAreas();
+    this.#anchor = clampAnchor(target, nearestWorkArea(target, areas, primary));
+    this.#layoutHolo();
+  }
+
+  /** The place to remember, or null when no drag was going on. */
+  holoDragEnd(): Point | null {
+    if (this.#dragOrigin === null) return null;
+    this.#dragOrigin = null;
+    return this.#holoAnchor();
+  }
+
+  setHoloExpanded(expanded: boolean): HoloView {
+    this.#expanded = expanded;
+    const layout = this.#layoutHolo();
+    const holo = this.#holo;
+    if (expanded && isAlive(holo)) holo.focus();
+    return { expanded, panelSide: layout.panelSide, mascot: layout.mascot };
+  }
+
+  /** The page finished its exit animation. The Holo only hides when the main process asked for it. */
+  hideSelf(contents: WebContents): void {
+    const found = this.#all().find(([surface, window]) => surface !== "main" && window.webContents === contents);
+    if (found === undefined) return;
+    const [surface, window] = found;
+    if (surface === "holo" && !this.#hiding.has(window)) return;
+    this.#finishHide(window);
+  }
+
+  /** The open windows with their surface. */
+  #all(): [Surface, BrowserWindow][] {
+    const windows: [Surface, BrowserWindow | null][] = [["main", this.#main], ["holo", this.#holo]];
+    return windows.filter((entry): entry is [Surface, BrowserWindow] => isAlive(entry[1]));
   }
 
   /** Shown, not minimized and in front: an answer arriving behind another app would go unseen. */
   #mainVisible(): boolean {
     const window = this.#main;
-    return window !== null && isAlive(window) && window.isVisible() && !window.isMinimized() && window.isFocused();
+    return isAlive(window) && window.isVisible() && !window.isMinimized() && window.isFocused();
   }
 
-  #windows(): BrowserWindow[] {
-    return [this.#main].filter((window): window is BrowserWindow => window !== null && isAlive(window));
+  /** The Holo's place, brought back onto a screen that still exists. */
+  #holoAnchor(): Point {
+    const { areas, primary } = workAreas();
+    return holoAnchor(this.#anchor, areas, primary);
+  }
+
+  #layoutHolo(): HoloLayout {
+    const anchor = this.#holoAnchor();
+    const { areas, primary } = workAreas();
+    const layout = holoLayout(anchor, this.#expanded, nearestWorkArea(anchor, areas, primary));
+    const holo = this.#holo;
+    // Explicit size, every time: moving to a screen with another scale must not resize the window.
+    if (isAlive(holo)) holo.setBounds(layout.bounds);
+    return layout;
+  }
+
+  #ensureHolo(): BrowserWindow {
+    const existing = this.#holo;
+    if (existing !== null && !existing.isDestroyed()) return existing;
+    const window = new BrowserWindow({
+      ...HOLO_SIZE,
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: "#00000000",
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      alwaysOnTop: true,
+      webPreferences: secureWebPreferences(),
+    });
+    window.setAlwaysOnTop(true, "floating");
+    window.on("close", (event) => {
+      if (this.#quitting) return;
+      event.preventDefault();
+      this.#options.onHoloDismissed();
+    });
+    this.#harden(window);
+    this.#load(window, "holo");
+    this.#holo = window;
+    return window;
+  }
+
+  /** Asks the page to play its exit; it calls hideSelf when done (or the window hides anyway shortly after). */
+  #requestHide(window: BrowserWindow): void {
+    if (this.#hiding.has(window)) return;
+    this.#hiding.set(window, setTimeout(() => {
+      this.#finishHide(window);
+    }, HIDE_FALLBACK_MS));
+    window.webContents.send(PUSH.hideRequest);
+  }
+
+  /** True when a fade-out was going on. */
+  #cancelHide(window: BrowserWindow): boolean {
+    const timer = this.#hiding.get(window);
+    if (timer === undefined) return false;
+    clearTimeout(timer);
+    this.#hiding.delete(window);
+    return true;
+  }
+
+  #finishHide(window: BrowserWindow): void {
+    this.#cancelHide(window);
+    if (window.isDestroyed()) return;
+    window.hide();
+    if (window === this.#holo) {
+      this.#expanded = false;
+      this.#layoutHolo();
+    }
+  }
+
+  /** Sends once the page is loaded (a push sent earlier would be lost). */
+  #sendWhenLoaded(window: BrowserWindow, channel: string): void {
+    const contents = window.webContents;
+    if (contents.isLoading()) {
+      contents.once("did-finish-load", () => {
+        contents.send(channel);
+      });
+    } else {
+      contents.send(channel);
+    }
   }
 
   /** The app never navigates away nor opens windows; external links go to the browser. */

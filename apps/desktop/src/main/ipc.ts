@@ -3,10 +3,12 @@ import { SendMessage } from "@alicia/protocol";
 import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { z } from "zod";
 import { INVOKE } from "../shared/bridge.ts";
+import { DragDelta } from "../shared/holo.ts";
 import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
 import type { Surface } from "../shared/surface.ts";
 import type { BrainHub } from "./brain-hub.ts";
 import type { Presence } from "./presence.ts";
+import type { SettingsController } from "./settings-controller.ts";
 import type { WindowManager } from "./windows.ts";
 
 export interface IpcDependencies {
@@ -16,6 +18,7 @@ export interface IpcDependencies {
   windows: WindowManager;
   hub: BrainHub;
   presence: Presence;
+  settings: SettingsController;
 }
 
 const NONE = z.undefined();
@@ -51,6 +54,32 @@ export function registerIpc(deps: IpcDependencies): void {
     deps.presence.typing();
   });
   handle(INVOKE.appVersion, NONE, () => app.getVersion());
+
+  /** The Holo's own calls are refused from any other window. */
+  function holoOnly(sender: WebContents): void {
+    if (surfaceOf(sender) !== "holo") throw new Error("Holo only");
+  }
+
+  handle(INVOKE.hideSelf, NONE, (_none, sender) => {
+    deps.windows.hideSelf(sender);
+  });
+  handle(INVOKE.holoDragStart, NONE, (_none, sender) => {
+    holoOnly(sender);
+    deps.windows.holoDragStart();
+  });
+  handle(INVOKE.holoDragTo, DragDelta, (delta, sender) => {
+    holoOnly(sender);
+    deps.windows.holoDragTo(delta);
+  });
+  handle(INVOKE.holoDragEnd, NONE, (_none, sender) => {
+    holoOnly(sender);
+    const anchor = deps.windows.holoDragEnd();
+    if (anchor !== null) deps.settings.setHoloAnchor(anchor);
+  });
+  handle(INVOKE.holoSetExpanded, z.boolean(), (expanded, sender) => {
+    holoOnly(sender);
+    return deps.windows.setHoloExpanded(expanded);
+  });
   handle(INVOKE.showMain, NONE, () => {
     deps.windows.showMain();
   });
