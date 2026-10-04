@@ -1,4 +1,14 @@
-import { ConversationSummary, HistoryMessage, PairingResponse } from "@alicia/protocol";
+import {
+  ConversationSummary,
+  HistoryMessage,
+  type MemoryCreate,
+  type MemoryKind,
+  type MemoryPatch,
+  type MemoryScope,
+  MemorySummary,
+  MemoryTestHit,
+  PairingResponse,
+} from "@alicia/protocol";
 import { z } from "zod";
 import type { StoredSession } from "../../../shared/session.ts";
 
@@ -12,6 +22,14 @@ export class UnauthorizedError extends Error {
     this.name = "UnauthorizedError";
   }
 }
+
+/** Result of creating or editing a memory: the memory, or why the brain did not write it. */
+export type MemoryWriteResult =
+  | { ok: true; memory: MemorySummary }
+  | { ok: false; reason: "duplicate" | "secret" | "empty" | "not_found" | "invalid" };
+
+/** Body of a 422 from the brain: the memory was refused. */
+const MemoryRefusal = z.object({ reason: z.enum(["secret", "empty"]) });
 
 const PAIRING_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -90,15 +108,100 @@ export class BrainApi {
     return this.#get(`/conversations/${encodeURIComponent(conversationId)}/messages`, z.array(HistoryMessage));
   }
 
+  /** `forgotten: true` lists the trash; `false` is the same as no filter. */
+  listMemories(filter: { scope?: MemoryScope; kind?: MemoryKind; q?: string; forgotten?: boolean }): Promise<MemorySummary[]> {
+    const params = new URLSearchParams();
+    if (filter.scope !== undefined) params.set("scope", filter.scope);
+    if (filter.kind !== undefined) params.set("kind", filter.kind);
+    if (filter.q !== undefined) params.set("q", filter.q);
+    if (filter.forgotten === true) params.set("forgotten", "true");
+    return this.#get(withQuery("/memories", params), z.array(MemorySummary));
+  }
+
+  async createMemory(input: MemoryCreate): Promise<MemoryWriteResult> {
+    return this.#writeResult(await this.#request("POST", "/memories", input), "/memories");
+  }
+
+  async updateMemory(id: string, patch: MemoryPatch): Promise<MemoryWriteResult> {
+    const path = `/memories/${encodeURIComponent(id)}`;
+    return this.#writeResult(await this.#request("PATCH", path, patch), path);
+  }
+
+  /** False when the memory does not exist (or is not the caller's to forget). */
+  async forgetMemory(id: string): Promise<boolean> {
+    const path = `/memories/${encodeURIComponent(id)}`;
+    const response = await this.#request("DELETE", path);
+    if (response.status === 204) return true;
+    if (response.status === 404) return false;
+    throw unexpectedStatus(response, path);
+  }
+
+  /** Null when there is nothing to restore (unknown, not forgotten, or forgotten too long ago). */
+  async restoreMemory(id: string): Promise<MemorySummary | null> {
+    const path = `/memories/${encodeURIComponent(id)}/restore`;
+    const response = await this.#request("POST", path);
+    if (response.status === 404) return null;
+    if (!response.ok) throw unexpectedStatus(response, path);
+    return MemorySummary.parse(await response.json());
+  }
+
+  /** What Alicia would find for this question, and why. */
+  testMemory(q: string): Promise<MemoryTestHit[]> {
+    return this.#get(withQuery("/memories/test", new URLSearchParams({ q })), z.array(MemoryTestHit));
+  }
+
+  async deleteConversation(id: string): Promise<"deleted" | "not_found" | "busy"> {
+    const path = `/conversations/${encodeURIComponent(id)}`;
+    const response = await this.#request("DELETE", path);
+    if (response.status === 204) return "deleted";
+    if (response.status === 404) return "not_found";
+    if (response.status === 409) return "busy";
+    throw unexpectedStatus(response, path);
+  }
+
   async #get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+    const response = await this.#request("GET", path);
+    if (!response.ok) throw unexpectedStatus(response, path);
+    return schema.parse(await response.json());
+  }
+
+  /** Reads the answer of a create or update: the memory, or the reason the brain did not write it. */
+  async #writeResult(response: Response, path: string): Promise<MemoryWriteResult> {
+    if (response.ok) return { ok: true, memory: MemorySummary.parse(await response.json()) };
+    if (response.status === 409) return { ok: false, reason: "duplicate" };
+    if (response.status === 404) return { ok: false, reason: "not_found" };
+    if (response.status === 400) return { ok: false, reason: "invalid" };
+    if (response.status === 422) {
+      const refusal = MemoryRefusal.parse(await response.json());
+      return { ok: false, reason: refusal.reason };
+    }
+    throw unexpectedStatus(response, path);
+  }
+
+  /** One authenticated call with the request timeout; a refused token is the only status handled here. */
+  async #request(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<Response> {
     // Called as a plain function: native fetch throws "Illegal invocation" when `this` is not the global.
     const fetchFn = this.#fetch;
     const response = await fetchFn(`${this.#session.serverUrl}${path}`, {
-      headers: { authorization: `Bearer ${this.#session.token}` },
+      method,
+      headers: {
+        authorization: `Bearer ${this.#session.token}`,
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (response.status === 401) throw new UnauthorizedError();
-    if (!response.ok) throw new Error(`Brain answered HTTP ${response.status} on ${path}`);
-    return schema.parse(await response.json());
+    return response;
   }
+}
+
+/** `path?params`, or just `path` when there are no params. */
+function withQuery(path: string, params: URLSearchParams): string {
+  const query = params.toString();
+  return query === "" ? path : `${path}?${query}`;
+}
+
+function unexpectedStatus(response: Response, path: string): Error {
+  return new Error(`Brain answered HTTP ${response.status} on ${path}`);
 }
