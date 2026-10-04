@@ -99,7 +99,9 @@ export function toolHandler<Shape extends ToolDefinition["input"]>(
   return async (args) => {
     try {
       return toMcpResult(await definition.run(args));
-    } catch {
+    } catch (error) {
+      // Logged without its message: it may contain household data.
+      console.error(`Tool ${definition.name} failed (${error instanceof Error ? error.name : typeof error})`);
       return { content: [{ type: "text", text: TOOL_FAILURE }], isError: true };
     }
   };
@@ -110,6 +112,8 @@ function toolServer(tools: readonly ToolDefinition[]): McpSdkServerConfigWithIns
   return createSdkMcpServer({
     name: MCP_SERVER,
     version: VERSION,
+    // Never hidden behind tool search (built-in tools, ToolSearch included, are disabled).
+    alwaysLoad: true,
     tools: tools.map((definition) =>
       tool(definition.name, definition.description, definition.input, toolHandler(definition)),
     ),
@@ -221,6 +225,9 @@ export class SdkEngine implements Engine {
       // Built-in Claude Code tools stay disabled; only our MCP tools are allowed, everything else is refused.
       tools: [],
       allowedTools: allowedToolNames(request.tools),
+      disallowedTools: ["ListMcpResourcesTool", "ReadMcpResourceTool"],
+      // Explicit: no classifier-driven mode; the deny-all canUseTool is the only gate besides allowedTools.
+      permissionMode: "default",
       ...(request.tools.length > 0 ? { mcpServers: { [MCP_SERVER]: toolServer(request.tools) } } : {}),
       includePartialMessages: true,
       canUseTool: () => Promise.resolve({ behavior: "deny", message: "Cet outil n'est pas disponible." }),

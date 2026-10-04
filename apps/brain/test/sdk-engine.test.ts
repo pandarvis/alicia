@@ -1,5 +1,5 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import type { EngineEvent } from "../src/engine/engine.ts";
 import {
@@ -241,9 +241,14 @@ describe("tools", () => {
       name: "broken", description: "Casse", input: {},
       run: () => Promise.reject(new Error(`database locked, key ${SECRET}`)),
     });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const result = await toolHandler(broken)({});
     expect(result).toEqual({ content: [{ type: "text", text: "Erreur de l'outil." }], isError: true });
     expect(JSON.stringify(result)).not.toContain(SECRET);
+    // The failure is logged for the household admin, without the error message (it may hold data).
+    expect(logged).toHaveBeenCalledWith("Tool broken failed (Error)");
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(SECRET);
+    logged.mockRestore();
   });
 
   test("toolHandler also catches a synchronous throw", async () => {
