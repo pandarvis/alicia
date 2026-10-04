@@ -10,6 +10,7 @@ import type { ChatDependencies } from "../conversations/chat-service.ts";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { PairingService } from "../identity/pairing.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
+import { registerMemoryRoutes } from "./memory-routes.ts";
 import { attachWs } from "./ws.ts";
 
 export interface ServerDependencies {
@@ -93,6 +94,8 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
       .map((m) => ({ id: m.id, role: m.role, text: m.text, createdAt: iso(m.createdAt) }));
     return list;
   });
+
+  registerMemoryRoutes(app, { memory: deps.chat.memory, personOf });
 
   // Shared by every connection: a single turn at a time per conversation.
   const locks = new ConversationLocks();
