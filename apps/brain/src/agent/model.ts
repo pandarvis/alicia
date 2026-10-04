@@ -1,8 +1,8 @@
 import type { Model } from "@alicia/protocol";
 
-const REFLECHIS_BIEN = /r[ée]fl[ée]chis bien/i;
+const THINK_HARD = /r[ée]fl[ée]chis bien/i;
 
-/** Sonnet par défaut ; Opus si l'interface le demande ou si on dit « réfléchis bien ». */
-export function choisirModele(demande: Model | undefined, texte: string): Model {
-  return demande === "opus" || REFLECHIS_BIEN.test(texte) ? "opus" : "sonnet";
+/** Sonnet by default; Opus if the interface asks for it or if the user says "réfléchis bien". */
+export function chooseModel(requested: Model | undefined, text: string): Model {
+  return requested === "opus" || THINK_HARD.test(text) ? "opus" : "sonnet";
 }

@@ -3,9 +3,9 @@ import { Person } from "@alicia/protocol";
 import { parse } from "yaml";
 import { z } from "zod";
 
-const MODELES_PAR_DEFAUT = { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
+const DEFAULT_MODELS = { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
 
-export const SchemaConfig = z.object({
+export const ConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).default(8780),
   hote: z.string().default("0.0.0.0"),
   dossierDonnees: z.string().default("./donnees"),
@@ -14,36 +14,36 @@ export const SchemaConfig = z.object({
   moteur: z.object({ mode: z.enum(["abonnement", "cle_api"]) }),
   modeles: z
     .object({ sonnet: z.string().min(1), opus: z.string().min(1) })
-    .default(MODELES_PAR_DEFAUT),
+    .default(DEFAULT_MODELS),
 });
-export type Config = z.infer<typeof SchemaConfig>;
-export type ModeMoteur = Config["moteur"]["mode"];
+export type Config = z.infer<typeof ConfigSchema>;
+export type EngineMode = Config["moteur"]["mode"];
 
-export type Authentification =
-  | { mode: "abonnement"; jeton: string }
-  | { mode: "cle_api"; cle: string };
+export type Authentication =
+  | { mode: "abonnement"; token: string }
+  | { mode: "cle_api"; key: string };
 
-export function lireConfig(texteYaml: string): Config {
-  return SchemaConfig.parse(parse(texteYaml));
+export function parseConfig(yamlText: string): Config {
+  return ConfigSchema.parse(parse(yamlText));
 }
 
-export function chargerConfig(chemin: string): Config {
-  return lireConfig(readFileSync(chemin, "utf8"));
+export function loadConfig(path: string): Config {
+  return parseConfig(readFileSync(path, "utf8"));
 }
 
-/** Les secrets viennent de l'environnement, jamais du fichier de config. */
-export function lireAuthentification(
-  mode: ModeMoteur,
+/** Secrets come from the environment, never from the config file. */
+export function readAuthentication(
+  mode: EngineMode,
   env: Readonly<Record<string, string | undefined>>,
-): Authentification {
+): Authentication {
   if (mode === "abonnement") {
-    const jeton = env["CLAUDE_CODE_OAUTH_TOKEN"];
-    if (jeton === undefined || jeton === "") {
+    const token = env["CLAUDE_CODE_OAUTH_TOKEN"];
+    if (token === undefined || token === "") {
       throw new Error("CLAUDE_CODE_OAUTH_TOKEN manquant (générez-le avec `claude setup-token`).");
     }
-    return { mode, jeton };
+    return { mode, token };
   }
-  const cle = env["ANTHROPIC_API_KEY"];
-  if (cle === undefined || cle === "") throw new Error("ANTHROPIC_API_KEY manquant.");
-  return { mode, cle };
+  const key = env["ANTHROPIC_API_KEY"];
+  if (key === undefined || key === "") throw new Error("ANTHROPIC_API_KEY manquant.");
+  return { mode, key };
 }

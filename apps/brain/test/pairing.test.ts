@@ -1,157 +1,157 @@
 import { describe, expect, test } from "vitest";
-import { appareils, codesAppairage } from "../src/db/schema.ts";
-import { hacher, ServiceAppairage } from "../src/identity/pairing.ts";
-import { creerBaseTest, creerHorlogeTest, ELODIE, KEVIN } from "./helpers.ts";
+import { devices, pairingCodes } from "../src/db/schema.ts";
+import { hash, PairingService } from "../src/identity/pairing.ts";
+import { createTestClock, createTestDb, ELODIE, KEVIN } from "./helpers.ts";
 
-function creerService() {
-  const base = creerBaseTest();
-  const temps = creerHorlogeTest();
-  return { base, temps, service: new ServiceAppairage(base, temps.horloge) };
+function createService() {
+  const db = createTestDb();
+  const time = createTestClock();
+  return { db, time, service: new PairingService(db, time.clock) };
 }
 
-describe("ServiceAppairage", () => {
-  test("le code fait 6 chiffres et s'échange contre un jeton lié à la personne", () => {
-    const { service } = creerService();
-    const code = service.genererCode("kevin");
+describe("PairingService", () => {
+  test("the code is 6 digits and is redeemed for a token bound to the person", () => {
+    const { service } = createService();
+    const code = service.generateCode("kevin");
     expect(code).toMatch(/^\d{6}$/);
-    const r = service.echanger(code, "PC Kévin");
-    if ("erreur" in r) throw new Error(r.erreur);
-    expect(r.personne).toEqual(KEVIN);
-    expect(r.jeton.length).toBeGreaterThanOrEqual(43);
-    expect(service.authentifier(r.jeton)).toEqual(KEVIN);
+    const r = service.redeem(code, "PC Kévin");
+    if ("error" in r) throw new Error(r.error);
+    expect(r.person).toEqual(KEVIN);
+    expect(r.token.length).toBeGreaterThanOrEqual(43);
+    expect(service.authenticate(r.token)).toEqual(KEVIN);
   });
 
-  test("le jeton n'est jamais stocké en clair", () => {
-    const { base, service } = creerService();
-    const r = service.echanger(service.genererCode("kevin"), "PC");
-    if ("erreur" in r) throw new Error(r.erreur);
-    const ligne = base.select().from(appareils).get();
-    expect(ligne?.jetonHache).not.toBe(r.jeton);
-    expect(ligne?.jetonHache).toMatch(/^[0-9a-f]{64}$/);
+  test("the token is never stored in clear text", () => {
+    const { db, service } = createService();
+    const r = service.redeem(service.generateCode("kevin"), "PC");
+    if ("error" in r) throw new Error(r.error);
+    const row = db.select().from(devices).get();
+    expect(row?.tokenHash).not.toBe(r.token);
+    expect(row?.tokenHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  test("un code ne sert qu'une fois", () => {
-    const { service } = creerService();
-    const code = service.genererCode("kevin");
-    service.echanger(code, "PC");
-    expect(service.echanger(code, "PC")).toEqual({ erreur: "code_invalide" });
+  test("a code can only be used once", () => {
+    const { service } = createService();
+    const code = service.generateCode("kevin");
+    service.redeem(code, "PC");
+    expect(service.redeem(code, "PC")).toEqual({ error: "invalid_code" });
   });
 
-  test("un code expire après 10 minutes", () => {
-    const { service, temps } = creerService();
-    const code = service.genererCode("kevin");
-    temps.avancer(10 * 60_000 + 1);
-    expect(service.echanger(code, "PC")).toEqual({ erreur: "code_invalide" });
+  test("a code expires after 10 minutes", () => {
+    const { service, time } = createService();
+    const code = service.generateCode("kevin");
+    time.advance(10 * 60_000 + 1);
+    expect(service.redeem(code, "PC")).toEqual({ error: "invalid_code" });
   });
 
-  test("au-delà de 5 échecs par minute, tout est refusé, même un bon code", () => {
-    const { service, temps } = creerService();
-    const bon = service.genererCode("kevin");
-    for (let i = 0; i < 5; i++) service.echanger("000000", "PC");
-    expect(service.echanger(bon, "PC")).toEqual({ erreur: "trop_de_tentatives" });
-    temps.avancer(60_001);
-    expect("jeton" in service.echanger(bon, "PC")).toBe(true);
+  test("beyond 5 failures per minute, everything is rejected, even a valid code", () => {
+    const { service, time } = createService();
+    const good = service.generateCode("kevin");
+    for (let i = 0; i < 5; i++) service.redeem("000000", "PC");
+    expect(service.redeem(good, "PC")).toEqual({ error: "too_many_attempts" });
+    time.advance(60_001);
+    expect("token" in service.redeem(good, "PC")).toBe(true);
   });
 
-  test("personne inconnue : refus de générer un code", () => {
-    const { service } = creerService();
-    expect(() => service.genererCode("inconnu")).toThrow(/inconnue/);
+  test("unknown person: refuses to generate a code", () => {
+    const { service } = createService();
+    expect(() => service.generateCode("unknown")).toThrow(/inconnue/);
   });
 
-  test("un code en collision n'est jamais réattribué à une autre personne", () => {
-    const base = creerBaseTest();
-    const temps = creerHorlogeTest();
-    base
-      .insert(codesAppairage)
-      .values({ codeHache: hacher("111111"), personneId: "elodie", expireLe: temps.horloge() + 60_000 })
+  test("a colliding code is never reassigned to another person", () => {
+    const db = createTestDb();
+    const time = createTestClock();
+    db
+      .insert(pairingCodes)
+      .values({ codeHash: hash("111111"), personId: "elodie", expiresAt: time.clock() + 60_000 })
       .run();
-    const tirages = ["111111", "222222"];
-    const service = new ServiceAppairage(base, temps.horloge, () => tirages.shift() ?? "333333");
+    const draws = ["111111", "222222"];
+    const service = new PairingService(db, time.clock, () => draws.shift() ?? "333333");
 
-    expect(service.genererCode("kevin")).toBe("222222");
+    expect(service.generateCode("kevin")).toBe("222222");
 
-    const pourElodie = service.echanger("111111", "Téléphone Élodie");
-    if ("erreur" in pourElodie) throw new Error(pourElodie.erreur);
-    expect(pourElodie.personne).toEqual(ELODIE);
-    const pourKevin = service.echanger("222222", "PC Kévin");
-    if ("erreur" in pourKevin) throw new Error(pourKevin.erreur);
-    expect(pourKevin.personne).toEqual(KEVIN);
+    const forElodie = service.redeem("111111", "Téléphone Élodie");
+    if ("error" in forElodie) throw new Error(forElodie.error);
+    expect(forElodie.person).toEqual(ELODIE);
+    const forKevin = service.redeem("222222", "PC Kévin");
+    if ("error" in forKevin) throw new Error(forKevin.error);
+    expect(forKevin.person).toEqual(KEVIN);
   });
 
-  test("si aucun code unique n'est trouvable, on abandonne", () => {
-    const base = creerBaseTest();
-    const temps = creerHorlogeTest();
-    base
-      .insert(codesAppairage)
-      .values({ codeHache: hacher("111111"), personneId: "elodie", expireLe: temps.horloge() + 60_000 })
+  test("if no unique code can be found, gives up", () => {
+    const db = createTestDb();
+    const time = createTestClock();
+    db
+      .insert(pairingCodes)
+      .values({ codeHash: hash("111111"), personId: "elodie", expiresAt: time.clock() + 60_000 })
       .run();
-    const service = new ServiceAppairage(base, temps.horloge, () => "111111");
-    expect(() => service.genererCode("kevin")).toThrow(/unique/);
+    const service = new PairingService(db, time.clock, () => "111111");
+    expect(() => service.generateCode("kevin")).toThrow(/unique/);
   });
 
-  test("jeton inconnu ou révoqué : pas d'authentification", () => {
-    const { service } = creerService();
-    expect(service.authentifier("x".repeat(43))).toBeUndefined();
-    const r = service.echanger(service.genererCode("kevin"), "PC");
-    if ("erreur" in r) throw new Error(r.erreur);
-    service.revoquer(r.jeton);
-    expect(service.authentifier(r.jeton)).toBeUndefined();
+  test("unknown or revoked token: no authentication", () => {
+    const { service } = createService();
+    expect(service.authenticate("x".repeat(43))).toBeUndefined();
+    const r = service.redeem(service.generateCode("kevin"), "PC");
+    if ("error" in r) throw new Error(r.error);
+    service.revoke(r.token);
+    expect(service.authenticate(r.token)).toBeUndefined();
   });
 });
 
-describe("ServiceAppairage — gestion des appareils", () => {
-  function appairer(service: ServiceAppairage, personneId: string, nom: string): string {
-    const r = service.echanger(service.genererCode(personneId), nom);
-    if ("erreur" in r) throw new Error(r.erreur);
-    return r.jeton;
+describe("PairingService — device management", () => {
+  function pair(service: PairingService, personId: string, name: string): string {
+    const r = service.redeem(service.generateCode(personId), name);
+    if ("error" in r) throw new Error(r.error);
+    return r.token;
   }
 
-  test("liste les appareils de toutes les personnes, du plus récent au plus ancien", () => {
-    const { service, temps } = creerService();
-    const debut = temps.horloge();
-    appairer(service, "kevin", "PC Kévin");
-    temps.avancer(1000);
-    const jetonTablette = appairer(service, "elodie", "Tablette");
-    temps.avancer(1000);
-    service.authentifier(jetonTablette);
+  test("lists the devices of every person, newest first", () => {
+    const { service, time } = createService();
+    const start = time.clock();
+    pair(service, "kevin", "PC Kévin");
+    time.advance(1000);
+    const tabletToken = pair(service, "elodie", "Tablette");
+    time.advance(1000);
+    service.authenticate(tabletToken);
 
-    const liste = service.listerAppareils();
-    expect(liste.map((a) => [a.personneId, a.nom])).toEqual([
+    const list = service.listDevices();
+    expect(list.map((d) => [d.personId, d.name])).toEqual([
       ["elodie", "Tablette"],
       ["kevin", "PC Kévin"],
     ]);
-    expect(liste[0]).toMatchObject({ creeLe: debut + 1000, vuLe: debut + 2000, revoqueLe: null });
-    expect(liste[1]).toMatchObject({ creeLe: debut, vuLe: null, revoqueLe: null });
-    expect(liste[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(list[0]).toMatchObject({ createdAt: start + 1000, lastSeenAt: start + 2000, revokedAt: null });
+    expect(list[1]).toMatchObject({ createdAt: start, lastSeenAt: null, revokedAt: null });
+    expect(list[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  test("authentifierAppareil rend l'appareil et la personne ; estActif suit la révocation par id", () => {
-    const { service, temps } = creerService();
-    const jeton = appairer(service, "kevin", "PC");
-    const auth = service.authentifierAppareil(jeton);
-    expect(auth?.personne).toEqual(KEVIN);
-    const id = auth?.appareilId ?? "";
-    expect(service.listerAppareils()[0]?.id).toBe(id);
-    expect(service.estActif(id)).toBe(true);
+  test("authenticateDevice returns the device and the person; isActive follows revocation by id", () => {
+    const { service, time } = createService();
+    const token = pair(service, "kevin", "PC");
+    const auth = service.authenticateDevice(token);
+    expect(auth?.person).toEqual(KEVIN);
+    const id = auth?.deviceId ?? "";
+    expect(service.listDevices()[0]?.id).toBe(id);
+    expect(service.isActive(id)).toBe(true);
 
-    temps.avancer(5000);
-    expect(service.revoquerAppareil(id)).toBe(true);
-    expect(service.estActif(id)).toBe(false);
-    expect(service.authentifierAppareil(jeton)).toBeUndefined();
-    expect(service.authentifier(jeton)).toBeUndefined();
-    expect(service.listerAppareils()[0]?.revoqueLe).toBe(temps.horloge());
+    time.advance(5000);
+    expect(service.revokeDevice(id)).toBe(true);
+    expect(service.isActive(id)).toBe(false);
+    expect(service.authenticateDevice(token)).toBeUndefined();
+    expect(service.authenticate(token)).toBeUndefined();
+    expect(service.listDevices()[0]?.revokedAt).toBe(time.clock());
   });
 
-  test("révoquer un appareil inconnu ou déjà révoqué rend false et ne change rien", () => {
-    const { service, temps } = creerService();
-    const jeton = appairer(service, "kevin", "PC");
-    const id = service.authentifierAppareil(jeton)?.appareilId ?? "";
-    expect(service.revoquerAppareil("inconnu")).toBe(false);
-    expect(service.estActif("inconnu")).toBe(false);
-    expect(service.revoquerAppareil(id)).toBe(true);
-    const revoqueLe = service.listerAppareils()[0]?.revoqueLe;
-    temps.avancer(1000);
-    expect(service.revoquerAppareil(id)).toBe(false);
-    expect(service.listerAppareils()[0]?.revoqueLe).toBe(revoqueLe);
+  test("revoking an unknown or already revoked device returns false and changes nothing", () => {
+    const { service, time } = createService();
+    const token = pair(service, "kevin", "PC");
+    const id = service.authenticateDevice(token)?.deviceId ?? "";
+    expect(service.revokeDevice("unknown")).toBe(false);
+    expect(service.isActive("unknown")).toBe(false);
+    expect(service.revokeDevice(id)).toBe(true);
+    const revokedAt = service.listDevices()[0]?.revokedAt;
+    time.advance(1000);
+    expect(service.revokeDevice(id)).toBe(false);
+    expect(service.listDevices()[0]?.revokedAt).toBe(revokedAt);
   });
 });

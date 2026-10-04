@@ -1,125 +1,125 @@
 import { describe, expect, test, vi } from "vitest";
-import { DepotConversations } from "../src/conversations/repository.ts";
-import { ServiceAppairage } from "../src/identity/pairing.ts";
-import { FauxMoteur } from "../src/engine/fake-engine.ts";
-import { creerServeur } from "../src/server/server.ts";
-import { creerBaseTest, creerHorlogeTest } from "./helpers.ts";
+import { ConversationRepository } from "../src/conversations/repository.ts";
+import { FakeEngine } from "../src/engine/fake-engine.ts";
+import { PairingService } from "../src/identity/pairing.ts";
+import { createServer } from "../src/server/server.ts";
+import { createTestClock, createTestDb } from "./helpers.ts";
 
-async function creerContexte() {
-  const base = creerBaseTest();
-  const temps = creerHorlogeTest();
-  const depot = new DepotConversations(base, temps.horloge);
-  const appairage = new ServiceAppairage(base, temps.horloge);
-  const moteur = new FauxMoteur(() => [{ type: "fin", tokensEntree: 0, tokensSortie: 0 }]);
-  const app = await creerServeur({
-    appairage, depot, version: "0.1.0", chat: { depot, moteur, horloge: temps.horloge, fuseau: "Europe/Paris" },
+async function createContext() {
+  const db = createTestDb();
+  const time = createTestClock();
+  const repository = new ConversationRepository(db, time.clock);
+  const pairing = new PairingService(db, time.clock);
+  const engine = new FakeEngine(() => [{ type: "done", inputTokens: 0, outputTokens: 0 }]);
+  const app = await createServer({
+    pairing, repository, version: "0.1.0", chat: { repository, engine, clock: time.clock, timezone: "Europe/Paris" },
   });
-  return { app, appairage, depot };
+  return { app, pairing, repository };
 }
 
-async function appairer(ctx: Awaited<ReturnType<typeof creerContexte>>, personne: string) {
-  const code = ctx.appairage.genererCode(personne);
-  const rep = await ctx.app.inject({ method: "POST", url: "/appairage", payload: { code, nomAppareil: "PC" } });
-  return rep.json<{ jeton: string }>().jeton;
+async function pair(ctx: Awaited<ReturnType<typeof createContext>>, person: string) {
+  const code = ctx.pairing.generateCode(person);
+  const res = await ctx.app.inject({ method: "POST", url: "/pairing", payload: { code, deviceName: "PC" } });
+  return res.json<{ token: string }>().token;
 }
 
-describe("serveur HTTP", () => {
-  test("GET /sante", async () => {
-    const { app } = await creerContexte();
-    const rep = await app.inject({ method: "GET", url: "/sante" });
-    expect(rep.statusCode).toBe(200);
-    expect(rep.json()).toEqual({ ok: true, version: "0.1.0" });
+describe("HTTP server", () => {
+  test("GET /health", async () => {
+    const { app } = await createContext();
+    const res = await app.inject({ method: "GET", url: "/health" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, version: "0.1.0" });
   });
 
-  test("POST /appairage : bon code → jeton et personne", async () => {
-    const ctx = await creerContexte();
-    const code = ctx.appairage.genererCode("kevin");
-    const rep = await ctx.app.inject({ method: "POST", url: "/appairage", payload: { code, nomAppareil: "PC" } });
-    expect(rep.statusCode).toBe(200);
-    expect(rep.json()).toMatchObject({ personne: { id: "kevin", nom: "Kévin" } });
+  test("POST /pairing: valid code → token and person", async () => {
+    const ctx = await createContext();
+    const code = ctx.pairing.generateCode("kevin");
+    const res = await ctx.app.inject({ method: "POST", url: "/pairing", payload: { code, deviceName: "PC" } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ person: { id: "kevin", name: "Kévin" } });
   });
 
-  test("POST /appairage : corps invalide → 400, mauvais code → 401", async () => {
-    const { app } = await creerContexte();
-    expect((await app.inject({ method: "POST", url: "/appairage", payload: { code: "abc" } })).statusCode).toBe(400);
-    const rep = await app.inject({ method: "POST", url: "/appairage", payload: { code: "000000", nomAppareil: "PC" } });
-    expect(rep.statusCode).toBe(401);
+  test("POST /pairing: invalid body → 400, wrong code → 401", async () => {
+    const { app } = await createContext();
+    expect((await app.inject({ method: "POST", url: "/pairing", payload: { code: "abc" } })).statusCode).toBe(400);
+    const res = await app.inject({ method: "POST", url: "/pairing", payload: { code: "000000", deviceName: "PC" } });
+    expect(res.statusCode).toBe(401);
   });
 
-  test("GET /conversations : 401 sans jeton, liste cloisonnée avec jeton", async () => {
-    const ctx = await creerContexte();
+  test("GET /conversations: 401 without a token, isolated list with a token", async () => {
+    const ctx = await createContext();
     expect((await ctx.app.inject({ method: "GET", url: "/conversations" })).statusCode).toBe(401);
-    ctx.depot.creer("kevin", "À Kévin");
-    ctx.depot.creer("elodie", "À Élodie");
-    const jeton = await appairer(ctx, "kevin");
-    const rep = await ctx.app.inject({
-      method: "GET", url: "/conversations", headers: { authorization: `Bearer ${jeton}` },
+    ctx.repository.create("kevin", "À Kévin");
+    ctx.repository.create("elodie", "À Élodie");
+    const token = await pair(ctx, "kevin");
+    const res = await ctx.app.inject({
+      method: "GET", url: "/conversations", headers: { authorization: `Bearer ${token}` },
     });
-    expect(rep.json<{ titre: string }[]>().map((c) => c.titre)).toEqual(["À Kévin"]);
+    expect(res.json<{ title: string }[]>().map((c) => c.title)).toEqual(["À Kévin"]);
   });
 
-  test("GET /conversations/:id/messages : 404 sur la conversation d'un autre", async () => {
-    const ctx = await creerContexte();
-    const c = ctx.depot.creer("elodie", "Privé");
-    ctx.depot.ajouterMessage(c.id, "utilisateur", "secret");
-    const jeton = await appairer(ctx, "kevin");
-    const rep = await ctx.app.inject({
-      method: "GET", url: `/conversations/${c.id}/messages`, headers: { authorization: `Bearer ${jeton}` },
+  test("GET /conversations/:id/messages: 404 on someone else's conversation", async () => {
+    const ctx = await createContext();
+    const c = ctx.repository.create("elodie", "Privé");
+    ctx.repository.addMessage(c.id, "user", "secret");
+    const token = await pair(ctx, "kevin");
+    const res = await ctx.app.inject({
+      method: "GET", url: `/conversations/${c.id}/messages`, headers: { authorization: `Bearer ${token}` },
     });
-    expect(rep.statusCode).toBe(404);
+    expect(res.statusCode).toBe(404);
   });
 
-  test("GET /conversations/:id/messages : historique avec dates ISO", async () => {
-    const ctx = await creerContexte();
-    const c = ctx.depot.creer("kevin", "T");
-    ctx.depot.ajouterMessage(c.id, "utilisateur", "Bonjour");
-    const jeton = await appairer(ctx, "kevin");
-    const rep = await ctx.app.inject({
-      method: "GET", url: `/conversations/${c.id}/messages`, headers: { authorization: `Bearer ${jeton}` },
+  test("GET /conversations/:id/messages: history with ISO dates", async () => {
+    const ctx = await createContext();
+    const c = ctx.repository.create("kevin", "T");
+    ctx.repository.addMessage(c.id, "user", "Bonjour");
+    const token = await pair(ctx, "kevin");
+    const res = await ctx.app.inject({
+      method: "GET", url: `/conversations/${c.id}/messages`, headers: { authorization: `Bearer ${token}` },
     });
-    expect(rep.json()).toEqual([
-      { id: expect.any(String) as string, role: "utilisateur", texte: "Bonjour", creeLe: "2026-10-04T13:30:00.000Z" },
+    expect(res.json()).toEqual([
+      { id: expect.any(String) as string, role: "user", text: "Bonjour", createdAt: "2026-10-04T13:30:00.000Z" },
     ]);
   });
 
-  test("schéma Bearer insensible à la casse (RFC 7235)", async () => {
-    const ctx = await creerContexte();
-    const jeton = await appairer(ctx, "kevin");
-    const rep = await ctx.app.inject({
-      method: "GET", url: "/conversations", headers: { authorization: `bearer ${jeton}` },
+  test("case-insensitive Bearer scheme (RFC 7235)", async () => {
+    const ctx = await createContext();
+    const token = await pair(ctx, "kevin");
+    const res = await ctx.app.inject({
+      method: "GET", url: "/conversations", headers: { authorization: `bearer ${token}` },
     });
-    expect(rep.statusCode).toBe(200);
+    expect(res.statusCode).toBe(200);
   });
 
-  test("JSON mal formé → 400 requete_invalide, sans détail interne", async () => {
-    const { app } = await creerContexte();
-    const rep = await app.inject({
-      method: "POST", url: "/appairage", headers: { "content-type": "application/json" }, payload: "{pas du json",
+  test("malformed JSON → 400 invalid_request, without internal details", async () => {
+    const { app } = await createContext();
+    const res = await app.inject({
+      method: "POST", url: "/pairing", headers: { "content-type": "application/json" }, payload: "{not json",
     });
-    expect(rep.statusCode).toBe(400);
-    expect(rep.json()).toEqual({ erreur: "requete_invalide" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "invalid_request" });
   });
 
-  test("corps trop gros → 413 requete_invalide", async () => {
-    const { app } = await creerContexte();
-    const rep = await app.inject({
-      method: "POST", url: "/appairage", headers: { "content-type": "application/json" },
-      payload: JSON.stringify({ code: "123456", nomAppareil: "x".repeat(1_100_000) }),
+  test("body too large → 413 invalid_request", async () => {
+    const { app } = await createContext();
+    const res = await app.inject({
+      method: "POST", url: "/pairing", headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ code: "123456", deviceName: "x".repeat(1_100_000) }),
     });
-    expect(rep.statusCode).toBe(413);
-    expect(rep.json()).toEqual({ erreur: "requete_invalide" });
+    expect(res.statusCode).toBe(413);
+    expect(res.json()).toEqual({ error: "invalid_request" });
   });
 
-  test("exception dans une route → 500 interne, sans fuite du message", async () => {
-    const ctx = await creerContexte();
-    const jeton = await appairer(ctx, "kevin");
-    vi.spyOn(ctx.depot, "lister").mockImplementation(() => {
-      throw new Error("détail secret de la base");
+  test("exception in a route → 500 internal, without leaking the message", async () => {
+    const ctx = await createContext();
+    const token = await pair(ctx, "kevin");
+    vi.spyOn(ctx.repository, "list").mockImplementation(() => {
+      throw new Error("secret database detail");
     });
-    const rep = await ctx.app.inject({
-      method: "GET", url: "/conversations", headers: { authorization: `Bearer ${jeton}` },
+    const res = await ctx.app.inject({
+      method: "GET", url: "/conversations", headers: { authorization: `Bearer ${token}` },
     });
-    expect(rep.statusCode).toBe(500);
-    expect(rep.json()).toEqual({ erreur: "interne" });
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toEqual({ error: "internal" });
   });
 });

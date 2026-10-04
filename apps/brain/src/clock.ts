@@ -1,4 +1,4 @@
-/** Renvoie l'instant présent en millisecondes. Injecté partout pour tester le temps. */
-export type Horloge = () => number;
+/** Returns the current instant in milliseconds. Injected everywhere so time can be tested. */
+export type Clock = () => number;
 
-export const horlogeSysteme: Horloge = () => Date.now();
+export const systemClock: Clock = () => Date.now();

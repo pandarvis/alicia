@@ -2,15 +2,15 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { ServerEvent, type ClientMessage, PairingResponse } from "@alicia/protocol";
+import { type ClientMessage, PairingResponse, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
-import { construireConsigne } from "./agent/system-prompt.ts";
-import { construireApplication, creerMoteurSdk } from "./application.ts";
-import { chargerConfig, lireAuthentification } from "./config.ts";
-import type { Moteur, RequeteMoteur } from "./engine/engine.ts";
-import { enTexte } from "./server/ws.ts";
+import { buildSystemPrompt } from "./agent/system-prompt.ts";
+import { buildApplication, createSdkEngine } from "./application.ts";
+import { loadConfig, readAuthentication } from "./config.ts";
+import type { Engine, EngineRequest } from "./engine/engine.ts";
+import { toText } from "./server/ws.ts";
 
-const AIDE = `Usage : pnpm --filter @alicia/brain alicia <commande>
+const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
 
   demarrer                       lance le cerveau
   appairer <personne>            affiche un code d'appairage (10 min)
@@ -21,59 +21,59 @@ const AIDE = `Usage : pnpm --filter @alicia/brain alicia <commande>
 
 La config est lue dans ALICIA_CONFIG (défaut : alicia.config.yaml), les secrets dans l'environnement.`;
 
-const cheminConfig = (): string => resolve(process.env["ALICIA_CONFIG"] ?? "alicia.config.yaml");
+const configPath = (): string => resolve(process.env["ALICIA_CONFIG"] ?? "alicia.config.yaml");
 
-/** `appairer`, `appareils` et `revoquer` n'ont pas besoin du moteur : il ne doit jamais être appelé. */
-const MOTEUR_INUTILISE: Moteur = {
-  executer: () => {
+/** `appairer`, `appareils` and `revoquer` do not need the engine: it must never be called. */
+const UNUSED_ENGINE: Engine = {
+  run: () => {
     throw new Error("Moteur inutilisé par cette commande.");
   },
 };
 
-async function demarrer(): Promise<void> {
-  const config = chargerConfig(cheminConfig());
-  const moteur = creerMoteurSdk(config, lireAuthentification(config.moteur.mode, process.env));
-  const appli = await construireApplication(config, moteur, { journal: true });
+async function start(): Promise<void> {
+  const config = loadConfig(configPath());
+  const engine = createSdkEngine(config, readAuthentication(config.moteur.mode, process.env));
+  const app = await buildApplication(config, engine, { logging: true });
   try {
-    await appli.serveur.listen({ port: config.port, host: config.hote });
-  } catch (erreur) {
-    await appli.fermer();
-    throw erreur;
+    await app.server.listen({ port: config.port, host: config.hote });
+  } catch (error) {
+    await app.close();
+    throw error;
   }
   console.log(`Alicia écoute sur ${config.hote}:${config.port} (moteur : ${config.moteur.mode}).`);
 
-  // Arrêt propre : fermer les WebSockets, le serveur et la base avant de sortir.
-  const arreter = (signal: NodeJS.Signals): void => {
+  // Graceful shutdown: close the WebSockets, the server and the database before exiting.
+  const stop = (signal: NodeJS.Signals): void => {
     console.log(`\n${signal} reçu : arrêt d'Alicia…`);
-    appli.fermer().then(
+    app.close().then(
       () => process.exit(0),
-      (erreur: unknown) => {
-        console.error(erreur instanceof Error ? erreur.message : erreur);
+      (error: unknown) => {
+        console.error(error instanceof Error ? error.message : error);
         process.exit(1);
       },
     );
   };
-  process.once("SIGINT", arreter);
-  process.once("SIGTERM", arreter);
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
 }
 
-async function appairer(personne: string | undefined): Promise<void> {
-  if (personne === undefined) throw new Error("Précisez la personne : appairer <kevin|elodie>");
-  const config = chargerConfig(cheminConfig());
-  const appli = await construireApplication(config, MOTEUR_INUTILISE);
+async function pair(person: string | undefined): Promise<void> {
+  if (person === undefined) throw new Error("Précisez la personne : appairer <kevin|elodie>");
+  const config = loadConfig(configPath());
+  const app = await buildApplication(config, UNUSED_ENGINE);
   try {
-    console.log(`Code pour ${personne} : ${appli.appairage.genererCode(personne)} (valable 10 minutes)`);
+    console.log(`Code pour ${person} : ${app.pairing.generateCode(person)} (valable 10 minutes)`);
   } finally {
-    await appli.fermer();
+    await app.close();
   }
 }
 
-async function listerAppareils(): Promise<void> {
-  const config = chargerConfig(cheminConfig());
-  const appli = await construireApplication(config, MOTEUR_INUTILISE);
+async function listDevices(): Promise<void> {
+  const config = loadConfig(configPath());
+  const app = await buildApplication(config, UNUSED_ENGINE);
   try {
-    const liste = appli.appairage.listerAppareils();
-    if (liste.length === 0) {
+    const list = app.pairing.listDevices();
+    if (list.length === 0) {
       console.log("Aucun appareil appairé.");
       return;
     }
@@ -81,159 +81,159 @@ async function listerAppareils(): Promise<void> {
       ms === null
         ? "—"
         : new Date(ms).toLocaleString("fr-FR", { timeZone: config.fuseau, dateStyle: "short", timeStyle: "short" });
-    const nomDe = (id: string): string => config.personnes.find((p) => p.id === id)?.nom ?? id;
-    const lignes = [
+    const nameOf = (id: string): string => config.personnes.find((p) => p.id === id)?.name ?? id;
+    const rows = [
       ["id", "personne", "nom", "créé le", "vu le", "révoqué"],
-      ...liste.map((a) => [a.id, nomDe(a.personneId), a.nom, date(a.creeLe), date(a.vuLe), date(a.revoqueLe)]),
+      ...list.map((d) => [d.id, nameOf(d.personId), d.name, date(d.createdAt), date(d.lastSeenAt), date(d.revokedAt)]),
     ];
-    const largeurs = lignes[0]?.map((_, i) => Math.max(...lignes.map((l) => (l[i] ?? "").length))) ?? [];
-    for (const l of lignes) console.log(l.map((c, i) => c.padEnd(largeurs[i] ?? 0)).join("  ").trimEnd());
+    const widths = rows[0]?.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length))) ?? [];
+    for (const r of rows) console.log(r.map((c, i) => c.padEnd(widths[i] ?? 0)).join("  ").trimEnd());
   } finally {
-    await appli.fermer();
+    await app.close();
   }
 }
 
-async function revoquer(id: string | undefined): Promise<void> {
+async function revoke(id: string | undefined): Promise<void> {
   if (id === undefined) throw new Error("Précisez l'appareil : revoquer <id> (voir « appareils »)");
-  const config = chargerConfig(cheminConfig());
-  const appli = await construireApplication(config, MOTEUR_INUTILISE);
+  const config = loadConfig(configPath());
+  const app = await buildApplication(config, UNUSED_ENGINE);
   try {
-    if (!appli.appairage.revoquerAppareil(id)) throw new Error(`Aucun appareil actif avec l'id ${id}.`);
+    if (!app.pairing.revokeDevice(id)) throw new Error(`Aucun appareil actif avec l'id ${id}.`);
     console.log(`Appareil ${id} révoqué.`);
   } finally {
-    await appli.fermer();
+    await app.close();
   }
 }
 
-async function obtenirJeton(urlWs: string, code: string | undefined): Promise<string> {
+async function getToken(wsUrl: string, code: string | undefined): Promise<string> {
   if (code === undefined) {
-    const jeton = process.env["ALICIA_JETON"];
-    if (jeton === undefined || jeton === "") throw new Error("Donnez --code <6 chiffres> ou la variable ALICIA_JETON.");
-    return jeton;
+    const token = process.env["ALICIA_JETON"];
+    if (token === undefined || token === "") throw new Error("Donnez --code <6 chiffres> ou la variable ALICIA_JETON.");
+    return token;
   }
-  const urlHttp = urlWs.replace(/^ws/, "http").replace(/\/ws$/, "/appairage");
-  const reponse = await fetch(urlHttp, {
+  const httpUrl = wsUrl.replace(/^ws/, "http").replace(/\/ws$/, "/pairing");
+  const response = await fetch(httpUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code, nomAppareil: "Terminal" }),
+    body: JSON.stringify({ code, deviceName: "Terminal" }),
   });
-  if (!reponse.ok) throw new Error(`Appairage refusé (${reponse.status}).`);
-  const { jeton } = PairingResponse.parse(await reponse.json());
-  console.log(`Jeton (à garder dans ALICIA_JETON) : ${jeton}`);
-  return jeton;
+  if (!response.ok) throw new Error(`Appairage refusé (${response.status}).`);
+  const { token } = PairingResponse.parse(await response.json());
+  console.log(`Jeton (à garder dans ALICIA_JETON) : ${token}`);
+  return token;
 }
 
-function lireEvenement(donnees: WebSocket.RawData): ServerEvent | undefined {
+function readEvent(data: WebSocket.RawData): ServerEvent | undefined {
   try {
-    const resultat = ServerEvent.safeParse(JSON.parse(enTexte(donnees)));
-    return resultat.success ? resultat.data : undefined;
+    const result = ServerEvent.safeParse(JSON.parse(toText(data)));
+    return result.success ? result.data : undefined;
   } catch {
     return undefined;
   }
 }
 
-async function discuter(url: string, code: string | undefined): Promise<void> {
-  const jeton = await obtenirJeton(url, code);
+async function chat(url: string, code: string | undefined): Promise<void> {
+  const token = await getToken(url, code);
   const ws = new WebSocket(url);
   let conversationId: string | undefined;
-  let finTour: (() => void) | undefined;
-  const ouverte = (): boolean => ws.readyState === WebSocket.OPEN;
+  let endTurn: (() => void) | undefined;
+  const isOpen = (): boolean => ws.readyState === WebSocket.OPEN;
 
-  const envoyer = (m: ClientMessage): void => {
+  const send = (m: ClientMessage): void => {
     ws.send(JSON.stringify(m));
   };
-  const pret = new Promise<void>((resoudre, rejeter) => {
-    ws.on("message", (donnees: WebSocket.RawData) => {
-      const e = lireEvenement(donnees);
+  const ready = new Promise<void>((resolveReady, rejectReady) => {
+    ws.on("message", (data: WebSocket.RawData) => {
+      const e = readEvent(data);
       if (e === undefined) return;
       switch (e.type) {
-        case "pret":
-          console.log(`Connecté en tant que ${e.personne.nom}. Tape « /quitter » pour sortir.`);
-          resoudre();
+        case "ready":
+          console.log(`Connecté en tant que ${e.person.name}. Tape « /quitter » pour sortir.`);
+          resolveReady();
           break;
         case "conversation":
           conversationId = e.conversationId;
           process.stdout.write("Alicia : ");
           break;
-        case "morceau_texte":
-          process.stdout.write(e.texte);
+        case "text_delta":
+          process.stdout.write(e.text);
           break;
-        case "appel_outil":
-          process.stdout.write(`\n  [outil : ${e.outil}]\n`);
+        case "tool_call":
+          process.stdout.write(`\n  [outil : ${e.tool}]\n`);
           break;
-        case "resultat_outil":
+        case "tool_result":
           break;
-        case "fin":
-          process.stdout.write(`\n  (${e.modele}, ${e.tokensEntree}→${e.tokensSortie} tokens, ${e.dureeMs} ms)\n`);
-          finTour?.();
+        case "done":
+          process.stdout.write(`\n  (${e.model}, ${e.inputTokens}→${e.outputTokens} tokens, ${e.durationMs} ms)\n`);
+          endTurn?.();
           break;
-        case "erreur":
-          // « occupe » : un tour est déjà en cours ; on affiche et on rend la main comme les autres erreurs.
+        case "error":
+          // "busy": a turn is already running; print it and hand back control like any other error.
           console.log(`\n  [erreur ${e.code}] ${e.message}`);
-          finTour?.();
-          if (e.code === "non_authentifie") rejeter(new Error(e.message));
+          endTurn?.();
+          if (e.code === "unauthenticated") rejectReady(new Error(e.message));
           break;
       }
     });
-    // Toujours écouter « error » (sinon le processus tombe) ; après « pret », rejeter n'a plus d'effet.
-    ws.on("error", rejeter);
+    // Always listen to "error" (otherwise the process crashes); after "ready", rejecting has no effect.
+    ws.on("error", rejectReady);
     ws.once("close", () => {
-      finTour?.();
-      rejeter(new Error("Connexion fermée par le cerveau."));
+      endTurn?.();
+      rejectReady(new Error("Connexion fermée par le cerveau."));
     });
   });
   ws.once("open", () => {
-    envoyer({ type: "authentifier", jeton });
+    send({ type: "authenticate", token });
   });
-  await pret;
+  await ready;
 
-  const lecteur = createInterface({ input: process.stdin, output: process.stdout });
-  lecteur.on("SIGINT", () => {
-    lecteur.close();
+  const reader = createInterface({ input: process.stdin, output: process.stdout });
+  reader.on("SIGINT", () => {
+    reader.close();
   });
   try {
-    while (ouverte()) {
-      let texte: string;
+    while (isOpen()) {
+      let text: string;
       try {
-        texte = (await lecteur.question("\nToi : ")).trim();
+        text = (await reader.question("\nToi : ")).trim();
       } catch {
-        break; // Ctrl+C ou Ctrl+D : le lecteur est fermé.
+        break; // Ctrl+C or Ctrl+D: the reader is closed.
       }
-      if (texte === "/quitter") break;
-      if (texte === "" || !ouverte()) continue;
-      const tour = new Promise<void>((resoudre) => {
-        finTour = resoudre;
+      if (text === "/quitter") break;
+      if (text === "" || !isOpen()) continue;
+      const turn = new Promise<void>((resolveTurn) => {
+        endTurn = resolveTurn;
       });
-      envoyer({
-        type: "envoyer",
-        idRequete: randomUUID(),
-        texte,
+      send({
+        type: "send",
+        requestId: randomUUID(),
+        text,
         ...(conversationId !== undefined ? { conversationId } : {}),
       });
-      await tour;
+      await turn;
     }
-    if (!ouverte()) console.log("\nConnexion fermée par le cerveau.");
+    if (!isOpen()) console.log("\nConnexion fermée par le cerveau.");
   } finally {
-    lecteur.close();
+    reader.close();
     ws.close();
   }
 }
 
-async function verifierMoteur(): Promise<void> {
-  const config = chargerConfig(cheminConfig());
-  const moteur = creerMoteurSdk(config, lireAuthentification(config.moteur.mode, process.env));
-  const personne = config.personnes[0];
-  if (personne === undefined) throw new Error("Aucune personne dans la config.");
-  const requete: RequeteMoteur = {
+async function checkEngine(): Promise<void> {
+  const config = loadConfig(configPath());
+  const engine = createSdkEngine(config, readAuthentication(config.moteur.mode, process.env));
+  const person = config.personnes[0];
+  if (person === undefined) throw new Error("Aucune personne dans la config.");
+  const request: EngineRequest = {
     prompt: "Réponds juste « ok » si tu m'entends.",
     sessionId: undefined,
-    modele: "sonnet",
-    consigneSysteme: construireConsigne(personne),
+    model: "sonnet",
+    systemPrompt: buildSystemPrompt(person),
   };
-  for await (const e of moteur.executer(requete, new AbortController().signal)) console.log(e);
+  for await (const e of engine.run(request, new AbortController().signal)) console.log(e);
 }
 
-async function principal(): Promise<void> {
+async function main(): Promise<void> {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {
@@ -242,35 +242,35 @@ async function principal(): Promise<void> {
       aide: { type: "boolean", short: "h" },
     },
   });
-  const [commande, argument] = positionals;
+  const [command, argument] = positionals;
   if (values.aide === true) {
-    console.log(AIDE);
+    console.log(HELP);
     return;
   }
-  switch (commande) {
+  switch (command) {
     case "demarrer":
-      return demarrer();
+      return start();
     case "appairer":
-      return appairer(argument);
+      return pair(argument);
     case "discuter":
-      return discuter(values.url, values.code);
+      return chat(values.url, values.code);
     case "appareils":
-      return listerAppareils();
+      return listDevices();
     case "revoquer":
-      return revoquer(argument);
+      return revoke(argument);
     case "verifier-moteur":
-      return verifierMoteur();
+      return checkEngine();
     case undefined:
-      console.log(AIDE);
+      console.log(HELP);
       return;
     default:
-      console.error(`Commande inconnue : ${commande}\n`);
-      console.log(AIDE);
+      console.error(`Commande inconnue : ${command}\n`);
+      console.log(HELP);
       process.exitCode = 1;
   }
 }
 
-principal().catch((erreur: unknown) => {
-  console.error(erreur instanceof Error ? erreur.message : erreur);
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });

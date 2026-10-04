@@ -1,23 +1,23 @@
 import { expect, test } from "vitest";
-import { FauxMoteur } from "../src/engine/fake-engine.ts";
-import type { EvenementMoteur, RequeteMoteur } from "../src/engine/engine.ts";
+import type { EngineEvent, EngineRequest } from "../src/engine/engine.ts";
+import { FakeEngine } from "../src/engine/fake-engine.ts";
 
-const REQUETE: RequeteMoteur = { prompt: "x", sessionId: undefined, modele: "sonnet", consigneSysteme: "c" };
+const REQUEST: EngineRequest = { prompt: "x", sessionId: undefined, model: "sonnet", systemPrompt: "c" };
 
-async function collecter(source: AsyncIterable<EvenementMoteur>) {
-  const sortie: EvenementMoteur[] = [];
-  for await (const e of source) sortie.push(e);
-  return sortie;
+async function collect(source: AsyncIterable<EngineEvent>) {
+  const output: EngineEvent[] = [];
+  for await (const e of source) output.push(e);
+  return output;
 }
 
-test("rejoue les scénarios dans l'ordre, le dernier se répète, et note les requêtes", async () => {
-  const moteur = new FauxMoteur(
-    () => [{ type: "texte", texte: "un" }],
-    () => [{ type: "texte", texte: "deux" }],
+test("replays the scenarios in order, repeats the last one, and records the requests", async () => {
+  const engine = new FakeEngine(
+    () => [{ type: "text", text: "un" }],
+    () => [{ type: "text", text: "deux" }],
   );
   const signal = new AbortController().signal;
-  expect(await collecter(moteur.executer(REQUETE, signal))).toEqual([{ type: "texte", texte: "un" }]);
-  expect(await collecter(moteur.executer(REQUETE, signal))).toEqual([{ type: "texte", texte: "deux" }]);
-  expect(await collecter(moteur.executer(REQUETE, signal))).toEqual([{ type: "texte", texte: "deux" }]);
-  expect(moteur.requetes).toHaveLength(3);
+  expect(await collect(engine.run(REQUEST, signal))).toEqual([{ type: "text", text: "un" }]);
+  expect(await collect(engine.run(REQUEST, signal))).toEqual([{ type: "text", text: "deux" }]);
+  expect(await collect(engine.run(REQUEST, signal))).toEqual([{ type: "text", text: "deux" }]);
+  expect(engine.requests).toHaveLength(3);
 });

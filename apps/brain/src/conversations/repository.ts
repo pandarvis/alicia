@@ -1,124 +1,124 @@
 import { randomUUID } from "node:crypto";
 import type { Model } from "@alicia/protocol";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import type { Base } from "../db/open.ts";
-import { conversations, journal, messages } from "../db/schema.ts";
-import type { Horloge } from "../clock.ts";
+import type { Db } from "../db/open.ts";
+import { conversations, messages, turnLog } from "../db/schema.ts";
+import type { Clock } from "../clock.ts";
 
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Role = Message["role"];
 
-export interface AppelOutilJournal {
-  idAppel: string;
-  outil: string;
-  succes: boolean | null;
+export interface LoggedToolCall {
+  callId: string;
+  tool: string;
+  success: boolean | null;
 }
 
-export interface EntreeJournal {
+export interface TurnLogEntry {
   conversationId: string;
-  modele: Model;
-  tokensEntree: number;
-  tokensSortie: number;
-  dureeMs: number;
-  outils: readonly AppelOutilJournal[];
-  erreur: string | null;
+  model: Model;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  tools: readonly LoggedToolCall[];
+  error: string | null;
 }
 
 /**
- * Dépôt des conversations, messages et journal.
+ * Repository for conversations, messages and the turn log.
  *
- * Cloisonnement : seul `obtenir` vérifie la propriété. `definirSession`, `ajouterMessage`,
- * `messages` et `derniersMessages` ne prennent qu'un `conversationId` et ne contrôlent PAS
- * à qui il appartient : l'appelant doit d'abord passer par `obtenir(id, personneId)`.
+ * Isolation: only `get` checks ownership. `setSession`, `addMessage`, `messages` and
+ * `lastMessages` only take a `conversationId` and do NOT check who it belongs to:
+ * the caller must first go through `get(id, personId)`.
  */
-export class DepotConversations {
-  readonly #base: Base;
-  readonly #horloge: Horloge;
+export class ConversationRepository {
+  readonly #db: Db;
+  readonly #clock: Clock;
 
-  constructor(base: Base, horloge: Horloge) {
-    this.#base = base;
-    this.#horloge = horloge;
+  constructor(db: Db, clock: Clock) {
+    this.#db = db;
+    this.#clock = clock;
   }
 
-  creer(personneId: string, titre: string): Conversation {
-    const maintenant = this.#horloge();
+  create(personId: string, title: string): Conversation {
+    const now = this.#clock();
     const c: Conversation = {
-      id: randomUUID(), personneId, titre, sessionId: null, creeLe: maintenant, majLe: maintenant,
+      id: randomUUID(), personId, title, sessionId: null, createdAt: now, updatedAt: now,
     };
-    this.#base.insert(conversations).values(c).run();
+    this.#db.insert(conversations).values(c).run();
     return c;
   }
 
-  /** Ne renvoie la conversation que si elle appartient à cette personne. */
-  obtenir(id: string, personneId: string): Conversation | undefined {
-    return this.#base
+  /** Returns the conversation only if it belongs to this person. */
+  get(id: string, personId: string): Conversation | undefined {
+    return this.#db
       .select()
       .from(conversations)
-      .where(and(eq(conversations.id, id), eq(conversations.personneId, personneId)))
+      .where(and(eq(conversations.id, id), eq(conversations.personId, personId)))
       .get();
   }
 
-  lister(personneId: string): Conversation[] {
-    return this.#base
+  list(personId: string): Conversation[] {
+    return this.#db
       .select()
       .from(conversations)
-      .where(eq(conversations.personneId, personneId))
-      .orderBy(desc(conversations.majLe), sql`rowid desc`)
+      .where(eq(conversations.personId, personId))
+      .orderBy(desc(conversations.updatedAt), sql`rowid desc`)
       .limit(100)
       .all();
   }
 
-  definirSession(id: string, sessionId: string | null): void {
-    this.#base.update(conversations).set({ sessionId }).where(eq(conversations.id, id)).run();
+  setSession(id: string, sessionId: string | null): void {
+    this.#db.update(conversations).set({ sessionId }).where(eq(conversations.id, id)).run();
   }
 
-  ajouterMessage(conversationId: string, role: Role, texte: string): void {
-    const maintenant = this.#horloge();
-    this.#base.transaction((tx) => {
+  addMessage(conversationId: string, role: Role, text: string): void {
+    const now = this.#clock();
+    this.#db.transaction((tx) => {
       tx.insert(messages)
-        .values({ id: randomUUID(), conversationId, role, texte, creeLe: maintenant })
+        .values({ id: randomUUID(), conversationId, role, text, createdAt: now })
         .run();
       tx.update(conversations)
-        .set({ majLe: maintenant })
+        .set({ updatedAt: now })
         .where(eq(conversations.id, conversationId))
         .run();
     });
   }
 
   messages(conversationId: string): Message[] {
-    return this.#base
+    return this.#db
       .select()
       .from(messages)
       .where(eq(messages.conversationId, conversationId))
-      .orderBy(asc(messages.creeLe), sql`rowid`)
+      .orderBy(asc(messages.createdAt), sql`rowid`)
       .all();
   }
 
-  derniersMessages(conversationId: string, nombre: number): Message[] {
-    return this.#base
+  lastMessages(conversationId: string, count: number): Message[] {
+    return this.#db
       .select()
       .from(messages)
       .where(eq(messages.conversationId, conversationId))
-      .orderBy(desc(messages.creeLe), sql`rowid desc`)
-      .limit(nombre)
+      .orderBy(desc(messages.createdAt), sql`rowid desc`)
+      .limit(count)
       .all()
       .reverse();
   }
 
-  journaliser(entree: EntreeJournal): void {
-    this.#base
-      .insert(journal)
+  logTurn(entry: TurnLogEntry): void {
+    this.#db
+      .insert(turnLog)
       .values({
         id: randomUUID(),
-        conversationId: entree.conversationId,
-        modele: entree.modele,
-        tokensEntree: entree.tokensEntree,
-        tokensSortie: entree.tokensSortie,
-        dureeMs: entree.dureeMs,
-        outils: JSON.stringify(entree.outils),
-        erreur: entree.erreur,
-        creeLe: this.#horloge(),
+        conversationId: entry.conversationId,
+        model: entry.model,
+        inputTokens: entry.inputTokens,
+        outputTokens: entry.outputTokens,
+        durationMs: entry.durationMs,
+        tools: JSON.stringify(entry.tools),
+        error: entry.error,
+        createdAt: this.#clock(),
       })
       .run();
   }

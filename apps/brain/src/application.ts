@@ -2,66 +2,66 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-import { ouvrirBase } from "./db/open.ts";
-import type { Authentification, Config } from "./config.ts";
-import { DepotConversations } from "./conversations/repository.ts";
-import { horlogeSysteme } from "./clock.ts";
-import { ServiceAppairage } from "./identity/pairing.ts";
-import { synchroniserPersonnes } from "./identity/people.ts";
-import type { Moteur } from "./engine/engine.ts";
-import { MoteurSdk } from "./engine/sdk-engine.ts";
-import { creerServeur } from "./server/server.ts";
+import { systemClock } from "./clock.ts";
+import type { Authentication, Config } from "./config.ts";
+import { ConversationRepository } from "./conversations/repository.ts";
+import { openDb } from "./db/open.ts";
+import type { Engine } from "./engine/engine.ts";
+import { SdkEngine } from "./engine/sdk-engine.ts";
+import { PairingService } from "./identity/pairing.ts";
+import { syncPeople } from "./identity/people.ts";
+import { createServer } from "./server/server.ts";
 import { VERSION } from "./version.ts";
 
-/** cwd du processus SDK (skills au plan 3). */
-export const DOSSIER_ESPACE = fileURLToPath(new URL("../workspace", import.meta.url));
+/** cwd of the SDK process (skills in plan 3). */
+export const WORKSPACE_DIR = fileURLToPath(new URL("../workspace", import.meta.url));
 
-export interface OptionsApplication {
-  /** Journal Fastify (pino, Authorization masqué) : activé par `demarrer`, coupé par défaut. */
-  journal?: boolean;
+export interface ApplicationOptions {
+  /** Fastify logger (pino, Authorization masked): enabled by `demarrer`, off by default. */
+  logging?: boolean;
 }
 
 export interface Application {
-  serveur: FastifyInstance;
-  appairage: ServiceAppairage;
-  /** Ferme le serveur (et ses WebSockets) puis la base. */
-  fermer(): Promise<void>;
+  server: FastifyInstance;
+  pairing: PairingService;
+  /** Closes the server (and its WebSockets), then the database. */
+  close(): Promise<void>;
 }
 
-export function creerMoteurSdk(config: Config, auth: Authentification): Moteur {
-  return new MoteurSdk({ auth, modeles: config.modeles, dossierEspace: DOSSIER_ESPACE });
+export function createSdkEngine(config: Config, auth: Authentication): Engine {
+  return new SdkEngine({ auth, models: config.modeles, workspaceDir: WORKSPACE_DIR });
 }
 
-export async function construireApplication(
+export async function buildApplication(
   config: Config,
-  moteur: Moteur,
-  options: OptionsApplication = {},
+  engine: Engine,
+  options: ApplicationOptions = {},
 ): Promise<Application> {
   mkdirSync(config.dossierDonnees, { recursive: true });
-  const base = ouvrirBase(join(config.dossierDonnees, "alicia.db"));
+  const db = openDb(join(config.dossierDonnees, "alicia.db"));
   try {
-    synchroniserPersonnes(base, config.personnes);
+    syncPeople(db, config.personnes);
 
-    const depot = new DepotConversations(base, horlogeSysteme);
-    const appairage = new ServiceAppairage(base, horlogeSysteme);
-    const serveur = await creerServeur({
-      appairage,
-      depot,
+    const repository = new ConversationRepository(db, systemClock);
+    const pairing = new PairingService(db, systemClock);
+    const server = await createServer({
+      pairing,
+      repository,
       version: VERSION,
-      chat: { depot, moteur, horloge: horlogeSysteme, fuseau: config.fuseau },
-      ...(options.journal !== undefined ? { journal: options.journal } : {}),
+      chat: { repository, engine, clock: systemClock, timezone: config.fuseau },
+      ...(options.logging !== undefined ? { logging: options.logging } : {}),
     });
 
     return {
-      serveur,
-      appairage,
-      fermer: async () => {
-        await serveur.close();
-        base.$client.close();
+      server,
+      pairing,
+      close: async () => {
+        await server.close();
+        db.$client.close();
       },
     };
-  } catch (erreur) {
-    base.$client.close();
-    throw erreur;
+  } catch (error) {
+    db.$client.close();
+    throw error;
   }
 }

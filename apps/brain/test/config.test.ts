@@ -1,43 +1,43 @@
 import { describe, expect, test } from "vitest";
-import { lireAuthentification, lireConfig } from "../src/config.ts";
+import { parseConfig, readAuthentication } from "../src/config.ts";
 
-const YAML_MINIMAL = `
+const MINIMAL_YAML = `
 personnes:
-  - { id: kevin, nom: Kévin }
-  - { id: elodie, nom: Élodie }
+  - { id: kevin, name: Kévin }
+  - { id: elodie, name: Élodie }
 moteur:
   mode: abonnement
 `;
 
-describe("lireConfig", () => {
-  test("applique les valeurs par défaut", () => {
-    const c = lireConfig(YAML_MINIMAL);
+describe("parseConfig", () => {
+  test("applies the defaults", () => {
+    const c = parseConfig(MINIMAL_YAML);
     expect(c.port).toBe(8780);
     expect(c.hote).toBe("0.0.0.0");
     expect(c.fuseau).toBe("Europe/Paris");
     expect(c.modeles).toEqual({ sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" });
     expect(c.personnes.map((p) => p.id)).toEqual(["kevin", "elodie"]);
   });
-  test("refuse une config sans personne", () => {
-    expect(() => lireConfig("personnes: []\nmoteur: { mode: abonnement }")).toThrow();
+  test("rejects a config without any person", () => {
+    expect(() => parseConfig("personnes: []\nmoteur: { mode: abonnement }")).toThrow();
   });
-  test("refuse un mode de moteur inconnu", () => {
-    expect(() => lireConfig("personnes: [{ id: kevin, nom: K }]\nmoteur: { mode: gratuit }")).toThrow();
+  test("rejects an unknown engine mode", () => {
+    expect(() => parseConfig("personnes: [{ id: kevin, name: K }]\nmoteur: { mode: gratuit }")).toThrow();
   });
 });
 
-describe("lireAuthentification", () => {
-  test("abonnement : lit CLAUDE_CODE_OAUTH_TOKEN", () => {
-    expect(lireAuthentification("abonnement", { CLAUDE_CODE_OAUTH_TOKEN: "jeton" })).toEqual({
-      mode: "abonnement", jeton: "jeton",
+describe("readAuthentication", () => {
+  test("subscription: reads CLAUDE_CODE_OAUTH_TOKEN", () => {
+    expect(readAuthentication("abonnement", { CLAUDE_CODE_OAUTH_TOKEN: "token" })).toEqual({
+      mode: "abonnement", token: "token",
     });
   });
-  test("clé API : lit ANTHROPIC_API_KEY", () => {
-    expect(lireAuthentification("cle_api", { ANTHROPIC_API_KEY: "cle" })).toEqual({
-      mode: "cle_api", cle: "cle",
+  test("API key: reads ANTHROPIC_API_KEY", () => {
+    expect(readAuthentication("cle_api", { ANTHROPIC_API_KEY: "key" })).toEqual({
+      mode: "cle_api", key: "key",
     });
   });
-  test("secret manquant : message explicite", () => {
-    expect(() => lireAuthentification("abonnement", {})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
+  test("missing secret: explicit message", () => {
+    expect(() => readAuthentication("abonnement", {})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
   });
 });

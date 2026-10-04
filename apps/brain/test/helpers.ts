@@ -1,24 +1,24 @@
 import type { Person } from "@alicia/protocol";
-import { ouvrirBase } from "../src/db/open.ts";
-import { synchroniserPersonnes } from "../src/identity/people.ts";
+import { openDb } from "../src/db/open.ts";
+import { syncPeople } from "../src/identity/people.ts";
 
-export const KEVIN: Person = { id: "kevin", nom: "Kévin" };
-export const ELODIE: Person = { id: "elodie", nom: "Élodie" };
+export const KEVIN: Person = { id: "kevin", name: "Kévin" };
+export const ELODIE: Person = { id: "elodie", name: "Élodie" };
 
-/** Horloge de test : avance à la main. */
-export function creerHorlogeTest(depart = Date.UTC(2026, 9, 4, 13, 30)) {
-  let maintenant = depart;
+/** Test clock: advanced by hand. */
+export function createTestClock(start = Date.UTC(2026, 9, 4, 13, 30)) {
+  let now = start;
   return {
-    horloge: () => maintenant,
-    avancer: (ms: number) => {
-      maintenant += ms;
+    clock: () => now,
+    advance: (ms: number) => {
+      now += ms;
     },
   };
 }
 
-/** Base en mémoire avec Kévin et Élodie. */
-export function creerBaseTest() {
-  const base = ouvrirBase(":memory:");
-  synchroniserPersonnes(base, [KEVIN, ELODIE]);
-  return base;
+/** In-memory database with Kévin and Élodie. */
+export function createTestDb() {
+  const db = openDb(":memory:");
+  syncPeople(db, [KEVIN, ELODIE]);
+  return db;
 }

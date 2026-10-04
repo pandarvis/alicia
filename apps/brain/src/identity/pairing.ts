@@ -1,167 +1,167 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import type { Person } from "@alicia/protocol";
 import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
-import type { Base } from "../db/open.ts";
-import { appareils, codesAppairage } from "../db/schema.ts";
-import type { Horloge } from "../clock.ts";
-import { trouverPersonne } from "./people.ts";
+import type { Db } from "../db/open.ts";
+import { devices, pairingCodes } from "../db/schema.ts";
+import type { Clock } from "../clock.ts";
+import { findPerson } from "./people.ts";
 
-const DUREE_CODE_MS = 10 * 60_000;
-const FENETRE_ECHECS_MS = 60_000;
-const MAX_ECHECS = 5;
-const MAX_TIRAGES = 20;
+const CODE_TTL_MS = 10 * 60_000;
+const FAILURE_WINDOW_MS = 60_000;
+const MAX_FAILURES = 5;
+const MAX_DRAWS = 20;
 
-const tirerCodeAleatoire = (): string => randomInt(0, 1_000_000).toString().padStart(6, "0");
+const drawRandomCode = (): string => randomInt(0, 1_000_000).toString().padStart(6, "0");
 
-export const hacher = (valeur: string): string => createHash("sha256").update(valeur).digest("hex");
+export const hash = (value: string): string => createHash("sha256").update(value).digest("hex");
 
-export type ResultatAppairage =
-  | { jeton: string; personne: Person }
-  | { erreur: "code_invalide" | "trop_de_tentatives" };
+export type PairingResult =
+  | { token: string; person: Person }
+  | { error: "invalid_code" | "too_many_attempts" };
 
-export interface AppareilAuthentifie {
-  appareilId: string;
-  personne: Person;
+export interface AuthenticatedDevice {
+  deviceId: string;
+  person: Person;
 }
 
-/** Un appareil appairé, tel qu'affiché par `alicia appareils` (dates en ms). */
-export interface Appareil {
+/** A paired device, as shown by `alicia appareils` (dates in ms). */
+export interface Device {
   id: string;
-  personneId: string;
-  nom: string;
-  creeLe: number;
-  vuLe: number | null;
-  revoqueLe: number | null;
+  personId: string;
+  name: string;
+  createdAt: number;
+  lastSeenAt: number | null;
+  revokedAt: number | null;
 }
 
-export class ServiceAppairage {
-  readonly #base: Base;
-  readonly #horloge: Horloge;
-  readonly #tirerCode: () => string;
-  #echecs: number[] = [];
+export class PairingService {
+  readonly #db: Db;
+  readonly #clock: Clock;
+  readonly #drawCode: () => string;
+  #failures: number[] = [];
 
-  constructor(base: Base, horloge: Horloge, tirerCode: () => string = tirerCodeAleatoire) {
-    this.#base = base;
-    this.#horloge = horloge;
-    this.#tirerCode = tirerCode;
+  constructor(db: Db, clock: Clock, drawCode: () => string = drawRandomCode) {
+    this.#db = db;
+    this.#clock = clock;
+    this.#drawCode = drawCode;
   }
 
-  /** Code à 6 chiffres, valable 10 minutes, usage unique. */
-  genererCode(personneId: string): string {
-    if (trouverPersonne(this.#base, personneId) === undefined) {
-      throw new Error(`Personne inconnue : ${personneId}`);
+  /** 6-digit code, valid for 10 minutes, single use. */
+  generateCode(personId: string): string {
+    if (findPerson(this.#db, personId) === undefined) {
+      throw new Error(`Personne inconnue : ${personId}`);
     }
-    const maintenant = this.#horloge();
-    this.#base.delete(codesAppairage).where(lt(codesAppairage.expireLe, maintenant)).run();
-    // Un code déjà en attente (pour quiconque) n'est jamais réattribué : on en tire un autre.
-    for (let essai = 0; essai < MAX_TIRAGES; essai++) {
-      const code = this.#tirerCode();
-      const resultat = this.#base
-        .insert(codesAppairage)
-        .values({ codeHache: hacher(code), personneId, expireLe: maintenant + DUREE_CODE_MS })
+    const now = this.#clock();
+    this.#db.delete(pairingCodes).where(lt(pairingCodes.expiresAt, now)).run();
+    // A code already pending (for anyone) is never reassigned: draw another one.
+    for (let attempt = 0; attempt < MAX_DRAWS; attempt++) {
+      const code = this.#drawCode();
+      const result = this.#db
+        .insert(pairingCodes)
+        .values({ codeHash: hash(code), personId, expiresAt: now + CODE_TTL_MS })
         .onConflictDoNothing()
         .run();
-      if (resultat.changes === 1) return code;
+      if (result.changes === 1) return code;
     }
     throw new Error("Impossible de générer un code d'appairage unique.");
   }
 
-  echanger(code: string, nomAppareil: string): ResultatAppairage {
-    const maintenant = this.#horloge();
-    this.#echecs = this.#echecs.filter((t) => maintenant - t < FENETRE_ECHECS_MS);
-    if (this.#echecs.length >= MAX_ECHECS) return { erreur: "trop_de_tentatives" };
+  redeem(code: string, deviceName: string): PairingResult {
+    const now = this.#clock();
+    this.#failures = this.#failures.filter((t) => now - t < FAILURE_WINDOW_MS);
+    if (this.#failures.length >= MAX_FAILURES) return { error: "too_many_attempts" };
 
-    const ligne = this.#base
+    const row = this.#db
       .select()
-      .from(codesAppairage)
-      .where(eq(codesAppairage.codeHache, hacher(code)))
+      .from(pairingCodes)
+      .where(eq(pairingCodes.codeHash, hash(code)))
       .get();
-    if (ligne === undefined || ligne.expireLe < maintenant) {
-      this.#echecs.push(maintenant);
-      return { erreur: "code_invalide" };
+    if (row === undefined || row.expiresAt < now) {
+      this.#failures.push(now);
+      return { error: "invalid_code" };
     }
-    this.#base.delete(codesAppairage).where(eq(codesAppairage.codeHache, ligne.codeHache)).run();
+    this.#db.delete(pairingCodes).where(eq(pairingCodes.codeHash, row.codeHash)).run();
 
-    const personne = trouverPersonne(this.#base, ligne.personneId);
-    if (personne === undefined) return { erreur: "code_invalide" };
+    const person = findPerson(this.#db, row.personId);
+    if (person === undefined) return { error: "invalid_code" };
 
-    const jeton = randomBytes(32).toString("base64url");
-    this.#base
-      .insert(appareils)
+    const token = randomBytes(32).toString("base64url");
+    this.#db
+      .insert(devices)
       .values({
         id: randomUUID(),
-        personneId: personne.id,
-        nom: nomAppareil,
-        jetonHache: hacher(jeton),
-        creeLe: maintenant,
+        personId: person.id,
+        name: deviceName,
+        tokenHash: hash(token),
+        createdAt: now,
       })
       .run();
-    return { jeton, personne };
+    return { token, person };
   }
 
-  /** Authentifie un jeton : rend l'appareil et sa personne, et note la dernière visite. */
-  authentifierAppareil(jeton: string): AppareilAuthentifie | undefined {
-    const appareil = this.#base
+  /** Authenticates a token: returns the device and its person, and records the last visit. */
+  authenticateDevice(token: string): AuthenticatedDevice | undefined {
+    const device = this.#db
       .select()
-      .from(appareils)
-      .where(eq(appareils.jetonHache, hacher(jeton)))
+      .from(devices)
+      .where(eq(devices.tokenHash, hash(token)))
       .get();
-    if (appareil === undefined || appareil.revoqueLe !== null) return undefined;
-    const personne = trouverPersonne(this.#base, appareil.personneId);
-    if (personne === undefined) return undefined;
-    this.#base
-      .update(appareils)
-      .set({ vuLe: this.#horloge() })
-      .where(eq(appareils.id, appareil.id))
+    if (device === undefined || device.revokedAt !== null) return undefined;
+    const person = findPerson(this.#db, device.personId);
+    if (person === undefined) return undefined;
+    this.#db
+      .update(devices)
+      .set({ lastSeenAt: this.#clock() })
+      .where(eq(devices.id, device.id))
       .run();
-    return { appareilId: appareil.id, personne };
+    return { deviceId: device.id, person };
   }
 
-  authentifier(jeton: string): Person | undefined {
-    return this.authentifierAppareil(jeton)?.personne;
+  authenticate(token: string): Person | undefined {
+    return this.authenticateDevice(token)?.person;
   }
 
-  /** Vrai tant que l'appareil existe et n'a pas été révoqué. */
-  estActif(appareilId: string): boolean {
-    const appareil = this.#base
-      .select({ revoqueLe: appareils.revoqueLe })
-      .from(appareils)
-      .where(eq(appareils.id, appareilId))
+  /** True as long as the device exists and has not been revoked. */
+  isActive(deviceId: string): boolean {
+    const device = this.#db
+      .select({ revokedAt: devices.revokedAt })
+      .from(devices)
+      .where(eq(devices.id, deviceId))
       .get();
-    return appareil !== undefined && appareil.revoqueLe === null;
+    return device !== undefined && device.revokedAt === null;
   }
 
-  /** Tous les appareils, toutes personnes confondues, du plus récent au plus ancien. */
-  listerAppareils(): Appareil[] {
-    return this.#base
+  /** All devices, for every person, newest first. */
+  listDevices(): Device[] {
+    return this.#db
       .select({
-        id: appareils.id,
-        personneId: appareils.personneId,
-        nom: appareils.nom,
-        creeLe: appareils.creeLe,
-        vuLe: appareils.vuLe,
-        revoqueLe: appareils.revoqueLe,
+        id: devices.id,
+        personId: devices.personId,
+        name: devices.name,
+        createdAt: devices.createdAt,
+        lastSeenAt: devices.lastSeenAt,
+        revokedAt: devices.revokedAt,
       })
-      .from(appareils)
-      .orderBy(desc(appareils.creeLe), desc(sql`rowid`))
+      .from(devices)
+      .orderBy(desc(devices.createdAt), desc(sql`rowid`))
       .all();
   }
 
-  /** Révoque un appareil par son id. Vrai si un appareil actif vient d'être révoqué. */
-  revoquerAppareil(id: string): boolean {
-    const resultat = this.#base
-      .update(appareils)
-      .set({ revoqueLe: this.#horloge() })
-      .where(and(eq(appareils.id, id), isNull(appareils.revoqueLe)))
+  /** Revokes a device by id. True if an active device was just revoked. */
+  revokeDevice(id: string): boolean {
+    const result = this.#db
+      .update(devices)
+      .set({ revokedAt: this.#clock() })
+      .where(and(eq(devices.id, id), isNull(devices.revokedAt)))
       .run();
-    return resultat.changes === 1;
+    return result.changes === 1;
   }
 
-  revoquer(jeton: string): void {
-    this.#base
-      .update(appareils)
-      .set({ revoqueLe: this.#horloge() })
-      .where(and(eq(appareils.jetonHache, hacher(jeton)), isNull(appareils.revoqueLe)))
+  revoke(token: string): void {
+    this.#db
+      .update(devices)
+      .set({ revokedAt: this.#clock() })
+      .where(and(eq(devices.tokenHash, hash(token)), isNull(devices.revokedAt)))
       .run();
   }
 }

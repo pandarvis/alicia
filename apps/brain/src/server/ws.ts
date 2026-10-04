@@ -1,140 +1,140 @@
-import { type ServerEvent, ClientMessage, type Person } from "@alicia/protocol";
+import { ClientMessage, type Person, type ServerEvent } from "@alicia/protocol";
 import type { RawData, WebSocket } from "ws";
-import { traiterEnvoi } from "../conversations/chat-service.ts";
-import type { DependancesServeur } from "./server.ts";
-import type { VerrouConversations } from "./conversation-locks.ts";
+import { handleSend } from "../conversations/chat-service.ts";
+import type { ConversationLocks } from "./conversation-locks.ts";
+import type { ServerDependencies } from "./server.ts";
 
-const DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS = 5000;
-const FERMETURE_NON_AUTHENTIFIE = 4401;
-const FERMETURE_ERREUR_INTERNE = 1011;
+const DEFAULT_AUTH_TIMEOUT_MS = 5000;
+const CLOSE_UNAUTHENTICATED = 4401;
+const CLOSE_INTERNAL_ERROR = 1011;
 
-export function enTexte(donnees: RawData): string {
-  if (Buffer.isBuffer(donnees)) return donnees.toString("utf8");
-  if (Array.isArray(donnees)) return Buffer.concat(donnees).toString("utf8");
-  return Buffer.from(donnees).toString("utf8");
+export function toText(data: RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  return Buffer.from(data).toString("utf8");
 }
 
-function lire(donnees: RawData): ClientMessage | undefined {
+function readMessage(data: RawData): ClientMessage | undefined {
   try {
-    const resultat = ClientMessage.safeParse(JSON.parse(enTexte(donnees)));
-    return resultat.success ? resultat.data : undefined;
+    const result = ClientMessage.safeParse(JSON.parse(toText(data)));
+    return result.success ? result.data : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function brancherWs(socket: WebSocket, deps: DependancesServeur, verrou: VerrouConversations): void {
-  let session: { appareilId: string; personne: Person } | undefined;
-  const tours = new Set<AbortController>();
+export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: ConversationLocks): void {
+  let session: { deviceId: string; person: Person } | undefined;
+  const turns = new Set<AbortController>();
 
-  const envoyer = (evenement: ServerEvent): void => {
-    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(evenement));
+  const send = (event: ServerEvent): void => {
+    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
   };
-  const refuser = (message: string): void => {
-    envoyer({ type: "erreur", code: "non_authentifie", message });
-    socket.close(FERMETURE_NON_AUTHENTIFIE, "non authentifie");
+  const reject = (message: string): void => {
+    send({ type: "error", code: "unauthenticated", message });
+    socket.close(CLOSE_UNAUTHENTICATED, "unauthenticated");
   };
 
-  const minuteur = setTimeout(() => {
-    if (session === undefined) refuser("Authentification attendue.");
-  }, deps.delaiAuthentificationMs ?? DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS);
+  const timer = setTimeout(() => {
+    if (session === undefined) reject("Authentification attendue.");
+  }, deps.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS);
 
-  const traiter = (donnees: RawData): void => {
-    const message = lire(donnees);
+  const handle = (data: RawData): void => {
+    const message = readMessage(data);
 
     if (session === undefined) {
-      if (message?.type !== "authentifier") {
-        refuser("Authentification attendue.");
+      if (message?.type !== "authenticate") {
+        reject("Authentification attendue.");
         return;
       }
-      const trouvee = deps.appairage.authentifierAppareil(message.jeton);
-      if (trouvee === undefined) {
-        refuser("Jeton refusé.");
+      const found = deps.pairing.authenticateDevice(message.token);
+      if (found === undefined) {
+        reject("Jeton refusé.");
         return;
       }
-      session = trouvee;
-      clearTimeout(minuteur);
-      envoyer({ type: "pret", personne: trouvee.personne });
+      session = found;
+      clearTimeout(timer);
+      send({ type: "ready", person: found.person });
       return;
     }
 
     if (message === undefined) {
-      envoyer({ type: "erreur", code: "requete_invalide", message: "Message invalide." });
+      send({ type: "error", code: "invalid_request", message: "Message invalide." });
       return;
     }
-    if (message.type === "authentifier") {
-      // L'identité est figée pour toute la durée de la connexion.
-      envoyer({ type: "erreur", code: "requete_invalide", message: "Déjà authentifié." });
+    if (message.type === "authenticate") {
+      // The identity is fixed for the whole lifetime of the connection.
+      send({ type: "error", code: "invalid_request", message: "Déjà authentifié." });
       return;
     }
-    // Un appareil révoqué pendant la connexion perd la main dès son prochain envoi.
-    if (!deps.appairage.estActif(session.appareilId)) {
-      refuser("Appareil révoqué.");
+    // A device revoked during the connection loses access on its next send.
+    if (!deps.pairing.isActive(session.deviceId)) {
+      reject("Appareil révoqué.");
       return;
     }
-    if (tours.size > 0) {
-      envoyer({
-        type: "erreur",
-        idRequete: message.idRequete,
-        code: "occupe",
+    if (turns.size > 0) {
+      send({
+        type: "error",
+        requestId: message.requestId,
+        code: "busy",
         message: "Alicia répond déjà ; réessaie après sa réponse.",
       });
       return;
     }
 
-    const auteur = session.personne;
-    // Conversation existante : verrouillée avant le tour, quel que soit l'appareil qui y répond déjà.
-    let verrouillee: string | undefined;
+    const author = session.person;
+    // Existing conversation: locked before the turn, whichever device is already answering in it.
+    let locked: string | undefined;
     if (message.conversationId !== undefined) {
-      if (!verrou.prendre(auteur.id, message.conversationId)) {
-        envoyer({
-          type: "erreur",
-          idRequete: message.idRequete,
-          code: "occupe",
+      if (!locks.acquire(author.id, message.conversationId)) {
+        send({
+          type: "error",
+          requestId: message.requestId,
+          code: "busy",
           message: "Alicia répond déjà dans cette conversation.",
         });
         return;
       }
-      verrouillee = message.conversationId;
+      locked = message.conversationId;
     }
 
-    const tour = new AbortController();
-    tours.add(tour);
+    const turn = new AbortController();
+    turns.add(turn);
     void (async () => {
       try {
-        for await (const e of traiterEnvoi(deps.chat, auteur, message, tour.signal)) {
-          // Nouvelle conversation : verrouillée dès que son id existe, avant qu'un autre appareil ne le voie.
-          if (e.type === "conversation" && verrouillee === undefined && verrou.prendre(auteur.id, e.conversationId)) {
-            verrouillee = e.conversationId;
+        for await (const e of handleSend(deps.chat, author, message, turn.signal)) {
+          // New conversation: locked as soon as its id exists, before another device can see it.
+          if (e.type === "conversation" && locked === undefined && locks.acquire(author.id, e.conversationId)) {
+            locked = e.conversationId;
           }
-          envoyer(e);
+          send(e);
         }
       } catch {
-        envoyer({ type: "erreur", idRequete: message.idRequete, code: "interne", message: "Erreur interne." });
+        send({ type: "error", requestId: message.requestId, code: "internal", message: "Erreur interne." });
       } finally {
-        tours.delete(tour);
-        if (verrouillee !== undefined) verrou.liberer(auteur.id, verrouillee);
+        turns.delete(turn);
+        if (locked !== undefined) locks.release(author.id, locked);
       }
     })();
   };
 
-  socket.on("message", (donnees: RawData) => {
+  socket.on("message", (data: RawData) => {
     if (socket.readyState !== socket.OPEN) return;
     try {
-      traiter(donnees);
+      handle(data);
     } catch {
-      // Une exception synchrone ne doit jamais faire tomber le processus.
-      envoyer({ type: "erreur", code: "interne", message: "Erreur interne." });
-      socket.close(FERMETURE_ERREUR_INTERNE, "erreur interne");
+      // A synchronous exception must never bring the process down.
+      send({ type: "error", code: "internal", message: "Erreur interne." });
+      socket.close(CLOSE_INTERNAL_ERROR, "internal error");
     }
   });
 
-  const abandonner = (): void => {
-    clearTimeout(minuteur);
-    for (const tour of tours) tour.abort();
+  const abortTurns = (): void => {
+    clearTimeout(timer);
+    for (const turn of turns) turn.abort();
   };
-  socket.on("close", abandonner);
-  // Une erreur de socket (trame trop grande, coupure brutale…) ne doit pas faire tomber
-  // le processus : on annule les tours en cours, comme à la fermeture.
-  socket.on("error", abandonner);
+  socket.on("close", abortTurns);
+  // A socket error (frame too large, abrupt disconnect…) must not bring the process down:
+  // cancel the running turns, as on close.
+  socket.on("error", abortTurns);
 }

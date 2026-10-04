@@ -1,103 +1,103 @@
 import websocket from "@fastify/websocket";
 import {
-  type HistoryMessage,
-  type Person,
-  PairingRequest,
   type ConversationSummary,
+  type HistoryMessage,
+  PairingRequest,
+  type Person,
 } from "@alicia/protocol";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
-import type { DepotConversations } from "../conversations/repository.ts";
-import type { DependancesChat } from "../conversations/chat-service.ts";
-import type { ServiceAppairage } from "../identity/pairing.ts";
-import { VerrouConversations } from "./conversation-locks.ts";
-import { brancherWs } from "./ws.ts";
+import type { ChatDependencies } from "../conversations/chat-service.ts";
+import type { ConversationRepository } from "../conversations/repository.ts";
+import type { PairingService } from "../identity/pairing.ts";
+import { ConversationLocks } from "./conversation-locks.ts";
+import { attachWs } from "./ws.ts";
 
-export interface DependancesServeur {
-  appairage: ServiceAppairage;
-  depot: DepotConversations;
-  chat: DependancesChat;
+export interface ServerDependencies {
+  pairing: PairingService;
+  repository: ConversationRepository;
+  chat: ChatDependencies;
   version: string;
-  /** Délai laissé au client pour s'authentifier (défaut 5 s ; réglable pour les tests). */
-  delaiAuthentificationMs?: number;
-  /** Journal pino de Fastify (défaut : coupé, pour des tests silencieux). */
-  journal?: boolean;
+  /** Time left to the client to authenticate (default 5 s; adjustable for tests). */
+  authTimeoutMs?: number;
+  /** Fastify's pino logger (default: off, for quiet tests). */
+  logging?: boolean;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-/** Schéma « Bearer » insensible à la casse (RFC 7235). */
+/** Case-insensitive "Bearer" scheme (RFC 7235). */
 const BEARER = /^bearer +(\S+)$/i;
 
-/** Statut 4xx porté par une erreur Fastify (JSON mal formé, corps trop gros…), sinon undefined. */
-function statutClient(erreur: unknown): number | undefined {
-  if (typeof erreur !== "object" || erreur === null || !("statusCode" in erreur)) return undefined;
-  const statut = erreur.statusCode;
-  return typeof statut === "number" && statut >= 400 && statut < 500 ? statut : undefined;
+/** 4xx status carried by a Fastify error (malformed JSON, body too large…), otherwise undefined. */
+function clientStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("statusCode" in error)) return undefined;
+  const status = error.statusCode;
+  return typeof status === "number" && status >= 400 && status < 500 ? status : undefined;
 }
 
-export async function creerServeur(deps: DependancesServeur): Promise<FastifyInstance> {
+export async function createServer(deps: ServerDependencies): Promise<FastifyInstance> {
   const app = Fastify({
-    // Jamais l'en-tête Authorization dans le journal ; les corps et les messages n'y sont pas écrits.
-    logger: deps.journal === true ? { redact: ["req.headers.authorization"] } : false,
+    // Never the Authorization header in the log; bodies and messages are not written there.
+    logger: deps.logging === true ? { redact: ["req.headers.authorization"] } : false,
     bodyLimit: 1_048_576,
   });
 
-  // Aucune erreur ne fuit vers le client : 4xx → requete_invalide, le reste → interne (détail au journal).
-  app.setErrorHandler((erreur, requete, reponse) => {
-    const statut = statutClient(erreur);
-    if (statut !== undefined) {
-      requete.log.warn({ statut }, "requête refusée");
-      return reponse.code(statut).send({ erreur: "requete_invalide" });
+  // No error leaks to the client: 4xx → invalid_request, everything else → internal (details in the log).
+  app.setErrorHandler((error, request, reply) => {
+    const status = clientStatus(error);
+    if (status !== undefined) {
+      request.log.warn({ status }, "request rejected");
+      return reply.code(status).send({ error: "invalid_request" });
     }
-    requete.log.error({ err: erreur }, "erreur interne");
-    return reponse.code(500).send({ erreur: "interne" });
+    request.log.error({ err: error }, "internal error");
+    return reply.code(500).send({ error: "internal" });
   });
 
-  // 128 Kio : le protocole plafonne les messages à 20 000 caractères.
+  // 128 KiB: the protocol caps messages at 20,000 characters.
   await app.register(websocket, { options: { maxPayload: 131_072 } });
 
-  const personneDe = (requete: FastifyRequest): Person | undefined => {
-    const jeton = BEARER.exec(requete.headers.authorization ?? "")?.[1];
-    return jeton === undefined ? undefined : deps.appairage.authentifier(jeton);
+  const personOf = (request: FastifyRequest): Person | undefined => {
+    const token = BEARER.exec(request.headers.authorization ?? "")?.[1];
+    return token === undefined ? undefined : deps.pairing.authenticate(token);
   };
 
-  app.get("/sante", () => ({ ok: true as const, version: deps.version }));
+  app.get("/health", () => ({ ok: true as const, version: deps.version }));
 
-  app.post("/appairage", (requete, reponse) => {
-    const corps = PairingRequest.safeParse(requete.body);
-    if (!corps.success) return reponse.code(400).send({ erreur: "requete_invalide" });
-    const resultat = deps.appairage.echanger(corps.data.code, corps.data.nomAppareil);
-    if ("erreur" in resultat) {
-      return reponse.code(resultat.erreur === "trop_de_tentatives" ? 429 : 401).send({ erreur: resultat.erreur });
+  app.post("/pairing", (request, reply) => {
+    const body = PairingRequest.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+    const result = deps.pairing.redeem(body.data.code, body.data.deviceName);
+    if ("error" in result) {
+      return reply.code(result.error === "too_many_attempts" ? 429 : 401).send({ error: result.error });
     }
-    return resultat;
+    return result;
   });
 
-  app.get("/conversations", (requete, reponse) => {
-    const personne = personneDe(requete);
-    if (personne === undefined) return reponse.code(401).send({ erreur: "non_authentifie" });
-    const liste: ConversationSummary[] = deps.depot
-      .lister(personne.id)
-      .map((c) => ({ id: c.id, titre: c.titre, majLe: iso(c.majLe) }));
-    return liste;
+  app.get("/conversations", (request, reply) => {
+    const person = personOf(request);
+    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    const list: ConversationSummary[] = deps.repository
+      .list(person.id)
+      .map((c) => ({ id: c.id, title: c.title, updatedAt: iso(c.updatedAt) }));
+    return list;
   });
 
-  app.get<{ Params: { id: string } }>("/conversations/:id/messages", (requete, reponse) => {
-    const personne = personneDe(requete);
-    if (personne === undefined) return reponse.code(401).send({ erreur: "non_authentifie" });
-    if (deps.depot.obtenir(requete.params.id, personne.id) === undefined) {
-      return reponse.code(404).send({ erreur: "introuvable" });
+  app.get<{ Params: { id: string } }>("/conversations/:id/messages", (request, reply) => {
+    const person = personOf(request);
+    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    if (deps.repository.get(request.params.id, person.id) === undefined) {
+      return reply.code(404).send({ error: "not_found" });
     }
-    const liste: HistoryMessage[] = deps.depot
-      .messages(requete.params.id)
-      .map((m) => ({ id: m.id, role: m.role, texte: m.texte, creeLe: iso(m.creeLe) }));
-    return liste;
+    const list: HistoryMessage[] = deps.repository
+      .messages(request.params.id)
+      .map((m) => ({ id: m.id, role: m.role, text: m.text, createdAt: iso(m.createdAt) }));
+    return list;
   });
 
-  // Partagé par toutes les connexions : un seul tour à la fois par conversation.
-  const verrou = new VerrouConversations();
+  // Shared by every connection: a single turn at a time per conversation.
+  const locks = new ConversationLocks();
   app.get("/ws", { websocket: true }, (socket) => {
-    brancherWs(socket, deps, verrou);
+    attachWs(socket, deps, locks);
   });
 
   return app;

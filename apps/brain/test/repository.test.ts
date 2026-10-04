@@ -1,75 +1,75 @@
 import { describe, expect, test } from "vitest";
-import { journal } from "../src/db/schema.ts";
-import { DepotConversations } from "../src/conversations/repository.ts";
-import { creerBaseTest, creerHorlogeTest } from "./helpers.ts";
+import { turnLog } from "../src/db/schema.ts";
+import { ConversationRepository } from "../src/conversations/repository.ts";
+import { createTestClock, createTestDb } from "./helpers.ts";
 
-function creerDepot() {
-  const base = creerBaseTest();
-  const temps = creerHorlogeTest();
-  return { base, temps, depot: new DepotConversations(base, temps.horloge) };
+function createRepository() {
+  const db = createTestDb();
+  const time = createTestClock();
+  return { db, time, repository: new ConversationRepository(db, time.clock) };
 }
 
-describe("DepotConversations", () => {
-  test("crée puis retrouve une conversation de la bonne personne", () => {
-    const { depot } = creerDepot();
-    const c = depot.creer("kevin", "Volets");
+describe("ConversationRepository", () => {
+  test("creates then finds a conversation of the right person", () => {
+    const { repository } = createRepository();
+    const c = repository.create("kevin", "Volets");
     expect(c.sessionId).toBeNull();
-    expect(depot.obtenir(c.id, "kevin")?.titre).toBe("Volets");
+    expect(repository.get(c.id, "kevin")?.title).toBe("Volets");
   });
 
-  test("cloisonnement : Élodie ne voit pas la conversation de Kévin", () => {
-    const { depot } = creerDepot();
-    const c = depot.creer("kevin", "Privé");
-    expect(depot.obtenir(c.id, "elodie")).toBeUndefined();
-    expect(depot.lister("elodie")).toEqual([]);
+  test("isolation: Élodie does not see Kévin's conversation", () => {
+    const { repository } = createRepository();
+    const c = repository.create("kevin", "Privé");
+    expect(repository.get(c.id, "elodie")).toBeUndefined();
+    expect(repository.list("elodie")).toEqual([]);
   });
 
-  test("liste de la plus récente à la plus ancienne (activité)", () => {
-    const { depot, temps } = creerDepot();
-    const a = depot.creer("kevin", "A");
-    temps.avancer(1000);
-    const b = depot.creer("kevin", "B");
-    temps.avancer(1000);
-    depot.ajouterMessage(a.id, "utilisateur", "relance");
-    expect(depot.lister("kevin").map((c) => c.id)).toEqual([a.id, b.id]);
+  test("lists from most to least recent (activity)", () => {
+    const { repository, time } = createRepository();
+    const a = repository.create("kevin", "A");
+    time.advance(1000);
+    const b = repository.create("kevin", "B");
+    time.advance(1000);
+    repository.addMessage(a.id, "user", "relance");
+    expect(repository.list("kevin").map((c) => c.id)).toEqual([a.id, b.id]);
   });
 
-  test("à égalité d'activité, la conversation créée en dernier passe en premier", () => {
-    const { depot } = creerDepot();
-    const a = depot.creer("kevin", "A");
-    const b = depot.creer("kevin", "B");
-    const c = depot.creer("kevin", "C");
-    expect(depot.lister("kevin").map((x) => x.id)).toEqual([c.id, b.id, a.id]);
+  test("on equal activity, the conversation created last comes first", () => {
+    const { repository } = createRepository();
+    const a = repository.create("kevin", "A");
+    const b = repository.create("kevin", "B");
+    const c = repository.create("kevin", "C");
+    expect(repository.list("kevin").map((x) => x.id)).toEqual([c.id, b.id, a.id]);
   });
 
-  test("messages dans l'ordre, et derniers messages", () => {
-    const { depot } = creerDepot();
-    const c = depot.creer("kevin", "T");
-    depot.ajouterMessage(c.id, "utilisateur", "1");
-    depot.ajouterMessage(c.id, "alicia", "2");
-    depot.ajouterMessage(c.id, "utilisateur", "3");
-    expect(depot.messages(c.id).map((m) => m.texte)).toEqual(["1", "2", "3"]);
-    expect(depot.derniersMessages(c.id, 2).map((m) => m.texte)).toEqual(["2", "3"]);
+  test("messages in order, and last messages", () => {
+    const { repository } = createRepository();
+    const c = repository.create("kevin", "T");
+    repository.addMessage(c.id, "user", "1");
+    repository.addMessage(c.id, "assistant", "2");
+    repository.addMessage(c.id, "user", "3");
+    expect(repository.messages(c.id).map((m) => m.text)).toEqual(["1", "2", "3"]);
+    expect(repository.lastMessages(c.id, 2).map((m) => m.text)).toEqual(["2", "3"]);
   });
 
-  test("mémorise puis efface la session SDK", () => {
-    const { depot } = creerDepot();
-    const c = depot.creer("kevin", "T");
-    depot.definirSession(c.id, "session-1");
-    expect(depot.obtenir(c.id, "kevin")?.sessionId).toBe("session-1");
-    depot.definirSession(c.id, null);
-    expect(depot.obtenir(c.id, "kevin")?.sessionId).toBeNull();
+  test("stores then clears the SDK session", () => {
+    const { repository } = createRepository();
+    const c = repository.create("kevin", "T");
+    repository.setSession(c.id, "session-1");
+    expect(repository.get(c.id, "kevin")?.sessionId).toBe("session-1");
+    repository.setSession(c.id, null);
+    expect(repository.get(c.id, "kevin")?.sessionId).toBeNull();
   });
 
-  test("journalise un tour avec ses outils en JSON", () => {
-    const { base, depot } = creerDepot();
-    const c = depot.creer("kevin", "T");
-    depot.journaliser({
-      conversationId: c.id, modele: "sonnet", tokensEntree: 12, tokensSortie: 3, dureeMs: 800,
-      outils: [{ idAppel: "t1", outil: "meteo", succes: true }], erreur: null,
+  test("logs a turn with its tools as JSON", () => {
+    const { db, repository } = createRepository();
+    const c = repository.create("kevin", "T");
+    repository.logTurn({
+      conversationId: c.id, model: "sonnet", inputTokens: 12, outputTokens: 3, durationMs: 800,
+      tools: [{ callId: "t1", tool: "weather", success: true }], error: null,
     });
-    const ligne = base.select().from(journal).get();
-    expect(ligne?.tokensEntree).toBe(12);
-    expect(JSON.parse(ligne?.outils ?? "[]")).toEqual([{ idAppel: "t1", outil: "meteo", succes: true }]);
+    const row = db.select().from(turnLog).get();
+    expect(row?.inputTokens).toBe(12);
+    expect(JSON.parse(row?.tools ?? "[]")).toEqual([{ callId: "t1", tool: "weather", success: true }]);
   });
 });

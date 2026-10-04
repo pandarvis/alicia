@@ -1,19 +1,19 @@
 import type { Person } from "@alicia/protocol";
 import { eq } from "drizzle-orm";
-import type { Base } from "../db/open.ts";
-import { personnes } from "../db/schema.ts";
+import type { Db } from "../db/open.ts";
+import { people } from "../db/schema.ts";
 
-/** Crée ou renomme les personnes déclarées dans la config. Ne supprime jamais. */
-export function synchroniserPersonnes(base: Base, liste: readonly Person[]): void {
-  for (const p of liste) {
-    base
-      .insert(personnes)
+/** Creates or renames the people declared in the config. Never deletes. */
+export function syncPeople(db: Db, list: readonly Person[]): void {
+  for (const p of list) {
+    db
+      .insert(people)
       .values(p)
-      .onConflictDoUpdate({ target: personnes.id, set: { nom: p.nom } })
+      .onConflictDoUpdate({ target: people.id, set: { name: p.name } })
       .run();
   }
 }
 
-export function trouverPersonne(base: Base, id: string): Person | undefined {
-  return base.select().from(personnes).where(eq(personnes.id, id)).get();
+export function findPerson(db: Db, id: string): Person | undefined {
+  return db.select().from(people).where(eq(people.id, id)).get();
 }

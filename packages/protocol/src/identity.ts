@@ -5,7 +5,7 @@ export type PersonId = z.infer<typeof PersonId>;
 
 export const Person = z.object({
   id: PersonId,
-  nom: z.string().min(1).max(60),
+  name: z.string().min(1).max(60),
 });
 export type Person = z.infer<typeof Person>;
 

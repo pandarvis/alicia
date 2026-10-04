@@ -1,159 +1,159 @@
-import type { ServerEvent, SendMessage, Person } from "@alicia/protocol";
-import { construireConsigne, horodater } from "../agent/system-prompt.ts";
-import { choisirModele } from "../agent/model.ts";
-import type { Horloge } from "../clock.ts";
-import type { EvenementMoteur, Moteur } from "../engine/engine.ts";
-import type { AppelOutilJournal, Conversation, DepotConversations, Message } from "./repository.ts";
+import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
+import { chooseModel } from "../agent/model.ts";
+import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
+import type { Clock } from "../clock.ts";
+import type { Engine, EngineEvent } from "../engine/engine.ts";
+import type { Conversation, ConversationRepository, LoggedToolCall, Message } from "./repository.ts";
 
-export interface DependancesChat {
-  depot: DepotConversations;
-  moteur: Moteur;
-  horloge: Horloge;
-  fuseau: string;
+export interface ChatDependencies {
+  repository: ConversationRepository;
+  engine: Engine;
+  clock: Clock;
+  timezone: string;
 }
 
-type ErreurMoteur = Extract<EvenementMoteur, { type: "erreur" }>;
+type EngineError = Extract<EngineEvent, { type: "error" }>;
 
-const LONGUEUR_TITRE = 60;
-const MESSAGES_DE_REPRISE = 10;
+const TITLE_LENGTH = 60;
+const RESUME_MESSAGE_COUNT = 10;
 
-function enErreurMoteur(cause: unknown): ErreurMoteur {
-  return { type: "erreur", code: "moteur", message: cause instanceof Error ? cause.message : String(cause) };
+function toEngineError(cause: unknown): EngineError {
+  return { type: "error", code: "engine", message: cause instanceof Error ? cause.message : String(cause) };
 }
 
-export function titreDepuis(texte: string): string {
-  const ligne = (texte.split("\n")[0] ?? "").trim();
-  return ligne.length > LONGUEUR_TITRE ? `${ligne.slice(0, LONGUEUR_TITRE - 1)}…` : ligne;
+export function titleFrom(text: string): string {
+  const line = (text.split("\n")[0] ?? "").trim();
+  return line.length > TITLE_LENGTH ? `${line.slice(0, TITLE_LENGTH - 1)}…` : line;
 }
 
-export function construirePromptReprise(historique: readonly Message[], prompt: string): string {
-  if (historique.length === 0) return prompt;
-  const lignes = historique.map((m) => `${m.role === "utilisateur" ? "Utilisateur" : "Alicia"} : ${m.texte}`);
-  return `Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :\n${lignes.join("\n")}\n\nNouveau message :\n${prompt}`;
+export function buildResumePrompt(history: readonly Message[], prompt: string): string {
+  if (history.length === 0) return prompt;
+  const lines = history.map((m) => `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${m.text}`);
+  return `Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :\n${lines.join("\n")}\n\nNouveau message :\n${prompt}`;
 }
 
-export async function* traiterEnvoi(
-  deps: DependancesChat,
-  personne: Person,
+export async function* handleSend(
+  deps: ChatDependencies,
+  person: Person,
   message: SendMessage,
   signal: AbortSignal,
 ): AsyncGenerator<ServerEvent> {
-  const debut = deps.horloge();
+  const start = deps.clock();
 
   let conversation: Conversation;
   if (message.conversationId !== undefined) {
-    const trouvee = deps.depot.obtenir(message.conversationId, personne.id);
-    if (trouvee === undefined) {
+    const found = deps.repository.get(message.conversationId, person.id);
+    if (found === undefined) {
       yield {
-        type: "erreur", idRequete: message.idRequete, code: "requete_invalide", message: "Conversation introuvable.",
+        type: "error", requestId: message.requestId, code: "invalid_request", message: "Conversation introuvable.",
       };
       return;
     }
-    conversation = trouvee;
+    conversation = found;
   } else {
-    conversation = deps.depot.creer(personne.id, titreDepuis(message.texte));
+    conversation = deps.repository.create(person.id, titleFrom(message.text));
   }
   const conversationId = conversation.id;
-  yield { type: "conversation", idRequete: message.idRequete, conversationId };
+  yield { type: "conversation", requestId: message.requestId, conversationId };
 
-  const historique = deps.depot.derniersMessages(conversationId, MESSAGES_DE_REPRISE);
-  deps.depot.ajouterMessage(conversationId, "utilisateur", message.texte);
+  const history = deps.repository.lastMessages(conversationId, RESUME_MESSAGE_COUNT);
+  deps.repository.addMessage(conversationId, "user", message.text);
 
-  const modele = choisirModele(message.modele, message.texte);
-  const consigneSysteme = construireConsigne(personne);
-  const prompt = horodater(message.texte, new Date(debut), deps.fuseau);
+  const model = chooseModel(message.model, message.text);
+  const systemPrompt = buildSystemPrompt(person);
+  const prompt = timestamp(message.text, new Date(start), deps.timezone);
 
-  let texte = "";
-  let tokensEntree = 0;
-  let tokensSortie = 0;
-  const outils: AppelOutilJournal[] = [];
+  let text = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const tools: LoggedToolCall[] = [];
   let sessionId = conversation.sessionId ?? undefined;
-  // Conversation existante sans session (perdue) : on réinjecte les derniers échanges dès le premier essai.
-  let promptCourant = sessionId === undefined ? construirePromptReprise(historique, prompt) : prompt;
-  let erreur: ErreurMoteur | undefined;
+  // Existing conversation without a session (lost): re-inject the last exchanges from the first attempt.
+  let currentPrompt = sessionId === undefined ? buildResumePrompt(history, prompt) : prompt;
+  let error: EngineError | undefined;
 
   try {
-    for (let essai = 0; essai < 2; essai++) {
-      erreur = undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      error = undefined;
 
-      // Seuls la création du flux et la lecture du moteur sont des « erreurs moteur » ;
-      // une panne du dépôt dans le traitement d'un événement doit remonter telle quelle.
-      let flux: AsyncIterator<EvenementMoteur> | undefined;
+      // Only creating the stream and reading from the engine are "engine errors";
+      // a repository failure while handling an event must propagate as is.
+      let stream: AsyncIterator<EngineEvent> | undefined;
       try {
-        flux = deps.moteur.executer({ prompt: promptCourant, sessionId, modele, consigneSysteme }, signal)[
+        stream = deps.engine.run({ prompt: currentPrompt, sessionId, model, systemPrompt }, signal)[
           Symbol.asyncIterator
         ]();
       } catch (cause) {
-        erreur = enErreurMoteur(cause);
+        error = toEngineError(cause);
       }
 
       try {
-        while (flux !== undefined) {
-          let suivant: IteratorResult<EvenementMoteur>;
+        while (stream !== undefined) {
+          let next: IteratorResult<EngineEvent>;
           try {
-            suivant = await flux.next();
+            next = await stream.next();
           } catch (cause) {
-            erreur = enErreurMoteur(cause);
+            error = toEngineError(cause);
             break;
           }
-          if (suivant.done === true) break;
-          const e = suivant.value;
+          if (next.done === true) break;
+          const e = next.value;
           switch (e.type) {
             case "session":
-              deps.depot.definirSession(conversationId, e.sessionId);
+              deps.repository.setSession(conversationId, e.sessionId);
               break;
-            case "texte":
-              texte += e.texte;
-              yield { type: "morceau_texte", conversationId, texte: e.texte };
+            case "text":
+              text += e.text;
+              yield { type: "text_delta", conversationId, text: e.text };
               break;
-            case "appel_outil":
-              outils.push({ idAppel: e.idAppel, outil: e.outil, succes: null });
-              yield { type: "appel_outil", conversationId, idAppel: e.idAppel, outil: e.outil };
+            case "tool_call":
+              tools.push({ callId: e.callId, tool: e.tool, success: null });
+              yield { type: "tool_call", conversationId, callId: e.callId, tool: e.tool };
               break;
-            case "resultat_outil": {
-              const appel = outils.find((o) => o.idAppel === e.idAppel);
-              if (appel !== undefined) appel.succes = e.succes;
-              yield { type: "resultat_outil", conversationId, idAppel: e.idAppel, succes: e.succes };
+            case "tool_result": {
+              const call = tools.find((t) => t.callId === e.callId);
+              if (call !== undefined) call.success = e.success;
+              yield { type: "tool_result", conversationId, callId: e.callId, success: e.success };
               break;
             }
-            case "fin":
-              tokensEntree += e.tokensEntree;
-              tokensSortie += e.tokensSortie;
+            case "done":
+              inputTokens += e.inputTokens;
+              outputTokens += e.outputTokens;
               break;
-            case "erreur":
-              erreur = e;
+            case "error":
+              error = e;
               break;
           }
         }
       } finally {
-        // Sortie anticipée (consommateur arrêté, panne du dépôt) : libérer le flux du moteur.
-        await flux?.return?.();
+        // Early exit (consumer stopped, repository failure): release the engine stream.
+        await stream?.return?.();
       }
 
-      const sessionIllisible =
-        erreur?.code === "moteur" && sessionId !== undefined && texte === "" && outils.length === 0;
-      if (!sessionIllisible || signal.aborted) break;
+      const unreadableSession =
+        error?.code === "engine" && sessionId !== undefined && text === "" && tools.length === 0;
+      if (!unreadableSession || signal.aborted) break;
       sessionId = undefined;
-      deps.depot.definirSession(conversationId, null);
-      promptCourant = construirePromptReprise(historique, prompt);
+      deps.repository.setSession(conversationId, null);
+      currentPrompt = buildResumePrompt(history, prompt);
     }
   } finally {
-    // Toujours enregistrer ce qui a été dit et journaliser le tour, même si le consommateur s'arrête.
-    const dureeMs = deps.horloge() - debut;
-    if (texte !== "") deps.depot.ajouterMessage(conversationId, "alicia", texte);
-    deps.depot.journaliser({
-      conversationId, modele, tokensEntree, tokensSortie, dureeMs, outils,
-      erreur: signal.aborted ? "annulé" : (erreur?.message ?? null),
+    // Always store what was said and log the turn, even if the consumer stops.
+    const durationMs = deps.clock() - start;
+    if (text !== "") deps.repository.addMessage(conversationId, "assistant", text);
+    deps.repository.logTurn({
+      conversationId, model, inputTokens, outputTokens, durationMs, tools,
+      error: signal.aborted ? "annulé" : (error?.message ?? null),
     });
   }
 
   if (signal.aborted) return;
-  const dureeMs = deps.horloge() - debut;
-  if (erreur !== undefined) {
+  const durationMs = deps.clock() - start;
+  if (error !== undefined) {
     yield {
-      type: "erreur", idRequete: message.idRequete, conversationId, code: erreur.code, message: erreur.message,
+      type: "error", requestId: message.requestId, conversationId, code: error.code, message: error.message,
     };
     return;
   }
-  yield { type: "fin", conversationId, modele, tokensEntree, tokensSortie, dureeMs };
+  yield { type: "done", conversationId, model, inputTokens, outputTokens, durationMs };
 }

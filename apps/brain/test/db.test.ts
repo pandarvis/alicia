@@ -1,17 +1,17 @@
 import { expect, test } from "vitest";
-import { ouvrirBase } from "../src/db/open.ts";
-import { personnes } from "../src/db/schema.ts";
+import { openDb } from "../src/db/open.ts";
+import { people } from "../src/db/schema.ts";
 
-test("ouvre une base en mémoire avec les tables migrées", () => {
-  const base = ouvrirBase(":memory:");
-  base.insert(personnes).values({ id: "kevin", nom: "Kévin" }).run();
-  expect(base.select().from(personnes).all()).toEqual([{ id: "kevin", nom: "Kévin" }]);
+test("opens an in-memory database with the migrated tables", () => {
+  const db = openDb(":memory:");
+  db.insert(people).values({ id: "kevin", name: "Kévin" }).run();
+  expect(db.select().from(people).all()).toEqual([{ id: "kevin", name: "Kévin" }]);
 });
 
-test("les clés étrangères sont actives", () => {
-  const base = ouvrirBase(":memory:");
+test("foreign keys are enforced", () => {
+  const db = openDb(":memory:");
   expect(() =>
-    base.$client
+    db.$client
       .prepare("INSERT INTO conversations (id, personne_id, titre, cree_le, maj_le) VALUES ('c', 'personne', 't', 0, 0)")
       .run(),
   ).toThrow(/FOREIGN KEY/);

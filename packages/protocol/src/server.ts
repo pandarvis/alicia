@@ -1,33 +1,33 @@
 import { z } from "zod";
 import { Model, Person } from "./identity.ts";
 
-export const ErrorCode = z.enum(["quota", "moteur", "requete_invalide", "non_authentifie", "occupe", "interne"]);
+export const ErrorCode = z.enum(["quota", "engine", "invalid_request", "unauthenticated", "busy", "internal"]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 const count = z.number().int().nonnegative();
 
 /** Everything the brain can send to the app over the WebSocket. */
 export const ServerEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("pret"), personne: Person }),
-  z.object({ type: z.literal("conversation"), idRequete: z.uuid(), conversationId: z.uuid() }),
-  z.object({ type: z.literal("morceau_texte"), conversationId: z.uuid(), texte: z.string() }),
+  z.object({ type: z.literal("ready"), person: Person }),
+  z.object({ type: z.literal("conversation"), requestId: z.uuid(), conversationId: z.uuid() }),
+  z.object({ type: z.literal("text_delta"), conversationId: z.uuid(), text: z.string() }),
   z.object({
-    type: z.literal("appel_outil"), conversationId: z.uuid(), idAppel: z.string(), outil: z.string(),
+    type: z.literal("tool_call"), conversationId: z.uuid(), callId: z.string(), tool: z.string(),
   }),
   z.object({
-    type: z.literal("resultat_outil"), conversationId: z.uuid(), idAppel: z.string(), succes: z.boolean(),
+    type: z.literal("tool_result"), conversationId: z.uuid(), callId: z.string(), success: z.boolean(),
   }),
   z.object({
-    type: z.literal("fin"),
+    type: z.literal("done"),
     conversationId: z.uuid(),
-    modele: Model,
-    tokensEntree: count,
-    tokensSortie: count,
-    dureeMs: count,
+    model: Model,
+    inputTokens: count,
+    outputTokens: count,
+    durationMs: count,
   }),
   z.object({
-    type: z.literal("erreur"),
-    idRequete: z.uuid().optional(),
+    type: z.literal("error"),
+    requestId: z.uuid().optional(),
     conversationId: z.uuid().optional(),
     code: ErrorCode,
     message: z.string(),
