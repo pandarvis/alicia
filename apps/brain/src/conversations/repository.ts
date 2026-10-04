@@ -69,6 +69,26 @@ export class ConversationRepository {
       .all();
   }
 
+  /**
+   * Deletes a conversation with its messages and turn log, in one transaction.
+   * Memories that came from it are kept: their `conversation_id` falls back to NULL (ON DELETE SET NULL).
+   * Returns false, touching nothing, if the conversation does not belong to this person.
+   */
+  delete(id: string, personId: string): boolean {
+    return this.#db.transaction((tx) => {
+      const owned = tx
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(and(eq(conversations.id, id), eq(conversations.personId, personId)))
+        .get();
+      if (owned === undefined) return false;
+      tx.delete(turnLog).where(eq(turnLog.conversationId, id)).run();
+      tx.delete(messages).where(eq(messages.conversationId, id)).run();
+      tx.delete(conversations).where(eq(conversations.id, id)).run();
+      return true;
+    });
+  }
+
   setSession(id: string, sessionId: string | null): void {
     this.#db.update(conversations).set({ sessionId }).where(eq(conversations.id, id)).run();
   }

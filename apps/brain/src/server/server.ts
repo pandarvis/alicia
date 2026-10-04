@@ -28,6 +28,11 @@ export interface ServerDependencies {
   version: string;
   /** Time left to the client to authenticate (default 5 s; adjustable for tests). */
   authTimeoutMs?: number;
+  /**
+   * Conversations where Alicia is answering. Created by `createServer` when omitted;
+   * passed in by tests to simulate a running turn.
+   */
+  locks?: ConversationLocks;
   /** Fastify's pino logger (default: off, for quiet tests). */
   logging?: boolean;
 }
@@ -100,6 +105,9 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     return list;
   });
 
+  // Shared by every connection and by deletions: a single turn at a time per conversation.
+  const locks = deps.locks ?? new ConversationLocks();
+
   app.get<{ Params: { id: string } }>("/conversations/:id/messages", (request, reply) => {
     const person = personOf(request);
     if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
@@ -112,10 +120,25 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     return list;
   });
 
+  app.delete<{ Params: { id: string } }>("/conversations/:id", (request, reply) => {
+    const person = personOf(request);
+    if (person === undefined) return reply.code(401).send({ error: "unauthenticated" });
+    const { id } = request.params;
+    if (deps.repository.get(id, person.id) === undefined) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+    // Holding the turn lock while deleting: no turn can start on this conversation meanwhile.
+    if (!locks.acquire(person.id, id)) return reply.code(409).send({ error: "busy" });
+    try {
+      deps.repository.delete(id, person.id);
+    } finally {
+      locks.release(person.id, id);
+    }
+    return reply.code(204).send();
+  });
+
   registerMemoryRoutes(app, { memory: deps.chat.memory, personOf });
 
-  // Shared by every connection: a single turn at a time per conversation.
-  const locks = new ConversationLocks();
   app.get("/ws", { websocket: true }, (socket) => {
     attachWs(socket, deps, locks);
   });

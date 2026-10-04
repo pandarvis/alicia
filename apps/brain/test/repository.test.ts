@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { turnLog } from "../src/db/schema.ts";
+import { messages, turnLog } from "../src/db/schema.ts";
 import { ConversationRepository } from "../src/conversations/repository.ts";
-import { createTestClock, createTestDb } from "./helpers.ts";
+import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
 function createRepository() {
   const db = createTestDb();
@@ -71,5 +71,52 @@ describe("ConversationRepository", () => {
     const row = db.select().from(turnLog).get();
     expect(row?.inputTokens).toBe(12);
     expect(JSON.parse(row?.tools ?? "[]")).toEqual([{ callId: "t1", tool: "weather", success: true }]);
+  });
+
+  test("delete removes the conversation, its messages and log; memories stay, unlinked", async () => {
+    const { db, time, repository } = createRepository();
+    const memory = createTestMemory(db, time.clock);
+    const c = repository.create("kevin", "À supprimer");
+    const other = repository.create("kevin", "À garder");
+    repository.addMessage(c.id, "user", "Bonjour");
+    repository.addMessage(c.id, "assistant", "Salut");
+    repository.addMessage(other.id, "user", "Reste");
+    repository.logTurn({
+      conversationId: c.id, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1, tools: [], error: null,
+    });
+    repository.logTurn({
+      conversationId: other.id, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1, tools: [], error: null,
+    });
+    const remembered = await memory.remember({
+      personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes",
+      source: "conversation", conversationId: c.id,
+    });
+    if (remembered.status !== "created") throw new Error("memory not created");
+    expect(memory.get("kevin", remembered.memory.id)?.conversationId).toBe(c.id);
+
+    expect(repository.delete(c.id, "kevin")).toBe(true);
+
+    expect(repository.get(c.id, "kevin")).toBeUndefined();
+    expect(repository.messages(c.id)).toEqual([]);
+    expect(db.select().from(turnLog).all().map((t) => t.conversationId)).toEqual([other.id]);
+    expect(db.select().from(messages).all().map((m) => m.conversationId)).toEqual([other.id]);
+    expect(repository.get(other.id, "kevin")).toBeDefined();
+    const kept = memory.get("kevin", remembered.memory.id);
+    expect(kept?.text).toBe("Kévin adore les lasagnes");
+    expect(kept?.conversationId).toBeNull();
+  });
+
+  test("delete refuses someone else's conversation", () => {
+    const { db, repository } = createRepository();
+    const c = repository.create("kevin", "Privé");
+    repository.addMessage(c.id, "user", "secret");
+    repository.logTurn({
+      conversationId: c.id, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1, tools: [], error: null,
+    });
+    expect(repository.delete(c.id, "elodie")).toBe(false);
+    expect(repository.get(c.id, "kevin")).toBeDefined();
+    expect(repository.messages(c.id)).toHaveLength(1);
+    expect(db.select().from(turnLog).all()).toHaveLength(1);
+    expect(repository.delete("unknown", "kevin")).toBe(false);
   });
 });

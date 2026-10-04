@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
+import { ConversationLocks } from "../src/server/conversation-locks.ts";
 import { createServer } from "../src/server/server.ts";
 import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
@@ -11,12 +12,13 @@ async function createContext() {
   const repository = new ConversationRepository(db, time.clock);
   const pairing = new PairingService(db, time.clock);
   const engine = new FakeEngine(() => [{ type: "done", inputTokens: 0, outputTokens: 0 }]);
+  const locks = new ConversationLocks();
   const app = await createServer({
-    pairing, repository, version: "0.1.0", chat: {
+    locks, pairing, repository, version: "0.1.0", chat: {
       repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
     },
   });
-  return { app, pairing, repository };
+  return { app, pairing, repository, locks };
 }
 
 async function pair(ctx: Awaited<ReturnType<typeof createContext>>, person: string) {
@@ -123,6 +125,46 @@ describe("HTTP server", () => {
     });
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({ error: "internal" });
+  });
+
+  test("DELETE /conversations/:id → 204, then 404; 404 for another person; 401 without token", async () => {
+    const ctx = await createContext();
+    const mine = ctx.repository.create("kevin", "À moi");
+    const hers = ctx.repository.create("elodie", "À elle");
+    ctx.repository.addMessage(mine.id, "user", "Bonjour");
+    const token = await pair(ctx, "kevin");
+    const headers = { authorization: `Bearer ${token}` };
+
+    expect((await ctx.app.inject({ method: "DELETE", url: `/conversations/${mine.id}` })).statusCode).toBe(401);
+    expect(ctx.repository.get(mine.id, "kevin")).toBeDefined();
+
+    const other = await ctx.app.inject({ method: "DELETE", url: `/conversations/${hers.id}`, headers });
+    expect(other.statusCode).toBe(404);
+    expect(ctx.repository.get(hers.id, "elodie")).toBeDefined();
+
+    const done = await ctx.app.inject({ method: "DELETE", url: `/conversations/${mine.id}`, headers });
+    expect(done.statusCode).toBe(204);
+    expect(done.body).toBe("");
+    expect(ctx.repository.get(mine.id, "kevin")).toBeUndefined();
+    expect((await ctx.app.inject({ method: "DELETE", url: `/conversations/${mine.id}`, headers })).statusCode).toBe(404);
+    // The lock is released: nothing stays blocked after a deletion.
+    expect(ctx.locks.acquire("kevin", mine.id)).toBe(true);
+  });
+
+  test("DELETE /conversations/:id → 409 while a turn runs", async () => {
+    const ctx = await createContext();
+    const c = ctx.repository.create("kevin", "En cours");
+    const token = await pair(ctx, "kevin");
+    const headers = { authorization: `Bearer ${token}` };
+    expect(ctx.locks.acquire("kevin", c.id)).toBe(true);
+
+    const busy = await ctx.app.inject({ method: "DELETE", url: `/conversations/${c.id}`, headers });
+    expect(busy.statusCode).toBe(409);
+    expect(busy.json()).toEqual({ error: "busy" });
+    expect(ctx.repository.get(c.id, "kevin")).toBeDefined();
+
+    ctx.locks.release("kevin", c.id);
+    expect((await ctx.app.inject({ method: "DELETE", url: `/conversations/${c.id}`, headers })).statusCode).toBe(204);
   });
 });
 
