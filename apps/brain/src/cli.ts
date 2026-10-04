@@ -228,7 +228,7 @@ async function checkEngine(): Promise<void> {
     prompt: "Réponds juste « ok » si tu m'entends.",
     sessionId: undefined,
     model: "sonnet",
-    systemPrompt: buildSystemPrompt(person),
+    systemPrompt: buildSystemPrompt(person, ""),
   };
   for await (const e of engine.run(request, new AbortController().signal)) console.log(e);
 }

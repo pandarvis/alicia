@@ -60,7 +60,7 @@ export async function* handleSend(
   deps.repository.addMessage(conversationId, "user", message.text);
 
   const model = chooseModel(message.model, message.text);
-  const systemPrompt = buildSystemPrompt(person);
+  const systemPrompt = buildSystemPrompt(person, "");
   const prompt = timestamp(message.text, new Date(start), deps.timezone);
 
   let text = "";

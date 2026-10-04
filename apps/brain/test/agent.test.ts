@@ -18,13 +18,20 @@ describe("chooseModel", () => {
 
 describe("system prompt", () => {
   test("contains the personality and the first name of the person talking", () => {
-    const p = buildSystemPrompt(KEVIN);
+    const p = buildSystemPrompt(KEVIN, "");
     expect(p.startsWith(PERSONA)).toBe(true);
     expect(p).toContain("Tu parles avec Kévin.");
   });
+  test("system prompt explains memory and appends the sheet", () => {
+    const prompt = buildSystemPrompt(KEVIN, "Ce que tu sais déjà (mémoire) :\n- X");
+    expect(prompt).toContain("memory_search");
+    expect(prompt).toContain("Tu parles avec Kévin.");
+    expect(prompt.endsWith("Ce que tu sais déjà (mémoire) :\n- X")).toBe(true);
+    expect(buildSystemPrompt(KEVIN, "")).not.toContain("Ce que tu sais déjà");
+  });
   test("stable: no date in the system prompt", () => {
-    expect(buildSystemPrompt(KEVIN)).toBe(buildSystemPrompt(KEVIN));
-    expect(buildSystemPrompt(KEVIN)).not.toMatch(/2026/);
+    expect(buildSystemPrompt(KEVIN, "")).toBe(buildSystemPrompt(KEVIN, ""));
+    expect(buildSystemPrompt(KEVIN, "")).not.toMatch(/2026/);
   });
   test("timestamps the message in Paris time", () => {
     const instant = new Date(Date.UTC(2026, 9, 4, 13, 30));
