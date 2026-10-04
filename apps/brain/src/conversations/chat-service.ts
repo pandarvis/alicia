@@ -80,7 +80,7 @@ export async function* handleSend(
       // a repository failure while handling an event must propagate as is.
       let stream: AsyncIterator<EngineEvent> | undefined;
       try {
-        stream = deps.engine.run({ prompt: currentPrompt, sessionId, model, systemPrompt }, signal)[
+        stream = deps.engine.run({ prompt: currentPrompt, sessionId, model, systemPrompt, tools: [] }, signal)[
           Symbol.asyncIterator
         ]();
       } catch (cause) {

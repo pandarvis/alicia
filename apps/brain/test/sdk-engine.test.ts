@@ -1,7 +1,17 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import type { EngineEvent } from "../src/engine/engine.ts";
-import { buildEnv, classifyError, translateMessage, translateTurn } from "../src/engine/sdk-engine.ts";
+import {
+  allowedToolNames,
+  buildEnv,
+  classifyError,
+  toMcpResult,
+  toolHandler,
+  translateMessage,
+  translateTurn,
+} from "../src/engine/sdk-engine.ts";
+import { defineTool } from "../src/engine/tools.ts";
 
 /** SDK messages carry many fields that are irrelevant here: partial fixtures. */
 const sdk = (m: Record<string, unknown>) => m as unknown as SDKMessage;
@@ -197,5 +207,52 @@ describe("classifyError", () => {
   test("everything else → engine, including a disk quota", () => {
     expect(classifyError("spawn ENOENT")).toEqual({ code: "engine", message: "Le moteur a échoué : spawn ENOENT" });
     expect(classifyError("EDQUOT: disk quota exceeded, write").code).toBe("engine");
+  });
+});
+
+describe("tools", () => {
+  test("tool names are reported without the MCP prefix", () => {
+    expect(
+      translate({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "mcp__alicia__memory_search", input: {} }] } }),
+    ).toEqual([{ type: "tool_call", callId: "t1", tool: "memory_search" }]);
+  });
+
+  test("toolNames lists the allowed MCP names", () => {
+    const tool = defineTool({ name: "memory_search", description: "d", input: {}, run: () => Promise.resolve({ text: "" }) });
+    expect(allowedToolNames([tool])).toEqual(["mcp__alicia__memory_search"]);
+  });
+
+  test("toMcpResult: text content, isError only when the tool failed", () => {
+    expect(toMcpResult({ text: "ok" })).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(toMcpResult({ text: "ko", isError: true })).toEqual({ content: [{ type: "text", text: "ko" }], isError: true });
+    expect(toMcpResult({ text: "ok", isError: false })).toEqual({ content: [{ type: "text", text: "ok" }] });
+  });
+
+  test("toolHandler runs the tool with its arguments", async () => {
+    const echo = defineTool({
+      name: "echo", description: "Répète", input: { word: z.string() },
+      run: ({ word }) => Promise.resolve({ text: `écho ${word}` }),
+    });
+    expect(await toolHandler(echo)({ word: "salut" })).toEqual({ content: [{ type: "text", text: "écho salut" }] });
+  });
+
+  test("toolHandler turns an exception into a generic tool error, without its details", async () => {
+    const broken = defineTool({
+      name: "broken", description: "Casse", input: {},
+      run: () => Promise.reject(new Error(`database locked, key ${SECRET}`)),
+    });
+    const result = await toolHandler(broken)({});
+    expect(result).toEqual({ content: [{ type: "text", text: "Erreur de l'outil." }], isError: true });
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  test("toolHandler also catches a synchronous throw", async () => {
+    const broken = defineTool({
+      name: "broken", description: "Casse", input: {},
+      run: () => {
+        throw new Error("sync");
+      },
+    });
+    expect(await toolHandler(broken)({})).toEqual({ content: [{ type: "text", text: "Erreur de l'outil." }], isError: true });
   });
 });

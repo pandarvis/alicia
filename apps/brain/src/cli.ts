@@ -229,6 +229,7 @@ async function checkEngine(): Promise<void> {
     sessionId: undefined,
     model: "sonnet",
     systemPrompt: buildSystemPrompt(person, ""),
+    tools: [],
   };
   for await (const e of engine.run(request, new AbortController().signal)) console.log(e);
 }

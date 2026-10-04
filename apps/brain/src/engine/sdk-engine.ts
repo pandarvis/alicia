@@ -1,13 +1,19 @@
 import type { Model } from "@alicia/protocol";
 import {
+  createSdkMcpServer,
+  type McpSdkServerConfigWithInstance,
   type Options,
   query,
   type SDKMessage,
   type SDKRateLimitInfo,
+  type SdkMcpToolDefinition,
+  tool,
   USAGE_LIMIT_ERROR_PREFIXES,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Authentication } from "../config.ts";
+import { VERSION } from "../version.ts";
 import type { Engine, EngineEvent, EngineRequest } from "./engine.ts";
+import type { ToolDefinition, ToolResult } from "./tools.ts";
 
 const LIMIT_PATTERN = /usage limit|rate[ _]?limit|(?<!disk )quota (?:exceeded|reached)|too many requests|\b429\b/i;
 const QUOTA_MESSAGE = "Je me repose : le quota de l'abonnement est atteint.";
@@ -15,6 +21,11 @@ const STATUS_TOO_MANY_REQUESTS = 429;
 const MASKED_SECRET = "[secret]";
 
 const QUOTA: EngineEvent = { type: "error", code: "quota", message: QUOTA_MESSAGE };
+
+const MCP_SERVER = "alicia";
+const MCP_PREFIX = `mcp__${MCP_SERVER}__`;
+/** Generic on purpose: an exception may carry paths, SQL or secrets, none of which belongs in the model's context. */
+const TOOL_FAILURE = "Erreur de l'outil.";
 
 /**
  * The only parent variables passed to the SDK process (plus the secret of the chosen mode):
@@ -62,6 +73,49 @@ export function buildEnv(
   return env;
 }
 
+/** The names under which the SDK exposes our tools (and the only ones allowed). */
+export function allowedToolNames(tools: readonly ToolDefinition[]): string[] {
+  return tools.map((t) => `${MCP_PREFIX}${t.name}`);
+}
+
+function toolLabel(name: string): string {
+  return name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name;
+}
+
+/** MCP tool result (the SDK's `CallToolResult`, without depending on the MCP SDK directly). */
+export type McpToolResult = Awaited<ReturnType<SdkMcpToolDefinition["handler"]>>;
+
+export function toMcpResult(result: ToolResult): McpToolResult {
+  return { content: [{ type: "text", text: result.text }], ...(result.isError === true ? { isError: true } : {}) };
+}
+
+/**
+ * MCP handler of a tool. A failing tool must not end the turn: its exception becomes
+ * a generic tool error the model can react to.
+ */
+export function toolHandler<Shape extends ToolDefinition["input"]>(
+  definition: ToolDefinition<Shape>,
+): (args: Parameters<ToolDefinition<Shape>["run"]>[0]) => Promise<McpToolResult> {
+  return async (args) => {
+    try {
+      return toMcpResult(await definition.run(args));
+    } catch {
+      return { content: [{ type: "text", text: TOOL_FAILURE }], isError: true };
+    }
+  };
+}
+
+/** In-process MCP server exposing the tools of a turn. */
+function toolServer(tools: readonly ToolDefinition[]): McpSdkServerConfigWithInstance {
+  return createSdkMcpServer({
+    name: MCP_SERVER,
+    version: VERSION,
+    tools: tools.map((definition) =>
+      tool(definition.name, definition.description, definition.input, toolHandler(definition)),
+    ),
+  });
+}
+
 /** Stateless translation of a single message. Usage limits are handled by `translateTurn`. */
 export function* translateMessage(m: SDKMessage): Generator<EngineEvent> {
   switch (m.type) {
@@ -75,7 +129,7 @@ export function* translateMessage(m: SDKMessage): Generator<EngineEvent> {
       return;
     case "assistant":
       for (const block of m.message.content) {
-        if (block.type === "tool_use") yield { type: "tool_call", callId: block.id, tool: block.name };
+        if (block.type === "tool_use") yield { type: "tool_call", callId: block.id, tool: toolLabel(block.name) };
       }
       return;
     case "user": {
@@ -164,10 +218,12 @@ export class SdkEngine implements Engine {
       cwd: this.#params.workspaceDir,
       settingSources: [],
       strictMcpConfig: true,
+      // Built-in Claude Code tools stay disabled; only our MCP tools are allowed, everything else is refused.
       tools: [],
-      allowedTools: [],
+      allowedTools: allowedToolNames(request.tools),
+      ...(request.tools.length > 0 ? { mcpServers: { [MCP_SERVER]: toolServer(request.tools) } } : {}),
       includePartialMessages: true,
-      canUseTool: () => Promise.resolve({ behavior: "deny", message: "Aucun outil n'est disponible pour l'instant." }),
+      canUseTool: () => Promise.resolve({ behavior: "deny", message: "Cet outil n'est pas disponible." }),
       env: buildEnv(process.env, auth),
       abortController: controller,
       ...(request.sessionId !== undefined ? { resume: request.sessionId } : {}),

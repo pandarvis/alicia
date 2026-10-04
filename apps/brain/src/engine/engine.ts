@@ -1,4 +1,5 @@
 import type { Model } from "@alicia/protocol";
+import type { ToolDefinition } from "./tools.ts";
 
 export interface EngineRequest {
   prompt: string;
@@ -6,6 +7,8 @@ export interface EngineRequest {
   sessionId: string | undefined;
   model: Model;
   systemPrompt: string;
+  /** Tools available for this turn (bound to the person speaking). */
+  tools: readonly ToolDefinition[];
 }
 
 /** What the engine reports during a turn, independently of the SDK. */
