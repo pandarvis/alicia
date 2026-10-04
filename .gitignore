@@ -1,3 +1,6 @@
-.superpowers/
 node_modules/
+.superpowers/
 design/mascotte/references/
+.env
+apps/cerveau/alicia.config.yaml
+apps/cerveau/donnees/

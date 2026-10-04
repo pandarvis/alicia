@@ -1,0 +1,16 @@
+{
+  "name": "alicia",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "eslint": "^10.12.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0"
+  }
+}
