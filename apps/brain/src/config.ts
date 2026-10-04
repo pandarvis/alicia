@@ -5,6 +5,16 @@ import { z } from "zod";
 
 const DEFAULT_MODELS = { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
 
+/** An exact web origin: http(s)://host[:port], no path, no trailing slash. */
+function isOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
 export const ConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).default(8780),
   host: z.string().default("0.0.0.0"),
@@ -17,6 +27,10 @@ export const ConfigSchema = z.object({
   models: z
     .object({ sonnet: z.string().min(1), opus: z.string().min(1) })
     .default(DEFAULT_MODELS),
+  /** Web pages allowed to call the brain besides the desktop app (the future PWA). None by default. */
+  allowedOrigins: z
+    .array(z.string().refine(isOrigin, { message: "Origine invalide : écrire schéma://hôte[:port], sans chemin ni barre finale." }))
+    .default([]),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 export type EngineMode = Config["engine"]["mode"];

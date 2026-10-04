@@ -5,10 +5,10 @@ import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import { ConversationLocks } from "../src/server/conversation-locks.ts";
 import { errorBody } from "../src/server/http-errors.ts";
-import { createServer } from "../src/server/server.ts";
+import { createServer, isAllowedOrigin } from "../src/server/server.ts";
 import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
-async function createContext() {
+async function createContext(options: { allowedOrigins?: readonly string[] } = {}) {
   const db = createTestDb();
   const time = createTestClock();
   const repository = new ConversationRepository(db, time.clock);
@@ -19,6 +19,7 @@ async function createContext() {
     locks, pairing, repository, version: "0.1.0", chat: {
       repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
     },
+    ...(options.allowedOrigins !== undefined ? { allowedOrigins: options.allowedOrigins } : {}),
   });
   return { app, pairing, repository, locks, time };
 }
@@ -222,7 +223,7 @@ describe("CORS: only the Alicia app may call the brain from a browser page", () 
     headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type" },
   });
 
-  test.each(["http://localhost:5173", "http://127.0.0.1:5173", "null"])("allowed origin %s", async (origin) => {
+  test.each(["http://localhost:5173", "http://127.0.0.1:5173", "null", "file://"])("allowed origin %s", async (origin) => {
     const { app } = await createContext();
     const response = await app.inject(preflight(origin));
     expect(response.statusCode).toBe(204);
@@ -230,16 +231,49 @@ describe("CORS: only the Alicia app may call the brain from a browser page", () 
   });
 
   test.each(["https://evil.example", "http://localhost.evil.example", "http://192.168.1.50:5173"])(
-    "refused origin %s",
+    "refused origin %s: 403, no CORS header",
     async (origin) => {
       const { app } = await createContext();
       const response = await app.inject(preflight(origin));
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toEqual(errorBody("forbidden_origin"));
       expect(response.headers["access-control-allow-origin"]).toBeUndefined();
     },
   );
+
+  test("a configured origin (future PWA) is allowed, exactly", async () => {
+    const { app } = await createContext({ allowedOrigins: ["https://alicia.tailnet.ts.net"] });
+    const ok = await app.inject(preflight("https://alicia.tailnet.ts.net"));
+    expect(ok.statusCode).toBe(204);
+    expect(ok.headers["access-control-allow-origin"]).toBe("https://alicia.tailnet.ts.net");
+    expect((await app.inject(preflight("https://alicia.tailnet.ts.net.evil.example"))).statusCode).toBe(403);
+  });
+
+  test("a foreign page cannot even read the health check", async () => {
+    const { app } = await createContext();
+    const res = await app.inject({ method: "GET", url: "/health", headers: { origin: "https://evil.example" } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual(errorBody("forbidden_origin"));
+  });
 
   test("requests without Origin (CLI, curl) still work", async () => {
     const { app } = await createContext();
     expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
   });
+});
+
+describe("isAllowedOrigin", () => {
+  const extra = new Set(["https://alicia.tailnet.ts.net"]);
+  test.each([undefined, "null", "file://", "http://localhost:5173", "http://127.0.0.1:4173", "https://alicia.tailnet.ts.net"])(
+    "allows %s",
+    (origin) => {
+      expect(isAllowedOrigin(origin, extra)).toBe(true);
+    },
+  );
+  test.each(["https://evil.example", "https://alicia.tailnet.ts.net.evil.example", "http://alicia.tailnet.ts.net", "http://192.168.1.50:5173"])(
+    "refuses %s",
+    (origin) => {
+      expect(isAllowedOrigin(origin, extra)).toBe(false);
+    },
+  );
 });

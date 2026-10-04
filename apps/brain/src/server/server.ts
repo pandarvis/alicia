@@ -18,9 +18,17 @@ import { attachWs } from "./ws.ts";
 
 const APP_DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
 
-/** Origins of the Alicia desktop app: the packaged app (file://, sent as "null") and its local dev server. */
+/**
+ * Origins of the Alicia desktop app: the packaged app (file:// pages: "null" for fetch, "file://" for the
+ * WebSocket upgrade in Chromium) and its local dev server. No Origin at all: CLI, curl, native clients.
+ */
 export function isAppOrigin(origin: string | undefined): boolean {
-  return origin === undefined || origin === "null" || APP_DEV_ORIGIN.test(origin);
+  return origin === undefined || origin === "null" || origin === "file://" || APP_DEV_ORIGIN.test(origin);
+}
+
+/** The app's origins, plus those of the config (`allowedOrigins`). */
+export function isAllowedOrigin(origin: string | undefined, extra: ReadonlySet<string>): boolean {
+  return isAppOrigin(origin) || (origin !== undefined && extra.has(origin));
 }
 
 export interface ServerDependencies {
@@ -37,6 +45,8 @@ export interface ServerDependencies {
   locks?: ConversationLocks;
   /** Fastify's pino logger (default: off, for quiet tests). */
   logging?: boolean;
+  /** Web origins allowed besides the app's (config `allowedOrigins`). */
+  allowedOrigins?: readonly string[];
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -75,17 +85,32 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
   // Unknown routes answer in the same shape as everything else.
   app.setNotFoundHandler((_request, reply) => sendError(reply, 404, "not_found"));
 
-  // Browser pages may only call the brain from the Alicia app itself: the built app (file:// → "null")
-  // or its dev server on this machine. Auth still relies on the device token; this only stops other sites.
+  // 128 KiB: the protocol caps messages at 20,000 characters.
+  // Registered before the origin check: its own onRequest hook must mark upgrade requests first, so that
+  // a refused upgrade still gets its raw socket destroyed (otherwise the socket lingers and close() hangs).
+  await app.register(websocket, { options: { maxPayload: 131_072 } });
+
+  const extraOrigins: ReadonlySet<string> = new Set(deps.allowedOrigins ?? []);
+  const originAllowed = (origin: string | undefined): boolean => isAllowedOrigin(origin, extraOrigins);
+
+  // Browser pages may only call the brain from the Alicia app or a configured origin. Checked here for
+  // every request, the WebSocket upgrade included (browsers do not apply CORS to WebSockets), and before
+  // CORS so a foreign preflight stops with a 403. Auth still relies on the device token.
+  app.addHook("onRequest", (request, reply, done) => {
+    if (originAllowed(request.headers.origin)) {
+      done();
+      return;
+    }
+    request.log.warn({ origin: request.headers.origin }, "origin refused");
+    void sendError(reply, 403, "forbidden_origin");
+  });
+
   await app.register(cors, {
     origin: (origin, callback) => {
-      callback(null, isAppOrigin(origin));
+      callback(null, originAllowed(origin));
     },
     methods: ["GET", "POST", "PATCH", "DELETE"],
   });
-
-  // 128 KiB: the protocol caps messages at 20,000 characters.
-  await app.register(websocket, { options: { maxPayload: 131_072 } });
 
   const personOf = (request: FastifyRequest): Person | undefined => {
     const token = BEARER.exec(request.headers.authorization ?? "")?.[1];

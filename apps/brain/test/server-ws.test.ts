@@ -23,6 +23,7 @@ afterEach(async () => {
 interface StartOptions {
   engine?: Engine;
   authTimeoutMs?: number;
+  allowedOrigins?: readonly string[];
 }
 
 async function start(options: StartOptions = {}) {
@@ -46,6 +47,7 @@ async function start(options: StartOptions = {}) {
     ...(options.authTimeoutMs === undefined
       ? {}
       : { authTimeoutMs: options.authTimeoutMs }),
+    ...(options.allowedOrigins === undefined ? {} : { allowedOrigins: options.allowedOrigins }),
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
@@ -78,7 +80,31 @@ function connect(url: string) {
   return { ws, received, opened, closed, waitFor };
 }
 
+/** Opens a socket with an Origin header: "open" when accepted, otherwise the HTTP status of the refused upgrade. */
+function tryOrigin(url: string, origin: string): Promise<number | "open"> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url, { origin });
+    ws.once("open", () => {
+      resolve("open");
+      ws.close();
+    });
+    ws.once("unexpected-response", (request, response) => {
+      resolve(response.statusCode ?? 0);
+      request.destroy();
+    });
+    ws.on("error", () => undefined);
+  });
+}
+
 describe("WebSocket", () => {
+  test("a foreign Origin is refused before the upgrade; the app's and configured ones are accepted", async () => {
+    const { url } = await start({ allowedOrigins: ["https://alicia.tailnet.ts.net"] });
+    expect(await tryOrigin(url, "https://evil.example")).toBe(403);
+    expect(await tryOrigin(url, "file://")).toBe("open");
+    expect(await tryOrigin(url, "null")).toBe("open");
+    expect(await tryOrigin(url, "https://alicia.tailnet.ts.net")).toBe("open");
+  });
+
   test("authentication then a full conversation", async () => {
     const { url, token } = await start();
     const c = connect(url);

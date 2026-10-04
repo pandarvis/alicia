@@ -79,6 +79,7 @@ export async function buildApplication(
       repository,
       version: VERSION,
       chat: { repository, engine, memory, clock: systemClock, timezone: config.timezone },
+      allowedOrigins: config.allowedOrigins,
       ...(options.logging !== undefined ? { logging: options.logging } : {}),
     });
 

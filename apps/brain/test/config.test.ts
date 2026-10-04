@@ -28,6 +28,15 @@ describe("parseConfig", () => {
   test("rejects an unknown engine mode", () => {
     expect(() => parseConfig("people: [{ id: kevin, name: K }]\nengine: { mode: free }")).toThrow();
   });
+  test("allowedOrigins: none by default, exact origins only", () => {
+    expect(parseConfig(MINIMAL_YAML).allowedOrigins).toEqual([]);
+    expect(parseConfig(`${MINIMAL_YAML}allowedOrigins: ["https://alicia.tailnet.ts.net"]\n`).allowedOrigins).toEqual([
+      "https://alicia.tailnet.ts.net",
+    ]);
+    expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["https://alicia.tailnet.ts.net/"]\n`)).toThrow(/Origine invalide/);
+    expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["*"]\n`)).toThrow(/Origine invalide/);
+    expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["ftp://alicia.lan"]\n`)).toThrow(/Origine invalide/);
+  });
 });
 
 describe("readAuthentication", () => {
