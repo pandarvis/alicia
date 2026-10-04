@@ -5,8 +5,9 @@
   import type { StoredSession } from "../../../shared/session.ts";
   import type { AppView } from "../lib/app-view.ts";
   import { BrainApi, UnauthorizedError } from "../lib/brain-client.ts";
-  import { ChatConnection, type ConnectionStatus, openWebSocket, webSocketUrl } from "../../../shared/chat-connection.ts";
+  import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
   import { ChatStore } from "../lib/chat-store.svelte.ts";
+  import { HubClient } from "../lib/hub-client.ts";
   import { MemoryScreen } from "../lib/memory-screen.svelte.ts";
   import { motion } from "../lib/motion.ts";
   import ChatView from "./ChatView.svelte";
@@ -50,7 +51,7 @@
   const store = new ChatStore({
     listConversations: () => guarded(() => api.listConversations()),
     history: (id) => guarded(() => api.history(id)),
-    send: (message) => connection.send(message),
+    send: (message) => hub.send(message),
     deleteConversation: (id) => guarded(() => api.deleteConversation(id)),
     newId: () => crypto.randomUUID(),
     schedule,
@@ -86,13 +87,13 @@
     }
   }
 
-  const connection = new ChatConnection({
-    url: webSocketUrl(initialSession.serverUrl),
-    token: initialSession.token,
-    openSocket: openWebSocket,
-    schedule,
+  // The brain connection lives in the main process, shared with the Holo and Spotlight.
+  const hub = new HubClient(window.alicia.brain, {
     onEvent: handleEvent,
     onStatus: handleStatus,
+    onUndelivered: (requestId) => {
+      store.undelivered(requestId);
+    },
   });
 
   const title = $derived(
@@ -122,11 +123,11 @@
   }
 
   onMount(() => {
-    connection.start();
+    hub.start();
     void store.refreshConversations();
   });
   onDestroy(() => {
-    connection.stop();
+    hub.stop();
   });
 </script>
 

@@ -135,6 +135,11 @@ export class ChatStore {
   }
 
   handle(event: ServerEvent): void {
+    // Another window's turn (Holo, Spotlight) ended: the list may have changed, and maybe the open conversation.
+    if (event.type === "done" && !this.#isCurrentTurn(event.conversationId)) {
+      this.#otherTurnDone(event.conversationId);
+      return;
+    }
     if (isTurnEvent(event) && !this.#isCurrentTurn(event.conversationId)) return;
     switch (event.type) {
       case "ready":
@@ -178,6 +183,19 @@ export class ChatStore {
     this.#endTurn();
     this.notice = "Connexion perdue : la réponse d'Alicia n'est pas arrivée.";
     this.#setMascot("alert");
+  }
+
+  /** The main process could not deliver the message `send` accepted: same outcome as a refused send. */
+  undelivered(requestId: string): void {
+    if (requestId !== this.#pendingRequestId) return;
+    this.#endTurn();
+    this.notice = "Alicia n'est pas joignable pour l'instant.";
+    this.#setMascot("alert");
+  }
+
+  #otherTurnDone(conversationId: string): void {
+    void this.refreshConversations();
+    if (!this.busy && conversationId === this.activeId) void this.#loadHistory(conversationId);
   }
 
   /** Turn events only count while a turn is pending and, once known, for the active conversation. */

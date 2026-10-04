@@ -16,17 +16,3 @@ export const SaveSessionResult = z.discriminatedUnion("ok", [
 ]);
 export type SaveSessionResult = z.infer<typeof SaveSessionResult>;
 
-/** API exposed to the renderer as `window.alicia` by the preload script. */
-export interface AliciaBridge {
-  getSession(): Promise<StoredSession | null>;
-  saveSession(session: StoredSession): Promise<SaveSessionResult>;
-  clearSession(): Promise<void>;
-  deviceName(): Promise<string>;
-}
-
-export const IPC = {
-  getSession: "session:get",
-  saveSession: "session:save",
-  clearSession: "session:clear",
-  deviceName: "device:name",
-} as const;

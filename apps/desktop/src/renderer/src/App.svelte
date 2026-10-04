@@ -10,6 +10,15 @@
 
   onMount(() => {
     void loadSession();
+    // Signed out from another window (or by the main process): back to pairing here too.
+    return window.alicia.onSessionChanged((next) => {
+      if (next === null) {
+        session = null;
+      } else if (session?.token !== next.token) {
+        session = next;
+        notice = null;
+      }
+    });
   });
 
   async function loadSession(): Promise<void> {

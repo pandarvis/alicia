@@ -1,11 +1,16 @@
 import { existsSync } from "node:fs";
-import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, safeStorage, session, shell } from "electron";
-import { IPC, type SaveSessionResult, StoredSession } from "../shared/session.ts";
+import { app, type IpcMainInvokeEvent, safeStorage, session } from "electron";
+import { PUSH } from "../shared/bridge.ts";
+import { openWebSocket } from "../shared/chat-connection.ts";
+import { type SaveSessionResult, StoredSession } from "../shared/session.ts";
+import { BrainHub } from "./brain-hub.ts";
+import { registerIpc } from "./ipc.ts";
+import { Presence } from "./presence.ts";
 import { EncryptionUnavailableError, SessionStore } from "./session-store.ts";
 import { isTrustedSenderUrl } from "./trusted-sender.ts";
+import { WindowManager } from "./windows.ts";
 
 const RENDERER_INDEX = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
 /** Mascot head icon (design/mascotte/icone/v1), exported to build/ for electron-builder too. */
@@ -22,105 +27,103 @@ function devServerUrl(): string | undefined {
   return app.isPackaged ? undefined : process.env["ELECTRON_RENDERER_URL"];
 }
 
-/** Only our own renderer page may talk to the session store. */
-function assertTrusted(event: IpcMainInvokeEvent): void {
-  const url = event.senderFrame?.url;
-  if (!isTrustedSenderUrl(url, { rendererFileUrl: pathToFileURL(RENDERER_INDEX).href, devUrl: devServerUrl() })) {
-    throw new Error("Untrusted IPC sender");
-  }
-}
-
-function saveSession(store: SessionStore, raw: unknown): SaveSessionResult {
-  const parsed = StoredSession.safeParse(raw);
-  if (!parsed.success) return { ok: false, reason: "invalid_session" };
-  try {
-    store.save(parsed.data);
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof EncryptionUnavailableError) return { ok: false, reason: "encryption_unavailable" };
-    throw error;
-  }
-}
-
-function registerIpc(store: SessionStore): void {
-  ipcMain.handle(IPC.getSession, (event) => {
-    assertTrusted(event);
-    return store.load();
-  });
-  ipcMain.handle(IPC.saveSession, (event, raw: unknown) => {
-    assertTrusted(event);
-    return saveSession(store, raw);
-  });
-  ipcMain.handle(IPC.clearSession, (event) => {
-    assertTrusted(event);
-    store.clear();
-  });
-  ipcMain.handle(IPC.deviceName, (event) => {
-    assertTrusted(event);
-    return hostname();
+/** Only our own page (whatever its `?surface=`) may talk to the main process. */
+function isTrusted(event: IpcMainInvokeEvent): boolean {
+  return isTrustedSenderUrl(event.senderFrame?.url, {
+    rendererFileUrl: pathToFileURL(RENDERER_INDEX).href,
+    devUrl: devServerUrl(),
   });
 }
 
-/** Only web links leave the app; anything else (file:, custom schemes) is refused. */
-function isWebUrl(url: string): boolean {
-  try {
-    const { protocol } = new URL(url);
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
+function schedule(run: () => void, ms: number): () => void {
+  const timer = setTimeout(run, ms);
+  return () => {
+    clearTimeout(timer);
+  };
 }
 
-function createWindow(): void {
-  const window = new BrowserWindow({
-    // Window and taskbar icon (the installer's .ico comes with packaging, plan 4b).
-    ...(existsSync(APP_ICON) ? { icon: APP_ICON } : {}),
-    width: 1200,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    show: false,
-    backgroundColor: "#16213e",
-    titleBarStyle: "hidden",
-    titleBarOverlay: { color: "#121a32", symbolColor: "#f3ebdd", height: 40 },
-    webPreferences: {
-      preload: fileURLToPath(new URL("../preload/index.cjs", import.meta.url)),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  window.once("ready-to-show", () => {
-    window.show();
-  });
-  // The app never navigates away nor opens windows; external links go to the browser.
-  window.webContents.on("will-navigate", (event) => {
-    event.preventDefault();
-  });
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isWebUrl(url)) void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  const devUrl = devServerUrl();
-  if (devUrl !== undefined) void window.loadURL(devUrl);
-  else void window.loadFile(RENDERER_INDEX);
-}
-
-void app.whenReady().then(() => {
+function start(): void {
   // Deny every browser permission (camera, mic, notifications…) until a feature explicitly needs one.
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
   session.defaultSession.setPermissionCheckHandler(() => false);
-  registerIpc(
-    new SessionStore(join(app.getPath("userData"), "session.bin"), {
-      isAvailable: () => safeStorage.isEncryptionAvailable(),
-      encrypt: (text) => safeStorage.encryptString(text),
-      decrypt: (data) => safeStorage.decryptString(data),
-    }),
-  );
-  createWindow();
-});
+
+  const sessions = new SessionStore(join(app.getPath("userData"), "session.bin"), {
+    isAvailable: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (data) => safeStorage.decryptString(data),
+  });
+  const windows = new WindowManager({
+    rendererIndex: RENDERER_INDEX,
+    devUrl: devServerUrl(),
+    icon: existsSync(APP_ICON) ? APP_ICON : undefined,
+  });
+  const presence = new Presence({
+    schedule,
+    onChange: (mood) => {
+      windows.broadcast(PUSH.presence, mood);
+    },
+  });
+  // The only WebSocket to the brain: Node's has no Origin header, which the brain accepts as a native client.
+  const hub = new BrainHub({
+    openSocket: openWebSocket,
+    schedule,
+    onEvent: (event) => {
+      windows.broadcast(PUSH.brainEvent, event);
+      presence.event(event);
+    },
+    onStatus: (status) => {
+      windows.broadcast(PUSH.brainStatus, status);
+      presence.status(status);
+    },
+    onSent: () => {
+      presence.sent();
+    },
+    // Windows notifications arrive with the tray (task 8).
+    onTurnFinished: () => undefined,
+  });
+
+  /** Paired or signed out: (re)connect, and tell every window. */
+  function setSession(next: StoredSession | null): void {
+    if (next === null) hub.disconnect();
+    else hub.connect(next);
+    windows.broadcast(PUSH.session, next);
+  }
+
+  function saveSession(raw: unknown): SaveSessionResult {
+    const parsed = StoredSession.safeParse(raw);
+    if (!parsed.success) return { ok: false, reason: "invalid_session" };
+    try {
+      sessions.save(parsed.data);
+    } catch (error) {
+      if (error instanceof EncryptionUnavailableError) return { ok: false, reason: "encryption_unavailable" };
+      throw error;
+    }
+    setSession(parsed.data);
+    return { ok: true };
+  }
+
+  registerIpc({
+    isTrusted,
+    session: {
+      get: () => sessions.load(),
+      save: saveSession,
+      clear: () => {
+        sessions.clear();
+        setSession(null);
+      },
+    },
+    windows,
+    hub,
+    presence,
+  });
+  windows.createMain({ show: true });
+  const saved = sessions.load();
+  if (saved !== null) hub.connect(saved);
+}
+
+void app.whenReady().then(start);
 app.on("window-all-closed", () => {
   app.quit();
 });

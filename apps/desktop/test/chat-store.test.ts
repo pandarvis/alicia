@@ -286,6 +286,30 @@ describe("ChatStore", () => {
     expect(store.mascot).toBe("alert");
   });
 
+  test("undelivered: the pending message ends the turn with a notice", () => {
+    const { store, sent } = setup();
+    store.send("Salut");
+    store.undelivered("00000000-0000-4000-8000-000000000099");
+    expect(store.busy).toBe(true);
+    store.undelivered(sent[0]?.requestId ?? "");
+    expect(store.busy).toBe(false);
+    expect(store.notice).toBe("Alicia n'est pas joignable pour l'instant.");
+    expect(store.mascot).toBe("alert");
+  });
+
+  test("another window's turn ending refreshes the list and reloads the open conversation", async () => {
+    const history = vi.fn(() => Promise.resolve([msg("00000000-0000-4000-8000-0000000000a1", "Avant")]));
+    const listConversations = vi.fn(() => Promise.resolve([]));
+    const { store } = setup([], { history, listConversations });
+    await store.open(CONV);
+    expect(history).toHaveBeenCalledTimes(1);
+    store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
+    await vi.waitFor(() => { expect(history).toHaveBeenCalledTimes(2); });
+    expect(listConversations).toHaveBeenCalled();
+    store.handle({ type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
+    expect(history).toHaveBeenCalledTimes(2);
+  });
+
   test("events for another conversation are ignored while busy", () => {
     const { store, sent } = setup();
     store.send("Un");

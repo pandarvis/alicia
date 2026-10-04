@@ -46,6 +46,7 @@
     bind:value={text}
     bind:this={textarea}
     onkeydown={handleKeydown}
+    oninput={() => { window.alicia.presence.typing(); }}
     rows="1"
     placeholder={ready ? "Demande à Alicia…" : "Connexion à Alicia…"}
     aria-label="Message pour Alicia"
