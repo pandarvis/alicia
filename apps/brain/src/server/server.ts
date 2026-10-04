@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import {
   type ConversationSummary,
@@ -52,6 +53,8 @@ export interface ServerDependencies {
   heartbeatMs?: number;
   /** WebSocket backpressure settings (default DEFAULT_DRAIN; adjusted by tests). */
   drain?: DrainOptions;
+  /** Published versions of the desktop app, served read-only under /updates/ (omitted in most tests). */
+  updatesDir?: string;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -103,6 +106,23 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
   // Registered before the origin check: its own onRequest hook must mark upgrade requests first, so that
   // a refused upgrade still gets its raw socket destroyed (otherwise the socket lingers and close() hangs).
   await app.register(websocket, { options: { maxPayload: 131_072 } });
+
+  // Desktop app updates (electron-updater, generic provider) and the first download of the installer.
+  // Public on purpose: an installer holds no secret, and the brain is only reachable at home or over Tailscale.
+  if (deps.updatesDir !== undefined) {
+    await app.register(fastifyStatic, {
+      root: deps.updatesDir,
+      prefix: "/updates/",
+      decorateReply: false,
+      index: false,
+      list: false,
+      dotfiles: "deny",
+      setHeaders: (reply, path) => {
+        // electron-updater must always read the current latest.yml.
+        if (path.endsWith(".yml")) reply.header("cache-control", "no-cache");
+      },
+    });
+  }
 
   const extraOrigins: ReadonlySet<string> = new Set(deps.allowedOrigins ?? []);
   const originAllowed = (origin: string | undefined): boolean => isAllowedOrigin(origin, extraOrigins);

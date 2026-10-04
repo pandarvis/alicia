@@ -75,6 +75,9 @@ export async function buildApplication(
 ): Promise<Application> {
   const { db, memory } = openCore(config, options.embedder);
   try {
+    // <dataDir>/updates: where a new version of the desktop app is dropped (README, « Publier une version »).
+    const updatesDir = join(config.dataDir, "updates");
+    mkdirSync(updatesDir, { recursive: true });
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);
     const maintenance = new Maintenance({
@@ -90,6 +93,7 @@ export async function buildApplication(
       version: VERSION,
       chat: { repository, engine, memory, clock: systemClock, timezone: config.timezone },
       allowedOrigins: config.allowedOrigins,
+      updatesDir,
       ...(options.logging !== undefined ? { logging: options.logging } : {}),
     });
 
