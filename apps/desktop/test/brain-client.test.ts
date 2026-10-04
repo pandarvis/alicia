@@ -22,6 +22,11 @@ const MEMORY = {
   forgottenAt: null,
 };
 
+/** A typed error body, as the brain sends it. */
+const brainError = (code: string, extra: Record<string, unknown> = {}) => ({
+  error: { code, message: "Message du cerveau.", ...extra },
+});
+
 /** Records the last request and answers with a fixed response. */
 function fakeFetch(status: number, body: unknown) {
   const calls: { url: string; init: RequestInit | undefined }[] = [];
@@ -66,9 +71,9 @@ describe("pair", () => {
     expect(calls[0]?.init?.body).toBe(JSON.stringify({ code: "123456", deviceName: "PC-KEVIN" }));
   });
   test.each([
-    [401, { error: "invalid_code" }, "invalid_code"],
-    [429, { error: "too_many_attempts" }, "too_many_attempts"],
-    [400, { error: "invalid_request" }, "invalid_request"],
+    [401, brainError("invalid_code"), "invalid_code"],
+    [429, brainError("too_many_attempts"), "too_many_attempts"],
+    [400, brainError("invalid_request"), "invalid_request"],
   ] as const)("HTTP %i → %s", async (status, body, reason) => {
     const { fetchFn } = fakeFetch(status, body);
     expect(await pair(fetchFn, "127.0.0.1:8780", "123456", "PC")).toEqual({ ok: false, reason });
@@ -79,7 +84,7 @@ describe("pair", () => {
     expect(calls).toHaveLength(0);
   });
   test("5xx → unreachable", async () => {
-    const { fetchFn } = fakeFetch(503, { error: "boom" });
+    const { fetchFn } = fakeFetch(503, brainError("internal"));
     expect(await pair(fetchFn, "127.0.0.1:8780", "123456", "PC")).toEqual({ ok: false, reason: "unreachable" });
   });
   test("200 with a non-JSON body → unreachable (never throws)", async () => {
@@ -104,6 +109,14 @@ describe("pair", () => {
     const fetchFn: typeof fetch = () => Promise.reject(new TypeError("Failed to fetch"));
     expect(await pair(fetchFn, "127.0.0.1:8780", "123456", "PC")).toEqual({ ok: false, reason: "unreachable" });
   });
+  test("the typed code wins over the status", async () => {
+    const { fetchFn } = fakeFetch(400, brainError("too_many_attempts"));
+    expect(await pair(fetchFn, "127.0.0.1:8780", "123456", "PC")).toEqual({ ok: false, reason: "too_many_attempts" });
+  });
+  test("an error body that is not typed falls back on the status", async () => {
+    const { fetchFn } = fakeFetch(429, { nope: true });
+    expect(await pair(fetchFn, "127.0.0.1:8780", "123456", "PC")).toEqual({ ok: false, reason: "too_many_attempts" });
+  });
 });
 
 describe("BrainApi", () => {
@@ -126,7 +139,7 @@ describe("BrainApi", () => {
     expect(calls[0]?.url).toBe(`http://127.0.0.1:8780/conversations/${CONVERSATION_ID}/messages`);
   });
   test("401 → UnauthorizedError (revoked device)", async () => {
-    const { fetchFn } = fakeFetch(401, { error: "unauthenticated" });
+    const { fetchFn } = fakeFetch(401, brainError("unauthenticated"));
     await expect(new BrainApi(fetchFn, session).listConversations()).rejects.toBeInstanceOf(UnauthorizedError);
   });
   test("malformed answer is rejected", async () => {
@@ -205,18 +218,25 @@ describe("BrainApi", () => {
       expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
     });
     test.each([
-      [409, { error: "duplicate" }, "duplicate"],
-      [422, { error: "refused", reason: "secret" }, "secret"],
-      [422, { error: "refused", reason: "empty" }, "empty"],
-      [400, { error: "invalid_request" }, "invalid"],
+      [409, brainError("duplicate"), "duplicate"],
+      [422, brainError("refused", { reason: "secret" }), "secret"],
+      [422, brainError("refused", { reason: "empty" }), "empty"],
+      [400, brainError("invalid_request"), "invalid"],
     ] as const)("createMemory HTTP %i %j → %s", async (status, body, reason) => {
       expect(await api(status, body).createMemory(input)).toEqual({ ok: false, reason });
     });
     test("createMemory: 401 → UnauthorizedError, other statuses and odd bodies throw", async () => {
       await expect(api(401, {}).createMemory(input)).rejects.toBeInstanceOf(UnauthorizedError);
       await expect(api(500, {}).createMemory(input)).rejects.toThrow(/500/);
-      await expect(api(422, { error: "refused", reason: "weird" }).createMemory(input)).rejects.toThrow();
+      await expect(api(422, brainError("refused", { reason: "weird" })).createMemory(input)).rejects.toThrow();
       await expect(api(201, { nope: true }).createMemory(input)).rejects.toThrow();
+    });
+    test("createMemory: an unexpected typed error throws with its status and code", async () => {
+      await expect(api(409, brainError("busy")).createMemory(input)).rejects.toThrow(/409 \(busy\)/);
+    });
+    // Old flat shape on purpose (added after the replacement above): an untyped body is never guessed.
+    test("createMemory: a 409 without a typed body throws instead of guessing", async () => {
+      await expect(api(409, { error: "duplicate" }).createMemory(input)).rejects.toThrow(/409/);
     });
 
     test("updateMemory patches by id and returns the updated memory", async () => {
@@ -229,11 +249,11 @@ describe("BrainApi", () => {
       expect(calls[0]?.init?.body).toBe(JSON.stringify({ pinned: true }));
     });
     test.each([
-      [404, { error: "not_found" }, "not_found"],
-      [422, { error: "refused", reason: "secret" }, "secret"],
-      [422, { error: "refused", reason: "empty" }, "empty"],
-      [409, { error: "duplicate" }, "duplicate"],
-      [400, { error: "invalid_request" }, "invalid"],
+      [404, brainError("not_found"), "not_found"],
+      [422, brainError("refused", { reason: "secret" }), "secret"],
+      [422, brainError("refused", { reason: "empty" }), "empty"],
+      [409, brainError("duplicate"), "duplicate"],
+      [400, brainError("invalid_request"), "invalid"],
     ] as const)("updateMemory HTTP %i %j → %s", async (status, body, reason) => {
       expect(await api(status, body).updateMemory(MEMORY_ID, { text: "x" })).toEqual({ ok: false, reason });
     });
@@ -248,7 +268,7 @@ describe("BrainApi", () => {
       expect(method(done.calls[0])).toBe("DELETE");
       expect(done.calls[0]?.url).toBe(`http://127.0.0.1:8780/memories/${MEMORY_ID}`);
       expect(header(done.calls[0], "authorization")).toBe(authorization);
-      expect(await api(404, { error: "not_found" }).forgetMemory(MEMORY_ID)).toBe(false);
+      expect(await api(404, brainError("not_found")).forgetMemory(MEMORY_ID)).toBe(false);
     });
     test("forgetMemory: 401 → UnauthorizedError, 5xx throws", async () => {
       await expect(api(401, {}).forgetMemory(MEMORY_ID)).rejects.toBeInstanceOf(UnauthorizedError);
@@ -261,7 +281,7 @@ describe("BrainApi", () => {
       expect(method(done.calls[0])).toBe("POST");
       expect(done.calls[0]?.url).toBe(`http://127.0.0.1:8780/memories/${MEMORY_ID}/restore`);
       expect(done.calls[0]?.init?.body).toBeUndefined();
-      expect(await api(404, { error: "not_found" }).restoreMemory(MEMORY_ID)).toBeNull();
+      expect(await api(404, brainError("not_found")).restoreMemory(MEMORY_ID)).toBeNull();
     });
     test("restoreMemory: 401 → UnauthorizedError, 5xx and malformed answers throw", async () => {
       await expect(api(401, {}).restoreMemory(MEMORY_ID)).rejects.toBeInstanceOf(UnauthorizedError);
@@ -282,7 +302,7 @@ describe("BrainApi", () => {
     });
     test("testMemory: 401 → UnauthorizedError, 400 and malformed answers throw", async () => {
       await expect(api(401, {}).testMemory("x")).rejects.toBeInstanceOf(UnauthorizedError);
-      await expect(api(400, { error: "invalid_request" }).testMemory("x")).rejects.toThrow(/400/);
+      await expect(api(400, brainError("invalid_request")).testMemory("x")).rejects.toThrow(/400/);
       await expect(api(200, [{ nope: 1 }]).testMemory("x")).rejects.toThrow();
     });
   });
@@ -290,8 +310,8 @@ describe("BrainApi", () => {
   describe("deleteConversation", () => {
     test.each([
       [204, null, "deleted"],
-      [404, { error: "not_found" }, "not_found"],
-      [409, { error: "busy" }, "busy"],
+      [404, brainError("not_found"), "not_found"],
+      [409, brainError("busy"), "busy"],
     ] as const)("HTTP %i → %s", async (status, body, outcome) => {
       const { calls, fetchFn } = fakeFetch(status, body);
       expect(await new BrainApi(fetchFn, session).deleteConversation(CONVERSATION_ID)).toBe(outcome);

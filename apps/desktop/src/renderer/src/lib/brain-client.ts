@@ -1,6 +1,7 @@
 import {
   ConversationSummary,
   HistoryMessage,
+  HttpErrorBody,
   type MemoryCreate,
   type MemoryKind,
   type MemoryPatch,
@@ -27,9 +28,6 @@ export class UnauthorizedError extends Error {
 export type MemoryWriteResult =
   | { ok: true; memory: MemorySummary }
   | { ok: false; reason: "duplicate" | "secret" | "empty" | "not_found" | "invalid" };
-
-/** Body of a 422 from the brain: the memory was refused. */
-const MemoryRefusal = z.object({ reason: z.enum(["secret", "empty"]) });
 
 const PAIRING_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -63,6 +61,25 @@ const FAILURE_BY_STATUS: Readonly<Record<number, PairingFailure>> = {
   429: "too_many_attempts",
 };
 
+type BrainError = HttpErrorBody["error"];
+
+/** The brain's typed error, or undefined when the body is not one (older brain, proxy page, empty body…). */
+async function readError(response: Response): Promise<BrainError | undefined> {
+  try {
+    const parsed = HttpErrorBody.safeParse(await response.json());
+    return parsed.success ? parsed.data.error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The typed code when it is a pairing failure, otherwise the status. */
+function pairingFailure(error: BrainError | undefined, status: number): PairingFailure {
+  const code = error?.code;
+  if (code === "invalid_code" || code === "too_many_attempts" || code === "invalid_request") return code;
+  return FAILURE_BY_STATUS[status] ?? "unreachable";
+}
+
 export async function pair(
   fetchFn: typeof fetch,
   rawServerUrl: string,
@@ -79,7 +96,7 @@ export async function pair(
       body: JSON.stringify({ code, deviceName }),
       signal: AbortSignal.timeout(PAIRING_TIMEOUT_MS),
     });
-    if (!response.ok) return { ok: false, reason: FAILURE_BY_STATUS[response.status] ?? "unreachable" };
+    if (!response.ok) return { ok: false, reason: pairingFailure(await readError(response), response.status) };
     payload = await response.json();
   } catch {
     // Network failure, timeout, or a body that is not JSON: the brain cannot be reached properly.
@@ -133,7 +150,7 @@ export class BrainApi {
     const response = await this.#request("DELETE", path);
     if (response.status === 204) return true;
     if (response.status === 404) return false;
-    throw unexpectedStatus(response, path);
+    throw statusError(response.status, path, (await readError(response))?.code);
   }
 
   /** Null when there is nothing to restore (unknown, not forgotten, or forgotten too long ago). */
@@ -141,7 +158,7 @@ export class BrainApi {
     const path = `/memories/${encodeURIComponent(id)}/restore`;
     const response = await this.#request("POST", path);
     if (response.status === 404) return null;
-    if (!response.ok) throw unexpectedStatus(response, path);
+    if (!response.ok) throw statusError(response.status, path, (await readError(response))?.code);
     return MemorySummary.parse(await response.json());
   }
 
@@ -156,26 +173,32 @@ export class BrainApi {
     if (response.status === 204) return "deleted";
     if (response.status === 404) return "not_found";
     if (response.status === 409) return "busy";
-    throw unexpectedStatus(response, path);
+    throw statusError(response.status, path, (await readError(response))?.code);
   }
 
   async #get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
     const response = await this.#request("GET", path);
-    if (!response.ok) throw unexpectedStatus(response, path);
+    if (!response.ok) throw statusError(response.status, path, (await readError(response))?.code);
     return schema.parse(await response.json());
   }
 
   /** Reads the answer of a create or update: the memory, or the reason the brain did not write it. */
   async #writeResult(response: Response, path: string): Promise<MemoryWriteResult> {
     if (response.ok) return { ok: true, memory: MemorySummary.parse(await response.json()) };
-    if (response.status === 409) return { ok: false, reason: "duplicate" };
-    if (response.status === 404) return { ok: false, reason: "not_found" };
-    if (response.status === 400) return { ok: false, reason: "invalid" };
-    if (response.status === 422) {
-      const refusal = MemoryRefusal.parse(await response.json());
-      return { ok: false, reason: refusal.reason };
+    const error = await readError(response);
+    if (error === undefined) throw statusError(response.status, path);
+    switch (error.code) {
+      case "duplicate":
+        return { ok: false, reason: "duplicate" };
+      case "not_found":
+        return { ok: false, reason: "not_found" };
+      case "invalid_request":
+        return { ok: false, reason: "invalid" };
+      case "refused":
+        return { ok: false, reason: error.reason };
+      default:
+        throw statusError(response.status, path, error.code);
     }
-    throw unexpectedStatus(response, path);
   }
 
   /** One authenticated call with the request timeout; a refused token is the only status handled here. */
@@ -202,6 +225,6 @@ function withQuery(path: string, params: URLSearchParams): string {
   return query === "" ? path : `${path}?${query}`;
 }
 
-function unexpectedStatus(response: Response, path: string): Error {
-  return new Error(`Brain answered HTTP ${response.status} on ${path}`);
+function statusError(status: number, path: string, code?: string): Error {
+  return new Error(`Brain answered HTTP ${status}${code === undefined ? "" : ` (${code})`} on ${path}`);
 }
