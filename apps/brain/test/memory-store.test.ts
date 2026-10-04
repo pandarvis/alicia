@@ -93,6 +93,7 @@ describe("MemoryStore", () => {
     "On a planté un pin dans le jardin",
     "pomme de pin",
     "le code de la route",
+    "Les codes postaux de la famille : 31320 et 31400",
     "Kévin code en TypeScript",
     "la porte du garage a un code couleur bleu",
   ])("accepts ordinary text: %s", async (text) => {

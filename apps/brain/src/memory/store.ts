@@ -79,7 +79,7 @@ const FORGET_RETENTION_MS = 30 * 24 * 3_600_000;
 const SECRET_WORDS =
   /(?<![\p{L}\p{N}])(mots? de passe|passwords?|mdp|code\s*pin|pin\s*:?\s*\d|codes? (d['’]acc[eè]s|secrets?|du wifi|wifi|de l['’]alarme|alarme|du portail|portail)|digicodes?|iban|cvv|cryptogrammes?)(?!\p{L})/iu;
 /** "code" followed closely by a number ("le code de la porte : 4521"), postal codes aside. */
-const SECRET_CODE = /(?<![\p{L}\p{N}])codes?(?!\s+postal)[^.!?\n]{0,30}?\d{3,}/iu;
+const SECRET_CODE = /(?<![\p{L}\p{N}])codes?(?!\s+posta(?:l|ux))[^.!?\n]{0,30}?\d{3,}/iu;
 
 function refusal(text: string): RefusalReason | undefined {
   if (text === "") return "empty";
