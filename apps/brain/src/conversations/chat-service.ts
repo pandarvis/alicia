@@ -3,11 +3,15 @@ import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
 import type { Clock } from "../clock.ts";
 import type { Engine, EngineEvent } from "../engine/engine.ts";
+import { buildSheet } from "../memory/sheet.ts";
+import type { MemoryStore } from "../memory/store.ts";
+import { memoryTools } from "../memory/tools.ts";
 import type { Conversation, ConversationRepository, LoggedToolCall, Message } from "./repository.ts";
 
 export interface ChatDependencies {
   repository: ConversationRepository;
   engine: Engine;
+  memory: MemoryStore;
   clock: Clock;
   timezone: string;
 }
@@ -60,13 +64,15 @@ export async function* handleSend(
   deps.repository.addMessage(conversationId, "user", message.text);
 
   const model = chooseModel(message.model, message.text);
-  const systemPrompt = buildSystemPrompt(person, "");
+  const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
+  const systemPrompt = buildSystemPrompt(person, sheet);
+  const tools = memoryTools(deps.memory, person, conversationId);
   const prompt = timestamp(message.text, new Date(start), deps.timezone);
 
   let text = "";
   let inputTokens = 0;
   let outputTokens = 0;
-  const tools: LoggedToolCall[] = [];
+  const loggedTools: LoggedToolCall[] = [];
   let sessionId = conversation.sessionId ?? undefined;
   // Existing conversation without a session (lost): re-inject the last exchanges from the first attempt.
   let currentPrompt = sessionId === undefined ? buildResumePrompt(history, prompt) : prompt;
@@ -80,7 +86,7 @@ export async function* handleSend(
       // a repository failure while handling an event must propagate as is.
       let stream: AsyncIterator<EngineEvent> | undefined;
       try {
-        stream = deps.engine.run({ prompt: currentPrompt, sessionId, model, systemPrompt, tools: [] }, signal)[
+        stream = deps.engine.run({ prompt: currentPrompt, sessionId, model, systemPrompt, tools }, signal)[
           Symbol.asyncIterator
         ]();
       } catch (cause) {
@@ -107,11 +113,11 @@ export async function* handleSend(
               yield { type: "text_delta", conversationId, text: e.text };
               break;
             case "tool_call":
-              tools.push({ callId: e.callId, tool: e.tool, success: null });
+              loggedTools.push({ callId: e.callId, tool: e.tool, success: null });
               yield { type: "tool_call", conversationId, callId: e.callId, tool: e.tool };
               break;
             case "tool_result": {
-              const call = tools.find((t) => t.callId === e.callId);
+              const call = loggedTools.find((t) => t.callId === e.callId);
               if (call !== undefined) call.success = e.success;
               yield { type: "tool_result", conversationId, callId: e.callId, success: e.success };
               break;
@@ -131,7 +137,7 @@ export async function* handleSend(
       }
 
       const unreadableSession =
-        error?.code === "engine" && sessionId !== undefined && text === "" && tools.length === 0;
+        error?.code === "engine" && sessionId !== undefined && text === "" && loggedTools.length === 0;
       if (!unreadableSession || signal.aborted) break;
       sessionId = undefined;
       deps.repository.setSession(conversationId, null);
@@ -142,7 +148,7 @@ export async function* handleSend(
     const durationMs = deps.clock() - start;
     if (text !== "") deps.repository.addMessage(conversationId, "assistant", text);
     deps.repository.logTurn({
-      conversationId, model, inputTokens, outputTokens, durationMs, tools,
+      conversationId, model, inputTokens, outputTokens, durationMs, tools: loggedTools,
       error: signal.aborted ? "annulé" : (error?.message ?? null),
     });
   }

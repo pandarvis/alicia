@@ -3,7 +3,7 @@ import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import { createServer } from "../src/server/server.ts";
-import { createTestClock, createTestDb } from "./helpers.ts";
+import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
 async function createContext() {
   const db = createTestDb();
@@ -12,7 +12,9 @@ async function createContext() {
   const pairing = new PairingService(db, time.clock);
   const engine = new FakeEngine(() => [{ type: "done", inputTokens: 0, outputTokens: 0 }]);
   const app = await createServer({
-    pairing, repository, version: "0.1.0", chat: { repository, engine, clock: time.clock, timezone: "Europe/Paris" },
+    pairing, repository, version: "0.1.0", chat: {
+      repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
+    },
   });
   return { app, pairing, repository };
 }

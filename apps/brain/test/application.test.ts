@@ -5,6 +5,7 @@ import { afterEach, expect, test } from "vitest";
 import { buildApplication } from "../src/application.ts";
 import { parseConfig } from "../src/config.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
+import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -18,7 +19,7 @@ dataDir: ${JSON.stringify(dir)}
 people: [{ id: kevin, name: Kévin }]
 engine: { mode: subscription }
 `);
-  const app = await buildApplication(config, new FakeEngine(() => []));
+  const app = await buildApplication(config, new FakeEngine(() => []), { embedder: new FakeEmbedder() });
   expect(app.pairing.generateCode("kevin")).toMatch(/^\d{6}$/);
   const res = await app.server.inject({ method: "GET", url: "/health" });
   expect(res.statusCode).toBe(200);

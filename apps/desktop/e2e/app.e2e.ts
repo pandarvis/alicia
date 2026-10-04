@@ -8,6 +8,7 @@ import { afterEach, expect, test } from "vitest";
 import { type Application, buildApplication } from "../../brain/src/application.ts";
 import { parseConfig } from "../../brain/src/config.ts";
 import { FakeEngine } from "../../brain/src/engine/fake-engine.ts";
+import { FakeEmbedder } from "../../brain/src/memory/fake-embedder.ts";
 
 const MAIN = fileURLToPath(new URL("../out/main/index.js", import.meta.url));
 
@@ -59,7 +60,7 @@ engine: { mode: subscription }
     { type: "text", text: "je suis là !" },
     { type: "done", inputTokens: 1, outputTokens: 2 },
   ]);
-  const first = await buildApplication(config, engine);
+  const first = await buildApplication(config, engine, { embedder: new FakeEmbedder() });
   await first.server.listen({ port: 0, host: "127.0.0.1" });
   const port = (first.server.server.address() as AddressInfo).port;
   let running = true;
@@ -74,7 +75,7 @@ engine: { mode: subscription }
     },
     restart: async () => {
       await brain.stop();
-      brain.app = await buildApplication(config, engine);
+      brain.app = await buildApplication(config, engine, { embedder: new FakeEmbedder() });
       await brain.app.server.listen({ port, host: "127.0.0.1" });
       running = true;
     },

@@ -8,7 +8,7 @@ import type { Engine, EngineEvent } from "../src/engine/engine.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import { createServer } from "../src/server/server.ts";
-import { createTestClock, createTestDb } from "./helpers.ts";
+import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
 
 const REQUEST_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 const REQUEST_ID_2 = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
@@ -40,7 +40,9 @@ async function start(options: StartOptions = {}) {
     pairing,
     repository,
     version: "0.1.0",
-    chat: { repository, engine, clock: time.clock, timezone: "Europe/Paris" },
+    chat: {
+      repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
+    },
     ...(options.authTimeoutMs === undefined
       ? {}
       : { authTimeoutMs: options.authTimeoutMs }),

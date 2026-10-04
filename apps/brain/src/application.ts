@@ -10,6 +10,9 @@ import type { Engine } from "./engine/engine.ts";
 import { SdkEngine } from "./engine/sdk-engine.ts";
 import { PairingService } from "./identity/pairing.ts";
 import { syncPeople } from "./identity/people.ts";
+import type { Embedder } from "./memory/embedder.ts";
+import { MemoryStore } from "./memory/store.ts";
+import { TransformersEmbedder } from "./memory/transformers-embedder.ts";
 import { createServer } from "./server/server.ts";
 import { VERSION } from "./version.ts";
 
@@ -19,6 +22,8 @@ export const WORKSPACE_DIR = fileURLToPath(new URL("../workspace", import.meta.u
 export interface ApplicationOptions {
   /** Fastify logger (pino, Authorization masked): enabled by `start`, off by default. */
   logging?: boolean;
+  /** Memory embedder (default: the local multilingual model, loaded lazily on first use). */
+  embedder?: Embedder;
 }
 
 export interface Application {
@@ -44,11 +49,13 @@ export async function buildApplication(
 
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);
+    const embedder = options.embedder ?? new TransformersEmbedder(join(config.dataDir, "models"));
+    const memory = new MemoryStore(db, embedder, systemClock);
     const server = await createServer({
       pairing,
       repository,
       version: VERSION,
-      chat: { repository, engine, clock: systemClock, timezone: config.timezone },
+      chat: { repository, engine, memory, clock: systemClock, timezone: config.timezone },
       ...(options.logging !== undefined ? { logging: options.logging } : {}),
     });
 
