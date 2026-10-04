@@ -1,7 +1,7 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { handleSend } from "../src/conversations/chat-service.ts";
-import { ConversationRepository } from "../src/conversations/repository.ts";
+import { buildResumePrompt, handleSend } from "../src/conversations/chat-service.ts";
+import { ConversationRepository, type Message } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
 import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
 import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
@@ -85,7 +85,7 @@ describe("handleSend", () => {
   test("unreadable session: a single retry, without a session, primed with the history", async () => {
     const { deps, repository, engine } = createContext(
       SIMPLE_REPLY,
-      () => [{ type: "error", code: "engine", message: "session introuvable" }],
+      () => [{ type: "error", code: "unreadable_session", message: "La session précédente est illisible." }],
       SIMPLE_REPLY,
     );
     const firsts = await send(deps, KEVIN, { text: "Un" });
@@ -99,6 +99,32 @@ describe("handleSend", () => {
     expect(engine.requests[2]?.prompt).toContain("Alicia : Il fait 19 °C.");
     expect(events.at(-1)?.type).toBe("done");
     expect(repository.get(id, "kevin")?.sessionId).toBe("s1");
+  });
+
+  test("a network failure on a resumed session: no retry, the session is kept", async () => {
+    const { deps, repository, engine } = createContext(
+      SIMPLE_REPLY,
+      () => [{ type: "error", code: "engine", message: "Le moteur a échoué : fetch failed" }],
+      SIMPLE_REPLY,
+    );
+    const firsts = await send(deps, KEVIN, { text: "Un" });
+    const id = firsts[0]?.type === "conversation" ? firsts[0].conversationId : "";
+    const events = await send(deps, KEVIN, { text: "Deux", conversationId: id });
+    expect(engine.requests).toHaveLength(2);
+    expect(repository.get(id, "kevin")?.sessionId).toBe("s1");
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "engine", message: "Le moteur a échoué : fetch failed" });
+  });
+
+  test("an unreadable session that cannot be retried reaches the app as an engine error", async () => {
+    const unreadable: Scenario = () => [
+      { type: "error", code: "unreadable_session", message: "La session précédente est illisible." },
+    ];
+    const { deps, engine } = createContext(SIMPLE_REPLY, unreadable, unreadable);
+    const firsts = await send(deps, KEVIN, { text: "Un" });
+    const id = firsts[0]?.type === "conversation" ? firsts[0].conversationId : "";
+    const events = await send(deps, KEVIN, { text: "Deux", conversationId: id });
+    expect(engine.requests).toHaveLength(3);
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "engine" });
   });
 
   test("quota reached: error relayed, nothing made up, turn logged", async () => {
@@ -264,5 +290,26 @@ describe("handleSend", () => {
     const events = await send(deps, KEVIN, { text: "Retiens que j'adore les lasagnes" });
     const conversationId = events[0]?.type === "conversation" ? events[0].conversationId : "";
     expect(deps.memory.list("kevin", {})[0]?.conversationId).toBe(conversationId);
+  });
+});
+
+describe("buildResumePrompt", () => {
+  const message = (i: number, text: string): Message => ({
+    id: `m${i}`, conversationId: "c", role: i % 2 === 0 ? "user" : "assistant", text, createdAt: i,
+  });
+
+  test("no history: the prompt alone", () => {
+    expect(buildResumePrompt([], "Bonjour")).toBe("Bonjour");
+  });
+
+  test("long messages are cut and the most recent ones are kept within the budget", () => {
+    const history = Array.from({ length: 10 }, (_, i) => message(i, `${i}:${"x".repeat(1_500)}`));
+    const prompt = buildResumePrompt(history, "Nouveau");
+    expect(prompt).toContain("Alicia : 9:");
+    expect(prompt).toContain("Utilisateur : 4:");
+    expect(prompt).not.toContain("Utilisateur : 0:");
+    expect(prompt).toContain("…");
+    expect(prompt.length).toBeLessThan(9_000);
+    expect(prompt.endsWith("Nouveau message :\nNouveau")).toBe(true);
   });
 });

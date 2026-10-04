@@ -18,7 +18,11 @@ export type EngineEvent =
   | { type: "tool_call"; callId: string; tool: string }
   | { type: "tool_result"; callId: string; success: boolean }
   | { type: "done"; inputTokens: number; outputTokens: number }
-  | { type: "error"; code: "quota" | "engine"; message: string };
+  /**
+   * "unreadable_session": the SDK could not resume the requested session (unknown or unreadable).
+   * Internal to the brain: the chat service retries without a session and never sends this code to the app.
+   */
+  | { type: "error"; code: "quota" | "engine" | "unreadable_session"; message: string };
 
 /** A turn that stopped without a result: an engine failure, never an empty success. */
 export const INCOMPLETE_TURN_MESSAGE = "Le moteur s'est arrêté avant la fin de sa réponse.";

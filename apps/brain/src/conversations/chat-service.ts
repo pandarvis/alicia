@@ -20,6 +20,13 @@ type EngineError = Extract<EngineEvent, { type: "error" }>;
 
 const TITLE_LENGTH = 60;
 const RESUME_MESSAGE_COUNT = 10;
+const RESUME_MESSAGE_CHARS = 1_000;
+const RESUME_TOTAL_CHARS = 8_000;
+
+function resumeLine(m: Message): string {
+  const text = m.text.length > RESUME_MESSAGE_CHARS ? `${m.text.slice(0, RESUME_MESSAGE_CHARS - 1)}…` : m.text;
+  return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${text}`;
+}
 
 function toEngineError(cause: unknown): EngineError {
   return { type: "error", code: "engine", message: cause instanceof Error ? cause.message : String(cause) };
@@ -30,9 +37,20 @@ export function titleFrom(text: string): string {
   return line.length > TITLE_LENGTH ? `${line.slice(0, TITLE_LENGTH - 1)}…` : line;
 }
 
+/**
+ * Primes a new SDK session when the previous one is lost or unreadable (spec, « Erreurs »): the last
+ * exchanges stored in the database, each cut to 1,000 characters, the most recent kept first, 8,000 in all.
+ */
 export function buildResumePrompt(history: readonly Message[], prompt: string): string {
-  if (history.length === 0) return prompt;
-  const lines = history.map((m) => `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${m.text}`);
+  const lines: string[] = [];
+  let total = 0;
+  for (const m of [...history].reverse()) {
+    const line = resumeLine(m);
+    if (total + line.length > RESUME_TOTAL_CHARS) break;
+    lines.unshift(line);
+    total += line.length;
+  }
+  if (lines.length === 0) return prompt;
   return `Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :\n${lines.join("\n")}\n\nNouveau message :\n${prompt}`;
 }
 
@@ -143,8 +161,9 @@ export async function* handleSend(
         error = { type: "error", code: "engine", message: INCOMPLETE_TURN_MESSAGE };
       }
 
+      // Only a session the SDK could not load is dropped: a network or process failure keeps it for the next turn.
       const unreadableSession =
-        error?.code === "engine" && sessionId !== undefined && text === "" && loggedTools.length === 0;
+        error?.code === "unreadable_session" && sessionId !== undefined && text === "" && loggedTools.length === 0;
       if (!unreadableSession || signal.aborted) break;
       sessionId = undefined;
       deps.repository.setSession(conversationId, null);
@@ -164,7 +183,12 @@ export async function* handleSend(
   const durationMs = deps.clock() - start;
   if (error !== undefined) {
     yield {
-      type: "error", requestId: message.requestId, conversationId, code: error.code, message: error.message,
+      type: "error",
+      requestId: message.requestId,
+      conversationId,
+      // An unreadable session that could not be retried is, for the app, an engine failure.
+      code: error.code === "unreadable_session" ? "engine" : error.code,
+      message: error.message,
     };
     return;
   }

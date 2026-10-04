@@ -17,6 +17,13 @@ import type { ToolDefinition, ToolResult } from "./tools.ts";
 
 const LIMIT_PATTERN = /usage limit|rate[ _]?limit|(?<!disk )quota (?:exceeded|reached)|too many requests|\b429\b/i;
 const QUOTA_MESSAGE = "Je me repose : le quota de l'abonnement est atteint.";
+/**
+ * What the Claude Code process prints when `resume` names a session it cannot load (strings of the CLI
+ * bundled with SDK 0.3.288, relayed by the SDK as "...exited with code 1. stderr: ..."). Re-check on every
+ * SDK update, like USAGE_LIMIT_ERROR_PREFIXES.
+ */
+const UNREADABLE_SESSION_PATTERN = /No conversation found with session ID|--resume session load failed/i;
+const UNREADABLE_SESSION_MESSAGE = "La session précédente est illisible.";
 const STATUS_TOO_MANY_REQUESTS = 429;
 const MASKED_SECRET = "[secret]";
 
@@ -37,7 +44,9 @@ const ALLOWED_ENV: readonly string[] = [
   "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS",
 ];
 
-export function classifyError(text: string): { code: "quota" | "engine"; message: string } {
+export function classifyError(text: string): { code: "quota" | "engine" | "unreadable_session"; message: string } {
+  // Checked first: a failed resume happens before any API call, so it cannot be a quota problem.
+  if (UNREADABLE_SESSION_PATTERN.test(text)) return { code: "unreadable_session", message: UNREADABLE_SESSION_MESSAGE };
   // USAGE_LIMIT_ERROR_PREFIXES is marked @alpha in the SDK: re-check it on every SDK update.
   const limitReached = LIMIT_PATTERN.test(text) || USAGE_LIMIT_ERROR_PREFIXES.some((prefix) => text.includes(prefix));
   return limitReached

@@ -195,6 +195,11 @@ describe("translateTurn", () => {
   test("rejected limit then a silent end → quota", async () => {
     expect(await turn([LIMIT_REJECTED])).toEqual([QUOTA]);
   });
+  test("exception from an unreadable session → a single unreadable_session error", async () => {
+    expect(await turn([], new Error("Claude Code process exited with code 1. stderr: No conversation found with session ID: abc"))).toEqual([
+      { type: "error", code: "unreadable_session", message: "La session précédente est illisible." },
+    ]);
+  });
   test("silent end after cancellation: nothing", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -221,6 +226,15 @@ describe("classifyError", () => {
   test("everything else → engine, including a disk quota", () => {
     expect(classifyError("spawn ENOENT")).toEqual({ code: "engine", message: "Le moteur a échoué : spawn ENOENT" });
     expect(classifyError("EDQUOT: disk quota exceeded, write").code).toBe("engine");
+  });
+  test("resume of an unknown session → unreadable_session", () => {
+    expect(
+      classifyError("Claude Code process exited with code 1. stderr: No conversation found with session ID: 0b6f2c1e-1111-4222-8333-944455566677"),
+    ).toEqual({ code: "unreadable_session", message: "La session précédente est illisible." });
+  });
+  test("network failures and crashes stay engine errors", () => {
+    expect(classifyError("fetch failed: ECONNRESET").code).toBe("engine");
+    expect(classifyError("Claude Code process exited with code 1").code).toBe("engine");
   });
 });
 
