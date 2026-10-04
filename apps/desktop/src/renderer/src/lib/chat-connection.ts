@@ -27,6 +27,9 @@ const FIRST_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 const READY_TIMEOUT_MS = 15_000;
 const READY_TIMEOUT_CLOSE = 4000;
+/** The brain sends a heartbeat every 30 s: 75 s of silence means the link is dead. */
+const HEARTBEAT_TIMEOUT_MS = 75_000;
+const HEARTBEAT_TIMEOUT_CLOSE = 4001;
 
 /** Adapter from the browser WebSocket to SocketLike. */
 export function browserSocket(url: string): SocketLike {
@@ -58,6 +61,7 @@ export class ChatConnection {
   #stopped = false;
   #cancelRetry: (() => void) | null = null;
   #cancelReadyTimeout: (() => void) | null = null;
+  #cancelHeartbeat: (() => void) | null = null;
 
   constructor(options: ChatConnectionOptions) {
     this.#options = options;
@@ -82,6 +86,7 @@ export class ChatConnection {
     this.#cancelRetry?.();
     this.#cancelRetry = null;
     this.#clearReadyTimeout();
+    this.#clearHeartbeat();
     const socket = this.#socket;
     this.#ready = false;
     this.#socket = null;
@@ -103,7 +108,7 @@ export class ChatConnection {
     };
     socket.onmessage = (data) => {
       if (this.#socket !== socket) return;
-      this.#receive(data);
+      this.#receive(socket, data);
     };
     socket.onclose = (code) => {
       if (this.#socket !== socket) return;
@@ -116,7 +121,25 @@ export class ChatConnection {
     this.#cancelReadyTimeout = null;
   }
 
-  #receive(data: string): void {
+  #clearHeartbeat(): void {
+    this.#cancelHeartbeat?.();
+    this.#cancelHeartbeat = null;
+  }
+
+  /** (Re)starts the watchdog: without any message for 75 s, the socket is given up and a reconnect scheduled. */
+  #watch(socket: SocketLike): void {
+    this.#clearHeartbeat();
+    this.#cancelHeartbeat = this.#options.schedule(() => {
+      this.#cancelHeartbeat = null;
+      if (this.#socket !== socket) return;
+      // The system may take minutes to report a dead link: give the socket up now. Its late close event,
+      // if any, is ignored since it is no longer the current socket.
+      socket.close(HEARTBEAT_TIMEOUT_CLOSE);
+      this.#closed(HEARTBEAT_TIMEOUT_CLOSE);
+    }, HEARTBEAT_TIMEOUT_MS);
+  }
+
+  #receive(socket: SocketLike, data: string): void {
     let json: unknown;
     try {
       json = JSON.parse(data);
@@ -125,22 +148,27 @@ export class ChatConnection {
     }
     const parsed = ServerEvent.safeParse(json);
     if (!parsed.success) return;
-    if (parsed.data.type === "ready") {
+    const event = parsed.data;
+    if (event.type === "ready") {
       this.#clearReadyTimeout();
       this.#ready = true;
       this.#attempt = 0;
       this.#options.onStatus("ready");
     }
+    if (this.#ready) this.#watch(socket);
+    // Liveness only: nothing for the consumers.
+    if (event.type === "heartbeat") return;
     try {
-      this.#options.onEvent(parsed.data);
+      this.#options.onEvent(event);
     } catch {
       // A faulty consumer must not break the connection; log the type only.
-      console.error(`chat event handler failed (${parsed.data.type})`);
+      console.error(`chat event handler failed (${event.type})`);
     }
   }
 
   #closed(code: number): void {
     this.#clearReadyTimeout();
+    this.#clearHeartbeat();
     this.#ready = false;
     this.#socket = null;
     if (this.#stopped) return;

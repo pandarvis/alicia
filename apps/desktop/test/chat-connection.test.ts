@@ -6,6 +6,7 @@ import {
 
 const TOKEN = "t".repeat(43);
 const READY_TIMEOUT_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 75_000;
 const READY = { type: "ready", person: { id: "kevin", name: "Kévin" } };
 const CONVERSATION_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 const MESSAGE = { type: "send" as const, requestId: "7a1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192", text: "Salut" };
@@ -63,11 +64,15 @@ function setup(onEvent?: (e: ServerEvent) => void) {
   const timers = {
     /** Reconnect timers only. */
     get retries(): Timer[] {
-      return allTimers.filter((t) => t.ms !== READY_TIMEOUT_MS);
+      return allTimers.filter((t) => t.ms !== READY_TIMEOUT_MS && t.ms !== HEARTBEAT_TIMEOUT_MS);
     },
     /** Ready-timeout timers only. */
     get ready(): Timer[] {
       return allTimers.filter((t) => t.ms === READY_TIMEOUT_MS);
+    },
+    /** Heartbeat watchdogs only. */
+    get heartbeats(): Timer[] {
+      return allTimers.filter((t) => t.ms === HEARTBEAT_TIMEOUT_MS);
     },
   };
   return { connection, sockets, timers, events, statuses };
@@ -219,5 +224,48 @@ describe("ChatConnection", () => {
     sockets[0]?.receive(READY);
     sockets[0]?.receive({ type: "text_delta", conversationId: CONVERSATION_ID, text: "Bonjour" });
     expect(events.map((e) => e.type)).toEqual(["ready", "text_delta"]);
+  });
+
+  test("silence after ready: the socket is given up and a reconnect is scheduled at once", () => {
+    const { connection, sockets, timers, statuses } = setup();
+    connection.start();
+    sockets[0]?.receive(READY);
+    expect(timers.heartbeats).toHaveLength(1);
+    timers.heartbeats[0]?.run();
+    expect(sockets[0]?.closedWith).toBe(4001);
+    expect(statuses.at(-1)).toBe("offline");
+    expect(connection.send(MESSAGE)).toBe(false);
+    expect(timers.retries.map((t) => t.ms)).toEqual([1000]);
+    // The late close of the abandoned socket changes nothing.
+    sockets[0]?.onclose?.(1006);
+    expect(timers.retries).toHaveLength(1);
+    timers.retries[0]?.run();
+    expect(sockets).toHaveLength(2);
+  });
+
+  test("every message re-arms the watchdog; heartbeats are not forwarded", () => {
+    const { connection, sockets, timers, events } = setup();
+    connection.start();
+    sockets[0]?.receive(READY);
+    sockets[0]?.receive({ type: "heartbeat" });
+    expect(events.map((e) => e.type)).toEqual(["ready"]);
+    expect(timers.heartbeats).toHaveLength(2);
+    expect(timers.heartbeats[0]?.cancelled).toBe(true);
+    expect(timers.heartbeats[1]?.cancelled).toBe(false);
+  });
+
+  test("no watchdog before ready; a close or stop cancels it", () => {
+    const { connection, sockets, timers } = setup();
+    connection.start();
+    sockets[0]?.onopen?.();
+    sockets[0]?.receive({ type: "heartbeat" });
+    expect(timers.heartbeats).toHaveLength(0);
+    sockets[0]?.receive(READY);
+    sockets[0]?.onclose?.(1006);
+    expect(timers.heartbeats.every((t) => t.cancelled)).toBe(true);
+    timers.retries.at(-1)?.run();
+    sockets.at(-1)?.receive(READY);
+    connection.stop();
+    expect(timers.heartbeats.every((t) => t.cancelled)).toBe(true);
   });
 });

@@ -144,6 +144,7 @@ export class ChatStore {
     if (isTurnEvent(event) && !this.#isCurrentTurn(event.conversationId)) return;
     switch (event.type) {
       case "ready":
+      case "heartbeat":
         return;
       case "conversation":
         if (event.requestId !== this.#pendingRequestId) return;
