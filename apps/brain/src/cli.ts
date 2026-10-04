@@ -18,6 +18,7 @@ const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
   chat [--url U] [--code C]      discute dans le terminal (jeton : --code ou ALICIA_TOKEN)
   devices                        liste les appareils appairés
   revoke <id>                    révoque un appareil (effet immédiat, même connecté)
+  backup                         sauvegarde la base maintenant (garde les 14 plus récentes)
   check-engine                   un appel réel au SDK (consomme un peu de quota)
   import-alice --chroma <chemin> [--rules <chemin>]
                                  importe la mémoire (et les règles) de l'ancienne Alice, sans doublon
@@ -26,7 +27,7 @@ La config est lue dans ALICIA_CONFIG (défaut : alicia.config.yaml), les secrets
 
 const configPath = (): string => resolve(process.env["ALICIA_CONFIG"] ?? "alicia.config.yaml");
 
-/** `pair`, `devices` and `revoke` do not need the engine: it must never be called. */
+/** `pair`, `devices`, `revoke` and `backup` do not need the engine: it must never be called. */
 const UNUSED_ENGINE: Engine = {
   run: () => {
     throw new Error("Moteur inutilisé par cette commande.");
@@ -111,6 +112,17 @@ async function revoke(id: string | undefined): Promise<void> {
   try {
     if (!app.pairing.revokeDevice(id)) throw new Error(`Aucun appareil actif avec l'id ${id}.`);
     console.log(`Appareil ${id} révoqué.`);
+  } finally {
+    await app.close();
+  }
+}
+
+async function backup(): Promise<void> {
+  const config = loadConfig(configPath());
+  const app = await buildApplication(config, UNUSED_ENGINE);
+  try {
+    // Prints the path it wrote.
+    await app.maintenance.runNow();
   } finally {
     await app.close();
   }
@@ -293,6 +305,8 @@ async function main(): Promise<void> {
       return listDevices();
     case "revoke":
       return revoke(argument);
+    case "backup":
+      return backup();
     case "check-engine":
       return checkEngine();
     case "import-alice":

@@ -23,6 +23,7 @@ pnpm --filter @alicia/brain alicia pair kevin
 pnpm --filter @alicia/brain alicia chat --code 123456
 pnpm --filter @alicia/brain alicia devices             # appareils appairés (id, personne, dates)
 pnpm --filter @alicia/brain alicia revoke <id>         # coupe un appareil, même connecté
+pnpm --filter @alicia/brain alicia backup              # sauvegarde la base maintenant
 pnpm --filter @alicia/brain alicia check-engine
 pnpm --filter @alicia/brain alicia import-alice --chroma <chroma.sqlite3> [--rules <regles.json>]
 ```
@@ -66,6 +67,22 @@ démarrage du cerveau).
 
 Dans l'app, l'activité d'Alicia indique ce qu'elle fait avec sa mémoire (« Alicia fouille dans sa
 mémoire… », « Alicia retient ça… »).
+
+## Sauvegardes, journal et réseau
+
+- **Sauvegarde nocturne** : le cerveau démarré (`start`) copie sa base chaque nuit, à partir de 3 h (heure du
+  `timezone` de la config), avec l'API de sauvegarde de SQLite, dans `<dataDir>/backups/alicia-AAAA-MM-JJ.db`.
+  Il garde les **14 plus récentes**. S'il était éteint à 3 h, il rattrape au démarrage. `alicia backup` en fait
+  une tout de suite.
+- **Restaurer** : arrêter le cerveau, remplacer `<dataDir>/alicia.db` par la copie choisie, supprimer
+  `alicia.db-wal` et `alicia.db-shm` s'ils existent, relancer.
+- **Journal** : le détail des tours (modèle, tokens, outils, durée) est effacé au-delà de 90 jours, au même moment.
+- **Appairage** : 5 codes faux en 15 minutes depuis une même adresse bloquent cette adresse (en plus de la limite
+  globale de 5 par minute). Une adresse IPv6 compte pour tout son /64 ; un appairage réussi remet son compteur à zéro.
+- **Origines web** : seule l'app de bureau peut appeler le cerveau depuis une page web ; `allowedOrigins` (config)
+  ajoute des origines exactes, pour la future PWA. Une autre origine reçoit 403, en HTTP comme en WebSocket.
+- **Connexions** : le cerveau sonde chaque connexion toutes les 30 s et coupe celles qui ne répondent plus ; l'app
+  se reconnecte d'elle-même après 75 s de silence.
 
 ## Vérification réelle (manuelle, consomme un peu de quota)
 
