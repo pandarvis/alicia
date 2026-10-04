@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Personne } from "./identite.ts";
 
-export const RequeteAppairage = z.object({
+export const RequeteAppairage = z.strictObject({
   code: z.string().regex(/^\d{6}$/),
   nomAppareil: z.string().trim().min(1).max(60),
 });
@@ -11,6 +11,7 @@ export const ReponseAppairage = z.object({ jeton: z.string(), personne: Personne
 export type ReponseAppairage = z.infer<typeof ReponseAppairage>;
 
 export const ReponseSante = z.object({ ok: z.literal(true), version: z.string() });
+export type ReponseSante = z.infer<typeof ReponseSante>;
 
 export const ResumeConversation = z.object({
   id: z.uuid(),
