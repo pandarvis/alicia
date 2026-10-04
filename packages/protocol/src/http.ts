@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Personne } from "./identite.ts";
+import { Personne } from "./identity.ts";
 
 export const RequeteAppairage = z.strictObject({
   code: z.string().regex(/^\d{6}$/),

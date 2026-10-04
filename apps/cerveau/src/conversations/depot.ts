@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Modele } from "@alicia/protocole";
+import type { Modele } from "@alicia/protocol";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Base } from "../base/ouvrir.ts";
 import { conversations, journal, messages } from "../base/schema.ts";

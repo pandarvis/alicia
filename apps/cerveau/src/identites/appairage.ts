@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
-import type { Personne } from "@alicia/protocole";
+import type { Personne } from "@alicia/protocol";
 import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Base } from "../base/ouvrir.ts";
 import { appareils, codesAppairage } from "../base/schema.ts";

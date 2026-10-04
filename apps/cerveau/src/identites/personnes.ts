@@ -1,4 +1,4 @@
-import type { Personne } from "@alicia/protocole";
+import type { Personne } from "@alicia/protocol";
 import { eq } from "drizzle-orm";
 import type { Base } from "../base/ouvrir.ts";
 import { personnes } from "../base/schema.ts";

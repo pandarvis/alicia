@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import { EvenementServeur } from "@alicia/protocole";
+import { EvenementServeur } from "@alicia/protocol";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";

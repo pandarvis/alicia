@@ -1,4 +1,4 @@
-import { type EvenementServeur, MessageClient, type Personne } from "@alicia/protocole";
+import { type EvenementServeur, MessageClient, type Personne } from "@alicia/protocol";
 import type { RawData, WebSocket } from "ws";
 import { traiterEnvoi } from "../conversations/service-chat.ts";
 import type { DependancesServeur } from "./serveur.ts";

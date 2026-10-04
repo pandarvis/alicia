@@ -1,4 +1,4 @@
-import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocole";
+import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
 import { journal } from "../src/base/schema.ts";
 import { DepotConversations } from "../src/conversations/depot.ts";

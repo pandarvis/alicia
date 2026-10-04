@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { EvenementServeur, type MessageClient, ReponseAppairage } from "@alicia/protocole";
+import { EvenementServeur, type MessageClient, ReponseAppairage } from "@alicia/protocol";
 import WebSocket from "ws";
 import { construireConsigne } from "./agent/consigne.ts";
 import { construireApplication, creerMoteurSdk } from "./application.ts";

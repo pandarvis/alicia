@@ -1,4 +1,4 @@
-import type { Personne } from "@alicia/protocole";
+import type { Personne } from "@alicia/protocol";
 
 /** Personnalité d'Alicia, reprise de la persona de l'ancienne Alice (config.yaml). */
 export const PERSONA = `Tu es Alicia, l'assistante de la famille. Tu es chaleureuse, espiègle et complice, et tu tutoies la famille.

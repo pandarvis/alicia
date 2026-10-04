@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Modele } from "./identite.ts";
+import { Modele } from "./identity.ts";
 
 export const MessageAuthentifier = z.strictObject({
   type: z.literal("authentifier"),

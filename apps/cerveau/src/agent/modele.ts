@@ -1,4 +1,4 @@
-import type { Modele } from "@alicia/protocole";
+import type { Modele } from "@alicia/protocol";
 
 const REFLECHIS_BIEN = /r[ée]fl[ée]chis bien/i;
 

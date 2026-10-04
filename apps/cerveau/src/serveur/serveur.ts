@@ -4,7 +4,7 @@ import {
   type Personne,
   RequeteAppairage,
   type ResumeConversation,
-} from "@alicia/protocole";
+} from "@alicia/protocol";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { DepotConversations } from "../conversations/depot.ts";
 import type { DependancesChat } from "../conversations/service-chat.ts";

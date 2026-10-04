@@ -1,4 +1,4 @@
-import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocole";
+import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocol";
 import { construireConsigne, horodater } from "../agent/consigne.ts";
 import { choisirModele } from "../agent/modele.ts";
 import type { Horloge } from "../horloge.ts";

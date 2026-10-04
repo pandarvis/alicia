@@ -1,4 +1,4 @@
-import type { Modele } from "@alicia/protocole";
+import type { Modele } from "@alicia/protocol";
 
 export interface RequeteMoteur {
   prompt: string;

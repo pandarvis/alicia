@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { Personne } from "@alicia/protocole";
+import { Personne } from "@alicia/protocol";
 import { parse } from "yaml";
 import { z } from "zod";
 

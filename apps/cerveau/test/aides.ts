@@ -1,4 +1,4 @@
-import type { Personne } from "@alicia/protocole";
+import type { Personne } from "@alicia/protocol";
 import { ouvrirBase } from "../src/base/ouvrir.ts";
 import { synchroniserPersonnes } from "../src/identites/personnes.ts";
 
