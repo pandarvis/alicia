@@ -1,0 +1,61 @@
+import type { PanelSide, Point } from "../shared/holo.ts";
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The collapsed Holo window: the 120 px mascot with room around it. */
+export const HOLO_SIZE = { width: 136, height: 152 } as const;
+/** The mini-chat beside the mascot. */
+export const HOLO_PANEL = { width: 320, height: 420, gap: 8 } as const;
+export const SPOTLIGHT_SIZE = { width: 680, height: 120 } as const;
+const MARGIN = 24;
+
+export interface HoloLayout {
+  bounds: Rect;
+  panelSide: PanelSide;
+  /** Where the collapsed box (the mascot) sits inside the window. */
+  mascot: Point;
+}
+
+/** Bottom-right corner of the work area (above the taskbar). */
+export function defaultAnchor(workArea: Rect): Point {
+  return {
+    x: workArea.x + workArea.width - HOLO_SIZE.width - MARGIN,
+    y: workArea.y + workArea.height - HOLO_SIZE.height - MARGIN,
+  };
+}
+
+/** Keeps the collapsed Holo fully inside the work area. */
+export function clampAnchor(anchor: Point, workArea: Rect): Point {
+  return {
+    x: Math.round(Math.min(Math.max(anchor.x, workArea.x), workArea.x + workArea.width - HOLO_SIZE.width)),
+    y: Math.round(Math.min(Math.max(anchor.y, workArea.y), workArea.y + workArea.height - HOLO_SIZE.height)),
+  };
+}
+
+/**
+ * The Holo window for a mascot at `anchor`. Expanded, the window grows towards the side with room (left first)
+ * and upwards, so the mascot stays exactly where it is on screen.
+ */
+export function holoLayout(anchor: Point, expanded: boolean, workArea: Rect): HoloLayout {
+  if (!expanded) return { bounds: { ...anchor, ...HOLO_SIZE }, panelSide: "left", mascot: { x: 0, y: 0 } };
+  const width = HOLO_SIZE.width + HOLO_PANEL.gap + HOLO_PANEL.width;
+  const height = Math.max(HOLO_SIZE.height, HOLO_PANEL.height);
+  const panelSide: PanelSide = anchor.x - workArea.x >= HOLO_PANEL.width + HOLO_PANEL.gap ? "left" : "right";
+  const x = panelSide === "left" ? anchor.x - HOLO_PANEL.gap - HOLO_PANEL.width : anchor.x;
+  const y = Math.max(workArea.y, anchor.y + HOLO_SIZE.height - height);
+  return { bounds: { x, y, width, height }, panelSide, mascot: { x: anchor.x - x, y: anchor.y - y } };
+}
+
+/** The Spotlight bar: centred, a little above the middle of the screen under the pointer. */
+export function spotlightBounds(workArea: Rect): Rect {
+  return {
+    x: workArea.x + Math.round((workArea.width - SPOTLIGHT_SIZE.width) / 2),
+    y: workArea.y + Math.round(workArea.height * 0.22),
+    ...SPOTLIGHT_SIZE,
+  };
+}
