@@ -36,5 +36,5 @@ export const MemoryPatch = z.strictObject({
   kind: MemoryKind.optional(),
   scope: MemoryScope.optional(),
   pinned: z.boolean().optional(),
-});
+}).refine((patch) => Object.keys(patch).length > 0, "Rien à modifier");
 export type MemoryPatch = z.infer<typeof MemoryPatch>;

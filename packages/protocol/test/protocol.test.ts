@@ -150,4 +150,7 @@ describe("memory", () => {
     expect(MemoryPatch.safeParse({ scope: "elodie" }).success).toBe(false);
     expect(MemoryPatch.safeParse({ admin: true }).success).toBe(false);
   });
+  test("an empty patch changes nothing and is refused", () => {
+    expect(MemoryPatch.safeParse({}).success).toBe(false);
+  });
 });
