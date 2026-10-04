@@ -27,7 +27,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/protocole
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.288
+        specifier: 0.3.288
         version: 0.3.288(@anthropic-ai/sdk@0.131.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.32.0(zod@4.6.5))(zod@4.6.5)
       '@fastify/websocket':
         specifier: ^11.3.2
