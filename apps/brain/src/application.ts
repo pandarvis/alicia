@@ -37,20 +37,35 @@ export function createSdkEngine(config: Config, auth: Authentication): Engine {
   return new SdkEngine({ auth, models: config.models, workspaceDir: WORKSPACE_DIR });
 }
 
+/** The database and the memory store built on it (shared by the server and the CLI maintenance commands). */
+function openCore(config: Config, embedder?: Embedder) {
+  mkdirSync(config.dataDir, { recursive: true });
+  const db = openDb(join(config.dataDir, "alicia.db"));
+  try {
+    syncPeople(db, config.people);
+    const memory = new MemoryStore(db, embedder ?? new TransformersEmbedder(join(config.dataDir, "models")), systemClock);
+    return { db, memory };
+  } catch (error) {
+    db.$client.close();
+    throw error;
+  }
+}
+
+/** Opens the database and the memory store without starting the HTTP server. */
+export function openMemory(config: Config, embedder?: Embedder): { memory: MemoryStore; close: () => void } {
+  const { db, memory } = openCore(config, embedder);
+  return { memory, close: () => db.$client.close() };
+}
+
 export async function buildApplication(
   config: Config,
   engine: Engine,
   options: ApplicationOptions = {},
 ): Promise<Application> {
-  mkdirSync(config.dataDir, { recursive: true });
-  const db = openDb(join(config.dataDir, "alicia.db"));
+  const { db, memory } = openCore(config, options.embedder);
   try {
-    syncPeople(db, config.people);
-
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);
-    const embedder = options.embedder ?? new TransformersEmbedder(join(config.dataDir, "models"));
-    const memory = new MemoryStore(db, embedder, systemClock);
     const server = await createServer({
       pairing,
       repository,

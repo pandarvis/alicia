@@ -5,9 +5,10 @@ import { parseArgs } from "node:util";
 import { type ClientMessage, PairingResponse, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
-import { buildApplication, createSdkEngine } from "./application.ts";
+import { buildApplication, createSdkEngine, openMemory } from "./application.ts";
 import { loadConfig, readAuthentication } from "./config.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
+import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
 import { toText } from "./server/ws.ts";
 
 const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
@@ -18,6 +19,8 @@ const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
   devices                        liste les appareils appairés
   revoke <id>                    révoque un appareil (effet immédiat, même connecté)
   check-engine                   un appel réel au SDK (consomme un peu de quota)
+  import-alice --chroma <chemin> [--rules <chemin>]
+                                 importe la mémoire (et les règles) de l'ancienne Alice, sans doublon
 
 La config est lue dans ALICIA_CONFIG (défaut : alicia.config.yaml), les secrets dans l'environnement.`;
 
@@ -234,12 +237,34 @@ async function checkEngine(): Promise<void> {
   for await (const e of engine.run(request, new AbortController().signal)) console.log(e);
 }
 
+async function importFromAlice(chroma: string | undefined, rules: string | undefined): Promise<void> {
+  if (chroma === undefined) {
+    throw new Error("Précisez la base de l'ancienne Alice : import-alice --chroma <chemin vers chroma.sqlite3>");
+  }
+  // Read the sources first: a bad path fails before anything is opened or written.
+  const source = {
+    memories: readAliceMemories(resolve(chroma)),
+    rules: rules === undefined ? [] : readAliceRules(resolve(rules)),
+  };
+  const { memory, close } = openMemory(loadConfig(configPath()));
+  try {
+    const report = await importAlice(memory, source);
+    console.log(
+      `Import : ${report.created} créés, ${report.duplicates} doublons, ${report.skipped} déjà importés, ${report.refused} refusés (secret).`,
+    );
+  } finally {
+    close();
+  }
+}
+
 async function main(): Promise<void> {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {
       url: { type: "string", default: "ws://127.0.0.1:8780/ws" },
       code: { type: "string" },
+      chroma: { type: "string" },
+      rules: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -261,6 +286,8 @@ async function main(): Promise<void> {
       return revoke(argument);
     case "check-engine":
       return checkEngine();
+    case "import-alice":
+      return importFromAlice(values.chroma, values.rules);
     case undefined:
       console.log(HELP);
       return;
