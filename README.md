@@ -24,6 +24,7 @@ pnpm --filter @alicia/brain alicia chat --code 123456
 pnpm --filter @alicia/brain alicia devices             # appareils appairés (id, personne, dates)
 pnpm --filter @alicia/brain alicia revoke <id>         # coupe un appareil, même connecté
 pnpm --filter @alicia/brain alicia check-engine
+pnpm --filter @alicia/brain alicia import-alice --chroma <chroma.sqlite3> [--rules <regles.json>]
 ```
 Les commandes s'exécutent dans `apps/brain` : la config y est lue
 (`alicia.config.yaml`, ou le chemin donné par `ALICIA_CONFIG`).
@@ -32,6 +33,36 @@ Les secrets sont lus dans l'environnement (pas de chargement automatique de `.en
 `cd apps/brain && pnpm exec tsx --env-file=.env src/cli.ts start`.
 Ne pas faire `source .env` dans le shell : si la clé contient une espace parasite, le shell
 en affiche une partie dans son message d'erreur.
+
+## Mémoire
+
+Alicia a une mémoire durable, commune à la famille ou personnelle à chacun (SQLite, recherche
+par mots-clés et par sens). Elle la consulte et l'alimente elle-même ; oublier est « doux » :
+un souvenir oublié disparaît tout de suite, puis est purgé pour de bon après 30 jours (au
+démarrage du cerveau).
+
+- **Premier démarrage** : les vecteurs de sens sont calculés en local (modèle
+  `multilingual-e5-small`, aucun quota, rien ne sort de la maison). Le modèle (~120 Mo) est
+  téléchargé **une seule fois, à la première utilisation de la mémoire** (pas au lancement),
+  dans `data/models` ; la première recherche ou le premier souvenir est donc plus lent. Les
+  tests automatiques n'utilisent jamais le vrai modèle.
+- **Import de l'ancienne Alice** : à lancer **sur le Pi**, contre les données de production de
+  l'ancienne Alice (ou une copie), depuis `apps/brain` :
+  ```bash
+  pnpm exec tsx src/cli.ts import-alice \
+    --chroma <…>/data/memory/chroma.sqlite3 --rules <…>/data/regles.json
+  ```
+  Les souvenirs et les règles de la maison arrivent comme souvenirs **communs**. La commande est
+  idempotente (relançable sans doublon) et refuse ce qui ressemble à un secret (mot de passe,
+  code, IBAN…) ; elle affiche le bilan : créés, doublons, déjà importés, refusés. `--rules` est
+  facultatif.
+- **API `/memories`** (jeton d'appareil en `Authorization: Bearer`, toujours limitée à ce que la
+  personne a le droit de voir : le commun et son perso) : `GET /memories?scope=&kind=&q=`,
+  `POST /memories`, `PATCH /memories/:id`, `DELETE /memories/:id` (oubli doux). Elle prépare
+  l'écran « Souvenirs » de l'app.
+
+Dans l'app, l'activité d'Alicia indique ce qu'elle fait avec sa mémoire (« Alicia fouille dans sa
+mémoire… », « Alicia retient ça… »).
 
 ## Vérification réelle (manuelle, consomme un peu de quota)
 

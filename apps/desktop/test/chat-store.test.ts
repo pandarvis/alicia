@@ -127,6 +127,28 @@ describe("ChatStore", () => {
   });
 
   test.each([
+    ["memory_search", "Alicia fouille dans sa mémoire…"],
+    ["memory_remember", "Alicia retient ça…"],
+    ["memory_update", "Alicia met sa mémoire à jour…"],
+    ["memory_forget", "Alicia oublie ce souvenir…"],
+    ["weather", "Alicia utilise l'outil « weather »…"],
+  ])("tool %s → activity label", (tool, label) => {
+    const { store } = setup();
+    store.send("x");
+    store.handle({ type: "tool_call", conversationId: CONV, callId: "t1", tool });
+    expect(store.activity).toBe(label);
+  });
+
+  test("remembering gives the mascot an idea, other tools keep it thinking", () => {
+    const { store } = setup();
+    store.send("Retiens ça");
+    store.handle({ type: "tool_call", conversationId: CONV, callId: "t1", tool: "memory_remember" });
+    expect(store.mascot).toBe("idea");
+    store.handle({ type: "tool_call", conversationId: CONV, callId: "t2", tool: "memory_search" });
+    expect(store.mascot).toBe("thinking");
+  });
+
+  test.each([
     ["quota", "sleeping"],
     ["engine", "error"],
     ["internal", "error"],
