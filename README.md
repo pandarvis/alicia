@@ -58,8 +58,11 @@ démarrage du cerveau).
   facultatif.
 - **API `/memories`** (jeton d'appareil en `Authorization: Bearer`, toujours limitée à ce que la
   personne a le droit de voir : le commun et son perso) : `GET /memories?scope=&kind=&q=`,
-  `POST /memories`, `PATCH /memories/:id`, `DELETE /memories/:id` (oubli doux). Elle prépare
-  l'écran « Souvenirs » de l'app.
+  `POST /memories`, `PATCH /memories/:id`, `DELETE /memories/:id` (oubli doux),
+  `GET /memories?forgotten=true` (corbeille), `POST /memories/:id/restore` (récupérer),
+  `GET /memories/test?q=` (banc d'essai, ne compte pas comme un rappel). Elle sert l'écran
+  « Souvenirs » de l'app. `DELETE /conversations/:id` supprime une conversation (refusé avec
+  `409` pendant une réponse d'Alicia).
 
 Dans l'app, l'activité d'Alicia indique ce qu'elle fait avec sa mémoire (« Alicia fouille dans sa
 mémoire… », « Alicia retient ça… »).
@@ -105,3 +108,21 @@ l'adresse HTTPS Tailscale) et un code obtenu avec `pnpm exec tsx src/cli.ts pair
 (depuis `apps/brain`). La session (adresse + jeton d'appareil) est chiffrée par Windows
 (DPAPI, via `safeStorage`) dans le profil de l'utilisateur ; « Déconnecter » dans le menu
 l'efface. Un appareil révoqué côté cerveau (`revoke <id>`) revient à l'écran d'appairage.
+
+### Écran « Souvenirs »
+
+Entrée « 🧠 Souvenirs » dans le menu de gauche. Kévin et Élodie y voient le commun et leurs
+propres souvenirs, jamais ceux de l'autre.
+
+- **Liste** (à gauche) : onglets Tout / Famille / Moi / Corbeille, recherche par mots, filtres
+  par type, tri récents / plus utilisés / qui dorment (jamais rappelés, ou pas depuis 60 jours :
+  la carte est atténuée). « + » ajoute un souvenir à la main.
+- **Fiche** (à droite) : texte, Moi / Famille, type, épingle 📌, provenance (le lien rouvre la
+  conversation d'origine), nombre d'utilisations. « Oublier » demande confirmation.
+- **Corbeille** : les souvenirs oubliés depuis moins de 30 jours, avec « Récupérer ».
+- **Banc d'essai** : « Tester comme question » montre, dans l'ordre exact, ce qu'Alicia
+  retrouverait pour cette question, avec la raison (mots en commun, sens proche) et la
+  proximité. Ne compte pas comme un rappel.
+- **Supprimer une conversation** : survoler la conversation dans le menu → 🗑 → « Oui ».
+  Définitif (messages compris) ; les souvenirs qui en viennent sont conservés. Impossible pendant
+  qu'Alicia y répond.
