@@ -25,9 +25,11 @@ pnpm --filter @alicia/cerveau alicia verifier-moteur
 ```
 Les commandes s'exécutent dans `apps/cerveau` : la config y est lue
 (`alicia.config.yaml`, ou le chemin donné par `ALICIA_CONFIG`).
-Les secrets sont lus dans l'environnement : charger `.env` avec
-`node --env-file` ou exporter les variables avant la commande
-(`set -a; source apps/cerveau/.env; set +a` en Git Bash).
+Les secrets sont lus dans l'environnement (pas de chargement automatique de `.env`) :
+- soit exporter les variables avant la commande (Git Bash) :
+  `set -a; source apps/cerveau/.env; set +a`
+- soit lancer `tsx` directement avec l'option Node `--env-file` (le script `alicia` ne la
+  transmet pas) : `cd apps/cerveau && pnpm exec tsx --env-file=.env src/cli.ts demarrer`.
 
 ## Vérification réelle (manuelle, consomme un peu de quota)
 
