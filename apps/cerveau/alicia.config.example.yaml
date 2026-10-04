@@ -1,0 +1,13 @@
+# Copier en alicia.config.yaml (non versionné). Les secrets vont dans .env.
+port: 8780
+hote: "0.0.0.0"
+dossierDonnees: "./donnees"
+fuseau: "Europe/Paris"
+personnes:
+  - { id: kevin, nom: Kévin }
+  - { id: elodie, nom: Élodie }
+moteur:
+  mode: abonnement        # abonnement | cle_api
+modeles:
+  sonnet: claude-sonnet-5-5
+  opus: claude-opus-5-5

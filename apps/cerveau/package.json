@@ -1,0 +1,31 @@
+{
+  "name": "@alicia/cerveau",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "alicia": "tsx src/cli.ts",
+    "migrations": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@alicia/protocole": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.288",
+    "@fastify/websocket": "^11.3.2",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.3",
+    "fastify": "^5.12.5",
+    "ws": "^8.22.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.4",
+    "@types/ws": "^8.18.2",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.3"
+  }
+}
