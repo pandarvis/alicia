@@ -1,23 +1,69 @@
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
-import { IPC, StoredSession } from "../shared/session.ts";
-import { SessionStore } from "./session-store.ts";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, safeStorage, shell } from "electron";
+import { IPC, type SaveSessionResult, StoredSession } from "../shared/session.ts";
+import { EncryptionUnavailableError, SessionStore } from "./session-store.ts";
+import { isTrustedSenderUrl } from "./trusted-sender.ts";
 
-// Lets the end-to-end test isolate its profile.
+const RENDERER_INDEX = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
+
+// Lets the end-to-end test isolate its profile; ignored in a packaged app.
 const userDataOverride = process.env["ALICIA_USER_DATA"];
-if (userDataOverride !== undefined) app.setPath("userData", userDataOverride);
+if (!app.isPackaged && userDataOverride !== undefined) app.setPath("userData", userDataOverride);
+
+/** The dev server URL, only ever honoured when running unpackaged. */
+function devServerUrl(): string | undefined {
+  return app.isPackaged ? undefined : process.env["ELECTRON_RENDERER_URL"];
+}
+
+/** Only our own renderer page may talk to the session store. */
+function assertTrusted(event: IpcMainInvokeEvent): void {
+  const url = event.senderFrame?.url;
+  if (!isTrustedSenderUrl(url, { rendererFileUrl: pathToFileURL(RENDERER_INDEX).href, devUrl: devServerUrl() })) {
+    throw new Error("Untrusted IPC sender");
+  }
+}
+
+function saveSession(store: SessionStore, raw: unknown): SaveSessionResult {
+  const parsed = StoredSession.safeParse(raw);
+  if (!parsed.success) return { ok: false, reason: "invalid_session" };
+  try {
+    store.save(parsed.data);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof EncryptionUnavailableError) return { ok: false, reason: "encryption_unavailable" };
+    throw error;
+  }
+}
 
 function registerIpc(store: SessionStore): void {
-  ipcMain.handle(IPC.getSession, () => store.load());
-  ipcMain.handle(IPC.saveSession, (_event, raw: unknown) => {
-    store.save(StoredSession.parse(raw));
+  ipcMain.handle(IPC.getSession, (event) => {
+    assertTrusted(event);
+    return store.load();
   });
-  ipcMain.handle(IPC.clearSession, () => {
+  ipcMain.handle(IPC.saveSession, (event, raw: unknown) => {
+    assertTrusted(event);
+    return saveSession(store, raw);
+  });
+  ipcMain.handle(IPC.clearSession, (event) => {
+    assertTrusted(event);
     store.clear();
   });
-  ipcMain.handle(IPC.deviceName, () => hostname());
+  ipcMain.handle(IPC.deviceName, (event) => {
+    assertTrusted(event);
+    return hostname();
+  });
+}
+
+/** Only web links leave the app; anything else (file:, custom schemes) is refused. */
+function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function createWindow(): void {
@@ -45,12 +91,12 @@ function createWindow(): void {
     event.preventDefault();
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    if (isWebUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
-  const devUrl = process.env["ELECTRON_RENDERER_URL"];
-  if (!app.isPackaged && devUrl !== undefined) void window.loadURL(devUrl);
-  else void window.loadFile(fileURLToPath(new URL("../renderer/index.html", import.meta.url)));
+  const devUrl = devServerUrl();
+  if (devUrl !== undefined) void window.loadURL(devUrl);
+  else void window.loadFile(RENDERER_INDEX);
 }
 
 void app.whenReady().then(() => {

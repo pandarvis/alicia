@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { type Cipher, SessionStore } from "../src/main/session-store.ts";
+import { type Cipher, EncryptionUnavailableError, SessionStore } from "../src/main/session-store.ts";
 import type { StoredSession } from "../src/shared/session.ts";
 
 const SESSION: StoredSession = {
@@ -41,6 +41,25 @@ describe("SessionStore", () => {
     expect(readFileSync(path).toString("utf8")).not.toContain(SESSION.token);
   });
 
+  test("save is atomic: no temporary file is left behind and it can be overwritten", () => {
+    const path = newPath();
+    const store = new SessionStore(path, fakeCipher());
+    store.save(SESSION);
+    store.save({ ...SESSION, person: { id: "elodie", name: "Élodie" } });
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+    expect(readdirSync(dirname(path))).toEqual(["session.bin"]);
+    expect(store.load()?.person.id).toBe("elodie");
+  });
+
+  test("a refused save keeps the previous session intact", () => {
+    const path = newPath();
+    new SessionStore(path, fakeCipher()).save(SESSION);
+    expect(() => {
+      new SessionStore(path, fakeCipher(false)).save({ ...SESSION, person: { id: "elodie", name: "Élodie" } });
+    }).toThrow();
+    expect(new SessionStore(path, fakeCipher()).load()).toEqual(SESSION);
+  });
+
   test("clear removes the session", () => {
     const store = new SessionStore(newPath(), fakeCipher());
     store.save(SESSION);
@@ -57,6 +76,6 @@ describe("SessionStore", () => {
   test("refuses to save when OS encryption is unavailable", () => {
     expect(() => {
       new SessionStore(newPath(), fakeCipher(false)).save(SESSION);
-    }).toThrow(/chiffrement/i);
+    }).toThrow(EncryptionUnavailableError);
   });
 });

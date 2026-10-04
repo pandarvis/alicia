@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { type AliciaBridge, IPC, StoredSession } from "../shared/session.ts";
+import { type AliciaBridge, IPC, SaveSessionResult, StoredSession } from "../shared/session.ts";
 
 const bridge: AliciaBridge = {
   async getSession() {
@@ -8,7 +8,9 @@ const bridge: AliciaBridge = {
     return parsed.success ? parsed.data : null;
   },
   async saveSession(session) {
-    await ipcRenderer.invoke(IPC.saveSession, session);
+    const raw: unknown = await ipcRenderer.invoke(IPC.saveSession, session);
+    const parsed = SaveSessionResult.safeParse(raw);
+    return parsed.success ? parsed.data : { ok: false, reason: "invalid_session" };
   },
   async clearSession() {
     await ipcRenderer.invoke(IPC.clearSession);

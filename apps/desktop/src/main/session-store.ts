@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { StoredSession } from "../shared/session.ts";
 
 /** OS-backed encryption (Electron safeStorage in production, a fake in tests). */
@@ -6,6 +6,13 @@ export interface Cipher {
   isAvailable(): boolean;
   encrypt(text: string): Buffer;
   decrypt(data: Buffer): string;
+}
+
+export class EncryptionUnavailableError extends Error {
+  constructor() {
+    super("Chiffrement du système indisponible : impossible d'enregistrer la session.");
+    this.name = "EncryptionUnavailableError";
+  }
 }
 
 export class SessionStore {
@@ -28,10 +35,12 @@ export class SessionStore {
   }
 
   save(session: StoredSession): void {
-    if (!this.#cipher.isAvailable()) {
-      throw new Error("Chiffrement du système indisponible : impossible d'enregistrer la session.");
-    }
-    writeFileSync(this.#path, this.#cipher.encrypt(JSON.stringify(StoredSession.parse(session))));
+    if (!this.#cipher.isAvailable()) throw new EncryptionUnavailableError();
+    const encrypted = this.#cipher.encrypt(JSON.stringify(StoredSession.parse(session)));
+    // Write then rename, so a crash never leaves a half-written session.
+    const temporary = `${this.#path}.tmp`;
+    writeFileSync(temporary, encrypted, { mode: 0o600 });
+    renameSync(temporary, this.#path);
   }
 
   clear(): void {
