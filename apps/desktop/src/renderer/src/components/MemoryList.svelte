@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Pin from "@lucide/svelte/icons/pin";
+  import Plus from "@lucide/svelte/icons/plus";
   import { MEMORY_KINDS, type MemoryKind, type MemorySummary } from "@alicia/protocol";
   import { flip } from "svelte/animate";
   import { fade } from "svelte/transition";
@@ -99,7 +101,7 @@
       Tester comme question
     </button>
     {#if !inTrash}
-      <button class="add" onclick={() => { screen.startCreate(); }} title="Nouveau souvenir" aria-label="Nouveau souvenir" data-testid="memory-new" transition:fade={{ duration: motion(150) }}>+</button>
+      <button class="add" onclick={() => { screen.startCreate(); }} title="Nouveau souvenir" aria-label="Nouveau souvenir" data-testid="memory-new" transition:fade={{ duration: motion(150) }}><Plus size={17} aria-hidden="true" /></button>
     {/if}
   </div>
   <div class="chips" role="group" aria-label="Types">
@@ -159,7 +161,7 @@
                 data-testid="memory-card"
                 data-dormant={dormant ? "true" : "false"}
               >
-                {#if memory.pinned}<span class="pin" role="img" aria-label="Épinglé">📌</span>{:else}<span class="pin"></span>{/if}
+                {#if memory.pinned}<span class="pin" role="img" aria-label="Épinglé"><Pin size={13} aria-hidden="true" /></span>{:else}<span class="pin"></span>{/if}
                 <span class="body">
                   <span class="text">{memory.text}</span>
                   <span class="meta">{meta(memory, dormant ? "dort" : null)}</span>
@@ -190,7 +192,7 @@
   input::placeholder { color: var(--muted); }
   .test { flex: none; padding: 6px 10px; border-radius: 9px; border: 1px solid var(--surface-raised); color: var(--cream-muted); font-size: 13px; }
   .test:hover:not(:disabled) { border-color: var(--sage); color: var(--cream); }
-  .add { flex: none; width: 32px; height: 32px; border-radius: 9px; background: var(--sage); color: var(--night); font-weight: 800; font-size: 18px; line-height: 1; }
+  .add { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--sage); color: var(--night); }
   .add:hover { background: color-mix(in srgb, var(--sage) 85%, var(--cream)); }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; }
   .summary { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 24px; }
@@ -215,7 +217,7 @@
   .card.selected { box-shadow: 0 0 0 1px var(--sage); }
   .card.dormant { opacity: 0.55; }
   .card.dormant.selected, .card.dormant:hover { opacity: 0.85; }
-  .pin { flex: none; width: 16px; color: var(--amber); font-size: 13px; line-height: 1.45; }
+  .pin { flex: none; width: 16px; padding-top: 2px; color: var(--amber); }
   .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .text {
     color: var(--cream); line-height: 1.4; overflow-wrap: anywhere;

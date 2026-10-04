@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Sparkles from "@lucide/svelte/icons/sparkles";
   import { untrack } from "svelte";
   import type { ConnectionStatus } from "../lib/chat-connection.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
@@ -61,7 +62,7 @@
     onclick={toggleOpus}
     data-testid="composer-opus"
   >
-    <span class="spark" aria-hidden="true">✦</span>Réfléchir<span class="switch" aria-hidden="true"><span class="knob"></span></span>
+    <Sparkles class="spark" size={14} aria-hidden="true" />Réfléchir<span class="switch" aria-hidden="true"><span class="knob"></span></span>
   </button>
   <button type="submit" class="send" disabled={!canSend} data-testid="composer-send">
     Envoyer
@@ -88,7 +89,6 @@
   }
   .think:hover { border-color: var(--muted); }
   .think.on { color: var(--amber); border-color: var(--amber); }
-  .spark { font-size: 12px; }
   .switch {
     position: relative; width: 24px; height: 14px; border-radius: 999px; margin-left: 2px;
     background: var(--surface-raised); transition: background var(--duration) ease;

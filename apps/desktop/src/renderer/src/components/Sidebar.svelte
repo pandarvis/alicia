@@ -1,4 +1,8 @@
 <script lang="ts">
+  import Brain from "@lucide/svelte/icons/brain";
+  import Plus from "@lucide/svelte/icons/plus";
+  import Sparkles from "@lucide/svelte/icons/sparkles";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
   import { cubicOut } from "svelte/easing";
   import { fade, slide, type TransitionConfig } from "svelte/transition";
   import type { AppView } from "../lib/app-view.ts";
@@ -145,17 +149,17 @@
         aria-current={view === "chat" ? "page" : undefined}
         onclick={() => { onView("chat"); }}
         data-testid="nav-chat"
-      >✦ Alicia</button>
+      ><Sparkles size={16} aria-hidden="true" />Alicia</button>
       <button
         class="view"
         class:active={view === "memories"}
         aria-current={view === "memories" ? "page" : undefined}
         onclick={() => { onView("memories"); }}
         data-testid="nav-memories"
-      >🧠 Souvenirs</button>
+      ><Brain size={16} aria-hidden="true" />Souvenirs</button>
     </div>
     <button class="new" bind:this={newButton} onclick={startNew} disabled={store.busy} data-testid="new-conversation">
-      ✦ Nouvelle conversation
+      <Plus size={16} aria-hidden="true" />Nouvelle conversation
     </button>
     <p class="label">Conversations</p>
     <ul bind:this={list} data-testid="conversation-list">
@@ -185,11 +189,7 @@
                 aria-describedby={refusal?.id === conversation.id ? `${uid}-refusal` : undefined}
                 data-conversation-id={conversation.id}
                 data-testid="delete-conversation"
-              >
-                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-                  <path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12a2 2 0 0 0 2 1.8h7a2 2 0 0 0 2-1.8l1-12M9 7V4.8A.8.8 0 0 1 9.8 4h4.4a.8.8 0 0 1 .8.8V7" />
-                </svg>
-              </button>
+              ><Trash2 size={15} aria-hidden="true" /></button>
             {/if}
           </div>
           {#if refusal?.id === conversation.id}
@@ -230,6 +230,7 @@
   button { background: none; border: 0; text-align: left; cursor: pointer; border-radius: 8px; transition: background var(--duration) ease, color var(--duration) ease, opacity var(--duration) ease; }
   button:disabled { cursor: default; opacity: 0.6; }
   .views { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--surface); }
+  .view, .new { display: flex; align-items: center; gap: 9px; }
   .view { padding: 7px 10px; color: var(--cream-muted); }
   .view:hover { background: var(--surface); color: var(--cream); }
   .view.active { background: var(--surface); color: var(--cream); font-weight: 700; }
@@ -252,7 +253,6 @@
     display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
     color: var(--muted); opacity: 0; pointer-events: none;
   }
-  .delete svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   li:hover .delete:not(:disabled), .delete:focus-visible { opacity: 1; pointer-events: auto; }
   .delete:hover:not(:disabled), .delete:focus-visible { color: var(--amber); background: var(--surface-raised); }
   .ask { flex: 1; display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; font-size: 13px; }

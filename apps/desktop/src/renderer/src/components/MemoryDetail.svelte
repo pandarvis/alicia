@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pin from "@lucide/svelte/icons/pin";
   import { MEMORY_KINDS, type MemoryScope } from "@alicia/protocol";
   import { fade } from "svelte/transition";
   import { KIND_LABEL, provenance, SCOPE_LABEL, usage } from "../lib/memory-labels.ts";
@@ -172,7 +173,7 @@
               onclick={togglePin}
               data-testid="memory-pin"
             >
-              <span aria-hidden="true">📌</span>Épinglé<span class="switch" aria-hidden="true"><span class="knob"></span></span>
+              <Pin size={14} aria-hidden="true" />Épinglé<span class="switch" aria-hidden="true"><span class="knob"></span></span>
             </button>
           </div>
           {#if screen.selected !== null && origin !== null}

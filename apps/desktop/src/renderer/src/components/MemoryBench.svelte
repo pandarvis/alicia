@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pin from "@lucide/svelte/icons/pin";
   import { fade } from "svelte/transition";
   import { hitReasons, KIND_LABEL, SCOPE_LABEL } from "../lib/memory-labels.ts";
   import { proximity, type MemoryScreen } from "../lib/memory-screen.svelte.ts";
@@ -36,7 +37,7 @@
             >
               <span class="rank">{hit.rank}</span>
               <span class="body">
-                <span class="text">{#if hit.memory.pinned}<span class="pin" role="img" aria-label="Épinglé">📌 </span>{/if}{hit.memory.text}</span>
+                <span class="text">{#if hit.memory.pinned}<span class="pin" role="img" aria-label="Épinglé"><Pin size={12} aria-hidden="true" /></span>{/if}{hit.memory.text}</span>
                 <span class="meta">{SCOPE_LABEL[hit.memory.scope]} · {KIND_LABEL[hit.memory.kind]}</span>
                 <span class="why" data-testid="memory-bench-reasons">{hitReasons(hit).join(" + ")}</span>
                 <span class="closeness">
@@ -80,7 +81,7 @@
     color: var(--cream); line-height: 1.4; overflow-wrap: anywhere;
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .pin { color: var(--amber); }
+  .pin { color: var(--amber); display: inline-block; vertical-align: -1px; margin-right: 4px; }
   .meta { font-size: 12px; color: var(--muted); }
   .why { font-size: 12px; color: var(--amber); }
   .closeness { display: flex; align-items: center; gap: 8px; }

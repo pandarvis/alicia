@@ -264,7 +264,7 @@ test("Souvenirs: a memory Alicia kept is corrected, pinned, forgotten, restored,
   // Pin it.
   await page.getByTestId("memory-pin").click();
   await page.getByTestId("memory-save").click();
-  await card.filter({ hasText: "📌" }).waitFor();
+  await card.filter({ has: page.getByRole("img", { name: "Épinglé" }) }).waitFor();
   expect(brain.app.memory.list("kevin", {}).map((m) => [m.text, m.pinned])).toEqual([["Kévin adore les lasagnes de mamie", true]]);
 
   // Test bench: what Alicia would find, and why (before forgetting it).
