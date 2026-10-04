@@ -1,4 +1,4 @@
-import { env, type FeatureExtractionPipeline, pipeline } from "@huggingface/transformers";
+import type { FeatureExtractionPipeline } from "@huggingface/transformers";
 import type { Embedder } from "./embedder.ts";
 
 const MODEL = "Xenova/multilingual-e5-small";
@@ -29,8 +29,13 @@ export class TransformersEmbedder implements Embedder {
 
   #load(): Promise<FeatureExtractionPipeline> {
     if (this.#extractor === null) {
-      env.cacheDir = this.#cacheDir;
-      this.#extractor = pipeline("feature-extraction", MODEL, { dtype: "q8" }).catch((error: unknown) => {
+      // Imported on first use: commands that never embed do not even load the ONNX runtime.
+      this.#extractor = import("@huggingface/transformers")
+        .then(({ env, pipeline }) => {
+          env.cacheDir = this.#cacheDir;
+          return pipeline("feature-extraction", MODEL, { dtype: "q8" });
+        })
+        .catch((error: unknown) => {
         // A failed download must not stick: the next call tries again.
         this.#extractor = null;
         throw error;

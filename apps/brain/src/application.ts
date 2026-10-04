@@ -28,6 +28,7 @@ export interface ApplicationOptions {
 
 export interface Application {
   server: FastifyInstance;
+  memory: MemoryStore;
   pairing: PairingService;
   /** Closes the server (and its WebSockets), then the database. */
   close(): Promise<void>;
@@ -37,13 +38,20 @@ export function createSdkEngine(config: Config, auth: Authentication): Engine {
   return new SdkEngine({ auth, models: config.models, workspaceDir: WORKSPACE_DIR });
 }
 
-/** The database and the memory store built on it (shared by the server and the CLI maintenance commands). */
+/**
+ * The database and the memory store built on it (shared by the server and the CLI maintenance commands).
+ * Startup upkeep lives here, so every path that opens the memory gets it: the full-text index is
+ * rebuilt and memories forgotten for more than 30 days are purged. The embedding model is never
+ * touched here (it loads on first embedding only).
+ */
 function openCore(config: Config, embedder?: Embedder) {
   mkdirSync(config.dataDir, { recursive: true });
   const db = openDb(join(config.dataDir, "alicia.db"));
   try {
     syncPeople(db, config.people);
     const memory = new MemoryStore(db, embedder ?? new TransformersEmbedder(join(config.dataDir, "models")), systemClock);
+    memory.rebuildIndex();
+    memory.purgeForgotten();
     return { db, memory };
   } catch (error) {
     db.$client.close();
@@ -76,6 +84,7 @@ export async function buildApplication(
 
     return {
       server,
+      memory,
       pairing,
       close: async () => {
         await server.close();

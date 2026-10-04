@@ -199,3 +199,17 @@ describe("MemoryStore", () => {
     expect(sheet.pinnedCommon).toEqual([]);
   });
 });
+
+describe("MemoryStore index upkeep", () => {
+  test("rebuildIndex repairs a desynchronised full-text index", async () => {
+    const { db, store } = setup();
+    await remember(store, "kevin", "Kévin adore les lasagnes");
+    db.$client.exec("INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')");
+    expect(await store.search("kevin", "lasagnes", { recall: false })).toHaveLength(1); // vector side still finds it
+    const count = (): number =>
+      db.$client.prepare("SELECT count(*) AS n FROM memories_fts WHERE memories_fts MATCH 'lasagnes'").pluck().get() as number;
+    expect(count()).toBe(0);
+    store.rebuildIndex();
+    expect(count()).toBe(1);
+  });
+});

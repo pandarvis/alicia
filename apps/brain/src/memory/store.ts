@@ -291,6 +291,14 @@ export class MemoryStore {
       .run().changes;
   }
 
+  /**
+   * Rebuilds the full-text index from the table. The index is keyed by `rowid`, which SQLite may
+   * renumber (VACUUM on a table without an integer key); a rebuild at startup re-aligns it for ~1 ms.
+   */
+  rebuildIndex(): void {
+    this.#db.$client.exec("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')");
+  }
+
   /** What the permanent sheet shows for this person (house rules, pinned memories). */
   sheetMemories(personId: string): SheetMemories {
     const pinnedOrRule = this.#db
