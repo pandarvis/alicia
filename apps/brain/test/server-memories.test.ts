@@ -1,3 +1,4 @@
+import { MemorySummary, MemoryTestHit } from "@alicia/protocol";
 import { describe, expect, test } from "vitest";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
@@ -17,7 +18,7 @@ async function createContext() {
       repository, engine, memory, clock: time.clock, timezone: "Europe/Paris",
     },
   });
-  return { app, pairing, memory };
+  return { app, pairing, memory, repository, time };
 }
 
 async function pair(ctx: Awaited<ReturnType<typeof createContext>>, person: string) {
@@ -94,7 +95,7 @@ describe("memories HTTP API", () => {
   test("invalid query → 400", async () => {
     const ctx = await createContext();
     const headers = auth(await pair(ctx, "kevin"));
-    for (const query of ["?scope=everyone", "?kind=nope", "?q="]) {
+    for (const query of ["?scope=everyone", "?kind=nope", "?q=", "?forgotten=maybe", "?forgotten=true&q=lasagnes"]) {
       expect((await ctx.app.inject({ method: "GET", url: `/memories${query}`, headers })).statusCode).toBe(400);
     }
   });
@@ -148,5 +149,115 @@ describe("memories HTTP API", () => {
 
     const moved = await patch(id, { scope: "common", text: "La famille adore les lasagnes" });
     expect(moved.json<{ scope: string; text: string }>()).toMatchObject({ scope: "common", text: "La famille adore les lasagnes" });
+  });
+
+  test("summaries carry provenance and usage, and parse against the protocol", async () => {
+    const ctx = await createContext();
+    const headers = auth(await pair(ctx, "kevin"));
+    const created = await ctx.app.inject({ method: "POST", url: "/memories", headers, payload: LASAGNES });
+    const manual = MemorySummary.parse(created.json());
+    expect(manual).toMatchObject({
+      source: "manual", conversationId: null, conversationTitle: null, lastRecalledAt: null, forgottenAt: null,
+    });
+    const listed = (await ctx.app.inject({ method: "GET", url: "/memories", headers })).json<unknown[]>();
+    expect(listed.map((m) => MemorySummary.parse(m).id)).toEqual([manual.id]);
+    const patched = await ctx.app.inject({ method: "PATCH", url: `/memories/${manual.id}`, headers, payload: { pinned: true } });
+    expect(MemorySummary.parse(patched.json()).pinned).toBe(true);
+  });
+
+  test("conversation title: shown for the caller's own conversation, null for another person's", async () => {
+    const ctx = await createContext();
+    const kevin = auth(await pair(ctx, "kevin"));
+    const elodie = auth(await pair(ctx, "elodie"));
+    const mine = ctx.repository.create("kevin", "Dîner du dimanche");
+    const hers = ctx.repository.create("elodie", "Surprise pour Kévin");
+    await ctx.memory.remember({
+      personId: "kevin", scope: "personal", kind: "fact", text: "Kévin déteste le persil", source: "conversation", conversationId: mine.id,
+    });
+    await ctx.memory.remember({
+      personId: "elodie", scope: "common", kind: "fact", text: "La maison a un cerisier", source: "conversation", conversationId: hers.id,
+    });
+    const list = async (headers: Record<string, string>) =>
+      (await ctx.app.inject({ method: "GET", url: "/memories", headers })).json<unknown[]>().map((m) => MemorySummary.parse(m));
+    const seenByKevin = await list(kevin);
+    expect(seenByKevin.find((m) => m.text.includes("persil"))).toMatchObject({
+      source: "conversation", conversationId: mine.id, conversationTitle: "Dîner du dimanche",
+    });
+    expect(seenByKevin.find((m) => m.text.includes("cerisier"))).toMatchObject({
+      source: "conversation", conversationId: hers.id, conversationTitle: null,
+    });
+    const seenByElodie = await list(elodie);
+    expect(seenByElodie.find((m) => m.text.includes("cerisier"))?.conversationTitle).toBe("Surprise pour Kévin");
+  });
+
+  test("trash: forgotten memories are listed, restorable, and private to their owner", async () => {
+    const ctx = await createContext();
+    const kevin = auth(await pair(ctx, "kevin"));
+    const elodie = auth(await pair(ctx, "elodie"));
+    const created = await ctx.app.inject({ method: "POST", url: "/memories", headers: kevin, payload: LASAGNES });
+    const { id } = created.json<{ id: string }>();
+    await ctx.app.inject({
+      method: "POST", url: "/memories", headers: kevin,
+      payload: { text: "On range les clés dans le panier", kind: "rule", scope: "common" },
+    });
+    await ctx.app.inject({ method: "DELETE", url: `/memories/${id}`, headers: kevin });
+
+    const trash = async (headers: Record<string, string>, query = "?forgotten=true") =>
+      (await ctx.app.inject({ method: "GET", url: `/memories${query}`, headers })).json<unknown[]>().map((m) => MemorySummary.parse(m));
+    const [forgotten] = await trash(kevin);
+    expect(forgotten).toMatchObject({ id, forgottenAt: new Date(ctx.time.clock()).toISOString() });
+    expect(await trash(kevin, "?forgotten=true&scope=common")).toEqual([]);
+    expect(await trash(kevin, "?forgotten=true&kind=event")).toEqual([]);
+    expect(await trash(elodie)).toEqual([]);
+    expect(await trash(kevin, "")).toHaveLength(1);
+
+    const restore = (headers: Record<string, string>, target = id) =>
+      ctx.app.inject({ method: "POST", url: `/memories/${target}/restore`, headers });
+    expect((await restore(elodie)).statusCode).toBe(404);
+    const restored = await restore(kevin);
+    expect(restored.statusCode).toBe(200);
+    expect(MemorySummary.parse(restored.json())).toMatchObject({ id, forgottenAt: null });
+    expect(await trash(kevin)).toEqual([]);
+    const again = await restore(kevin);
+    expect(again.statusCode).toBe(404);
+    expect(again.json()).toEqual({ error: "not_found" });
+    expect((await restore(kevin, UNKNOWN_ID)).statusCode).toBe(404);
+  });
+
+  test("a memory forgotten for more than 30 days cannot be restored", async () => {
+    const ctx = await createContext();
+    const headers = auth(await pair(ctx, "kevin"));
+    const { id } = (await ctx.app.inject({ method: "POST", url: "/memories", headers, payload: LASAGNES })).json<{ id: string }>();
+    await ctx.app.inject({ method: "DELETE", url: `/memories/${id}`, headers });
+    ctx.time.advance(31 * 24 * 3_600_000);
+    expect((await ctx.app.inject({ method: "POST", url: `/memories/${id}/restore`, headers })).statusCode).toBe(404);
+    expect((await ctx.app.inject({ method: "GET", url: "/memories?forgotten=true", headers })).json()).toEqual([]);
+  });
+
+  test("test bench: ordered hits with reasons, no recall counted, scoped, q required", async () => {
+    const ctx = await createContext();
+    const kevin = auth(await pair(ctx, "kevin"));
+    const elodie = auth(await pair(ctx, "elodie"));
+    for (const text of ["Kévin adore les lasagnes", "Les lasagnes de mamie sont les meilleures"]) {
+      await ctx.app.inject({ method: "POST", url: "/memories", headers: kevin, payload: { ...LASAGNES, text } });
+    }
+    const bench = (headers: Record<string, string>, query: string) =>
+      ctx.app.inject({ method: "GET", url: `/memories/test${query}`, headers });
+
+    const res = await bench(kevin, "?q=lasagnes");
+    expect(res.statusCode).toBe(200);
+    const hits = res.json<unknown[]>().map((h) => MemoryTestHit.parse(h));
+    const searched = await ctx.memory.search("kevin", "lasagnes", { recall: false });
+    expect(hits.map((h) => h.memory.id)).toEqual(searched.map((m) => m.id));
+    expect(hits.map((h) => h.rank)).toEqual([1, 2]);
+    expect(hits.every((h) => h.textMatch)).toBe(true);
+    expect(hits[0]?.similarity).toBeGreaterThan(0);
+    expect(hits.map((h) => h.memory.recallCount)).toEqual([0, 0]);
+    expect(ctx.memory.list("kevin", {}).map((m) => m.recallCount)).toEqual([0, 0]);
+
+    expect((await bench(elodie, "?q=lasagnes")).json()).toEqual([]);
+    for (const query of ["", "?q=", "?q=%20%20", `?q=${"x".repeat(301)}`]) {
+      expect((await bench(kevin, query)).statusCode).toBe(400);
+    }
   });
 });

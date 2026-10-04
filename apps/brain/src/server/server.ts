@@ -137,7 +137,7 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     return reply.code(204).send();
   });
 
-  registerMemoryRoutes(app, { memory: deps.chat.memory, personOf });
+  registerMemoryRoutes(app, { memory: deps.chat.memory, repository: deps.repository, personOf });
 
   app.get("/ws", { websocket: true }, (socket) => {
     attachWs(socket, deps, locks);

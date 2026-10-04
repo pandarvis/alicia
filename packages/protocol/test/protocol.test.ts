@@ -5,6 +5,7 @@ import {
   MEMORY_KINDS,
   MemoryPatch,
   MemorySummary,
+  MemoryTestHit,
   PairingRequest,
   Person,
   PersonId,
@@ -138,11 +139,30 @@ describe("memory", () => {
   test("five kinds", () => {
     expect(MEMORY_KINDS).toEqual(["rule", "preference", "habit", "fact", "event"]);
   });
+  const SUMMARY = {
+    id: UUID, scope: "personal", kind: "preference", text: "Aime les lasagnes",
+    pinned: false, source: "conversation", conversationId: "7d9e1a52-3c4b-4f60-8a1d-0b2c3d4e5f60",
+    conversationTitle: "Dîner", createdAt: "2026-10-04T13:30:00.000Z", updatedAt: "2026-10-04T13:30:00.000Z",
+    recallCount: 2, lastRecalledAt: "2026-10-04T14:00:00.000Z", forgottenAt: null,
+  };
   test("summary", () => {
+    expect(MemorySummary.safeParse(SUMMARY).success).toBe(true);
     expect(MemorySummary.safeParse({
-      id: "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192", scope: "personal", kind: "preference", text: "Aime les lasagnes",
-      pinned: false, createdAt: "2026-10-04T13:30:00.000Z", updatedAt: "2026-10-04T13:30:00.000Z", recallCount: 2,
+      ...SUMMARY, source: "manual", conversationId: null, conversationTitle: null, lastRecalledAt: null,
+      forgottenAt: "2026-10-05T08:00:00.000Z",
     }).success).toBe(true);
+  });
+  test("summary needs its provenance and usage fields, typed", () => {
+    expect(MemorySummary.safeParse({ ...SUMMARY, source: "dream" }).success).toBe(false);
+    expect(MemorySummary.safeParse({ ...SUMMARY, conversationId: "not-a-uuid" }).success).toBe(false);
+    expect(MemorySummary.safeParse({ ...SUMMARY, forgottenAt: "yesterday" }).success).toBe(false);
+    expect(MemorySummary.safeParse(Object.fromEntries(Object.entries(SUMMARY).filter(([key]) => key !== "source"))).success).toBe(false);
+  });
+  test("test hit", () => {
+    const hit = { memory: SUMMARY, rank: 1, textMatch: true, similarity: 0.87 };
+    expect(MemoryTestHit.safeParse(hit).success).toBe(true);
+    expect(MemoryTestHit.safeParse({ ...hit, rank: 0 }).success).toBe(false);
+    expect(MemoryTestHit.safeParse({ ...hit, similarity: 1.2 }).success).toBe(false);
   });
   test("patch is strict and bounded", () => {
     expect(MemoryPatch.safeParse({ pinned: true }).success).toBe(true);
