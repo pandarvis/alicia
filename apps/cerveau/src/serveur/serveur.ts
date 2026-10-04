@@ -16,6 +16,8 @@ export interface DependancesServeur {
   depot: DepotConversations;
   chat: DependancesChat;
   version: string;
+  /** Délai laissé au client pour s'authentifier (défaut 5 s ; réglable pour les tests). */
+  delaiAuthentificationMs?: number;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
