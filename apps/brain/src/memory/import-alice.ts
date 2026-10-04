@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import Database from "better-sqlite3";
 import { z } from "zod";
 import type { MemoryStore } from "./store.ts";
@@ -31,8 +33,28 @@ const RulesFile = z.object({
   regles: z.array(z.object({ id: z.string(), texte: z.string(), cree_le: z.string() })),
 });
 
-/** Reads the old Alice's Chroma database (read-only) without Chroma itself. */
-export function readAliceMemories(chromaPath: string): AliceMemory[] {
+/** The API's limit on a memory text; longer old texts are not imported (nothing is silently altered). */
+const MAX_TEXT_LENGTH = 1000;
+
+/**
+ * Reads the old Alice's Chroma database without Chroma itself. The old Alice may be running: the
+ * database (and its -wal/-shm siblings) is copied to a temporary folder and only the copy is opened,
+ * so the source folder is never written to. `now` stands in for a missing creation date.
+ */
+export function readAliceMemories(chromaPath: string, now: number = Date.now()): AliceMemory[] {
+  const copyDir = mkdtempSync(join(tmpdir(), "alicia-chroma-"));
+  try {
+    const copy = join(copyDir, basename(chromaPath));
+    for (const suffix of ["", "-wal", "-shm"]) {
+      if (suffix === "" || existsSync(chromaPath + suffix)) copyFileSync(chromaPath + suffix, copy + suffix);
+    }
+    return readChroma(copy, now);
+  } finally {
+    rmSync(copyDir, { recursive: true, force: true });
+  }
+}
+
+function readChroma(chromaPath: string, now: number): AliceMemory[] {
   const db = new Database(chromaPath, { readonly: true, fileMustExist: true });
   try {
     const rows = db
@@ -55,7 +77,7 @@ export function readAliceMemories(chromaPath: string): AliceMemory[] {
             key: `alice:chroma:${row.embedding_id}`,
             text: row.text.trim(),
             pinned: row.pinned === 1,
-            createdAt: (row.created ?? 0) * 1000,
+            createdAt: row.created === null ? now : row.created * 1000,
             recallCount: row.hits ?? 0,
             lastRecalledAt: row.last_recalled === null ? null : row.last_recalled * 1000,
           }],
@@ -65,13 +87,13 @@ export function readAliceMemories(chromaPath: string): AliceMemory[] {
   }
 }
 
-export function readAliceRules(rulesPath: string): AliceRule[] {
+/** `now` stands in for a missing or unreadable creation date. */
+export function readAliceRules(rulesPath: string, now: number = Date.now()): AliceRule[] {
   const file = RulesFile.parse(JSON.parse(readFileSync(rulesPath, "utf8")));
-  return file.regles.map((rule) => ({
-    key: `alice:rule:${rule.id}`,
-    text: rule.texte.trim(),
-    createdAt: Date.parse(rule.cree_le),
-  }));
+  return file.regles.map((rule) => {
+    const created = Date.parse(rule.cree_le);
+    return { key: `alice:rule:${rule.id}`, text: rule.texte.trim(), createdAt: Number.isNaN(created) ? now : created };
+  });
 }
 
 export interface ImportReport {
@@ -79,7 +101,7 @@ export interface ImportReport {
   duplicates: number;
   /** Already imported by a previous run (same import key). */
   skipped: number;
-  /** Not stored: the old text holds a secret (or is empty). */
+  /** Not stored: the old text holds a secret, is empty, or is longer than the API allows. */
   refused: number;
 }
 
@@ -96,6 +118,10 @@ export async function importAlice(
   for (const item of items) {
     if (store.hasImportKey(item.key)) {
       report.skipped++;
+      continue;
+    }
+    if (item.text.length > MAX_TEXT_LENGTH) {
+      report.refused++;
       continue;
     }
     // The person id is irrelevant for the common scope: everything lands in the household memory.

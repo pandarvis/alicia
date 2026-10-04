@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -91,5 +91,58 @@ describe("import from the old Alice", () => {
       rules: [],
     };
     expect(await importAlice(store, source)).toEqual({ created: 1, duplicates: 1, skipped: 0, refused: 0 });
+  });
+
+  test("falls back to the given time when a creation date is missing or invalid", () => {
+    dir = mkdtempSync(join(tmpdir(), "alicia-import-"));
+    const chroma = join(dir, "chroma.sqlite3");
+    const db = new Database(chroma);
+    db.exec(`CREATE TABLE embeddings (id INTEGER PRIMARY KEY, segment_id TEXT, embedding_id TEXT, seq_id BLOB, created_at TEXT);
+             CREATE TABLE embedding_metadata (id INTEGER, key TEXT, string_value TEXT, int_value INTEGER, float_value REAL, bool_value INTEGER);
+             INSERT INTO embeddings (id, segment_id, embedding_id) VALUES (1, 's', 'e-1');
+             INSERT INTO embedding_metadata (id, key, string_value) VALUES (1, 'chroma:document', 'Sans date');`);
+    db.close();
+    expect(readAliceMemories(chroma, 5_000)).toEqual([
+      { key: "alice:chroma:e-1", text: "Sans date", pinned: false, createdAt: 5_000, recallCount: 0, lastRecalledAt: null },
+    ]);
+    const rules = join(dir, "regles.json");
+    writeFileSync(rules, JSON.stringify({ regles: [{ id: "z9", texte: "Règle", cree_le: "pas une date" }] }));
+    expect(readAliceRules(rules, 7_000)).toEqual([{ key: "alice:rule:z9", text: "Règle", createdAt: 7_000 }]);
+  });
+
+  test("skips and counts a text longer than the 1000 characters the API allows", async () => {
+    const store = newStore();
+    const base = { pinned: false, createdAt: 1_000, recallCount: 0, lastRecalledAt: null };
+    const source = {
+      memories: [
+        { ...base, key: "alice:chroma:l-1", text: "a".repeat(1001) },
+        { ...base, key: "alice:chroma:l-2", text: "b".repeat(1000) },
+      ],
+      rules: [],
+    };
+    expect(await importAlice(store, source)).toEqual({ created: 1, duplicates: 0, skipped: 0, refused: 1 });
+    expect(store.list("kevin", {}).map((m) => m.text.length)).toEqual([1000]);
+  });
+
+  test("reads a temporary copy: the source folder gains no file, even in WAL mode", () => {
+    dir = mkdtempSync(join(tmpdir(), "alicia-import-"));
+    const chroma = join(dir, "chroma.sqlite3");
+    const db = new Database(chroma);
+    db.pragma("journal_mode = WAL");
+    db.pragma("wal_autocheckpoint = 0");
+    db.exec(`CREATE TABLE embeddings (id INTEGER PRIMARY KEY, segment_id TEXT, embedding_id TEXT, seq_id BLOB, created_at TEXT);
+             CREATE TABLE embedding_metadata (id INTEGER, key TEXT, string_value TEXT, int_value INTEGER, float_value REAL, bool_value INTEGER);
+             INSERT INTO embeddings (id, segment_id, embedding_id) VALUES (1, 's', 'e-1');
+             INSERT INTO embedding_metadata (id, key, string_value) VALUES (1, 'chroma:document', 'Encore dans le WAL');`);
+    // The writer stays open: the row only lives in the -wal file.
+    const before = readdirSync(dir).sort();
+    expect(before).toContain("chroma.sqlite3-wal");
+    expect(readAliceMemories(chroma, 1).map((m) => m.text)).toEqual(["Encore dans le WAL"]);
+    expect(readdirSync(dir).sort()).toEqual(before);
+    db.close();
+    // Closing the writer checkpoints and removes the siblings: reading afterwards still leaves nothing behind.
+    const after = readdirSync(dir).sort();
+    readAliceMemories(chroma, 1);
+    expect(readdirSync(dir).sort()).toEqual(after);
   });
 });
