@@ -20,6 +20,9 @@ export type EngineEvent =
   | { type: "done"; inputTokens: number; outputTokens: number }
   | { type: "error"; code: "quota" | "engine"; message: string };
 
+/** A turn that stopped without a result: an engine failure, never an empty success. */
+export const INCOMPLETE_TURN_MESSAGE = "Le moteur s'est arrêté avant la fin de sa réponse.";
+
 export interface Engine {
   run(request: EngineRequest, signal: AbortSignal): AsyncIterable<EngineEvent>;
 }

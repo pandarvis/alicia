@@ -1,7 +1,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import type { EngineEvent } from "../src/engine/engine.ts";
+import { type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
 import {
   allowedToolNames,
   buildEnv,
@@ -185,6 +185,20 @@ describe("translateTurn", () => {
       },
     ]);
     expect(JSON.stringify(events)).not.toContain(SECRET);
+  });
+  test("stream ends without a result nor an exception → an explicit engine error, never a done", async () => {
+    expect(await turn([{ type: "system", subtype: "init", session_id: "s1" }])).toEqual([
+      { type: "session", sessionId: "s1" },
+      { type: "error", code: "engine", message: INCOMPLETE_TURN_MESSAGE },
+    ]);
+  });
+  test("rejected limit then a silent end → quota", async () => {
+    expect(await turn([LIMIT_REJECTED])).toEqual([QUOTA]);
+  });
+  test("silent end after cancellation: nothing", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(await turn([], undefined, controller.signal)).toEqual([]);
   });
   test("the secret is also masked in an error result", async () => {
     const failure = { type: "result", subtype: "error_during_execution", is_error: true, errors: [`clé ${SECRET} refusée`] };

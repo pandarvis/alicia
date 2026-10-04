@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { handleSend } from "../src/conversations/chat-service.ts";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
-import type { Engine } from "../src/engine/engine.ts";
+import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
 import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
 import { createTestClock, createTestDb, createTestMemory, ELODIE, KEVIN } from "./helpers.ts";
 
@@ -120,6 +120,25 @@ describe("handleSend", () => {
     });
     const events = await send(deps, KEVIN, { text: "Salut" });
     expect(events.at(-1)).toMatchObject({ type: "error", code: "engine" });
+  });
+
+  test("an engine that stops without done nor error: engine error, partial text kept, no retry", async () => {
+    const { deps, repository, engine, db } = createContext(() => [
+      { type: "session", sessionId: "s1" },
+      { type: "text", text: "Il fait" },
+    ]);
+    const events = await send(deps, KEVIN, { text: "Quelle température ?" });
+    const id = events[0]?.type === "conversation" ? events[0].conversationId : "";
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(events.at(-1)).toEqual({
+      type: "error", requestId: REQUEST_ID, conversationId: id, code: "engine", message: INCOMPLETE_TURN_MESSAGE,
+    });
+    expect(engine.requests).toHaveLength(1);
+    expect(repository.messages(id).map((m) => [m.role, m.text])).toEqual([
+      ["user", "Quelle température ?"],
+      ["assistant", "Il fait"],
+    ]);
+    expect(db.select().from(turnLog).all().map((j) => j.error)).toEqual([INCOMPLETE_TURN_MESSAGE]);
   });
 
   test("relays tool calls", async () => {

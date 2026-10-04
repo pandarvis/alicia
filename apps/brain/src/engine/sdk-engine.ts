@@ -12,7 +12,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Authentication } from "../config.ts";
 import { VERSION } from "../version.ts";
-import type { Engine, EngineEvent, EngineRequest } from "./engine.ts";
+import { type Engine, type EngineEvent, type EngineRequest, INCOMPLETE_TURN_MESSAGE } from "./engine.ts";
 import type { ToolDefinition, ToolResult } from "./tools.ts";
 
 const LIMIT_PATTERN = /usage limit|rate[ _]?limit|(?<!disk )quota (?:exceeded|reached)|too many requests|\b429\b/i;
@@ -165,6 +165,7 @@ export function* translateMessage(m: SDKMessage): Generator<EngineEvent> {
  * Translation of a whole turn: at most one error, never alongside a "done".
  * A rejected limit is remembered: if the turn then fails (error result or exception),
  * the error is "quota"; if it succeeds, it is forgotten. The secret is masked in errors.
+ * Every turn ends with exactly one "done" or one "error", unless cancelled.
  */
 export async function* translateTurn(
   messages: AsyncIterable<SDKMessage>,
@@ -193,7 +194,10 @@ export async function* translateTurn(
       const text = cause instanceof Error ? cause.message : String(cause);
       yield toError({ type: "error", ...classifyError(text) });
     }
+    return;
   }
+  // The stream ended quietly without a result: say so, rather than let the turn look like a success.
+  if (!resultSeen && !signal.aborted) yield toError({ type: "error", code: "engine", message: INCOMPLETE_TURN_MESSAGE });
 }
 
 export interface SdkEngineParams {

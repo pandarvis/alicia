@@ -2,7 +2,7 @@ import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
 import type { Clock } from "../clock.ts";
-import type { Engine, EngineEvent } from "../engine/engine.ts";
+import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
 import { buildSheet } from "../memory/sheet.ts";
 import type { MemoryStore } from "../memory/store.ts";
 import { memoryTools } from "../memory/tools.ts";
@@ -81,6 +81,7 @@ export async function* handleSend(
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       error = undefined;
+      let finished = false;
 
       // Only creating the stream and reading from the engine are "engine errors";
       // a repository failure while handling an event must propagate as is.
@@ -123,6 +124,7 @@ export async function* handleSend(
               break;
             }
             case "done":
+              finished = true;
               inputTokens += e.inputTokens;
               outputTokens += e.outputTokens;
               break;
@@ -134,6 +136,11 @@ export async function* handleSend(
       } finally {
         // Early exit (consumer stopped, repository failure): release the engine stream.
         await stream?.return?.();
+      }
+
+      // Every engine must end a turn with "done" or "error": a silent end is a failure, never an empty success.
+      if (error === undefined && !finished && !signal.aborted) {
+        error = { type: "error", code: "engine", message: INCOMPLETE_TURN_MESSAGE };
       }
 
       const unreadableSession =
