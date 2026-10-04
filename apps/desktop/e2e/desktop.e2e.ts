@@ -1,8 +1,9 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { z } from "zod";
 import {
-  callHook, closeWindow, deferred, GREETING_EVENTS, launch, pair, POLL, recorded, secondInstance, send, startBrain,
+  callHook, closeWindow, deferred, exited, GREETING_EVENTS, launch, pair, POLL, recorded, secondInstance, send, startBrain,
   surfacePage, tempDir, windowBounds, windowVisible,
 } from "./support.ts";
 
@@ -16,9 +17,77 @@ test("closing the main window hides it in the tray; launching Alicia again bring
   // Still running: the main process answers.
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBeGreaterThan(0);
 
+  // A second launch at login (`--hidden`) gives way without showing anything.
+  expect(await secondInstance(userData, ["--hidden"])).toBe(0);
+  expect(await windowVisible(app, "main")).toBe(false);
+
   // A second launch on the same profile gives way to the first one, which shows itself.
   expect(await secondInstance(userData)).toBe(0);
   await expect.poll(() => windowVisible(app, "main"), POLL).toBe(true);
+});
+
+test("started at login (--hidden), Alicia waits in the notification area", async () => {
+  const { app } = await launch(tempDir("alicia-e2e-profile-"), {}, ["--hidden"]);
+  await expect.poll(async () => (await recorded(app)).tray.length, POLL).toBeGreaterThan(0);
+  // Give the window every chance to show itself by mistake.
+  await surfacePage(app, "main");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(await windowVisible(app, "main")).toBe(false);
+  await callHook(app, "trayClick");
+  await expect.poll(() => windowVisible(app, "main"), POLL).toBe(true);
+});
+
+test("Quitter Alicia in the tray menu really quits", async () => {
+  const { app } = await launch(tempDir("alicia-e2e-profile-"));
+  const gone = exited(app);
+  // The app may quit before the call returns.
+  await callHook(app, "trayAction", "quit").catch(() => undefined);
+  await gone;
+});
+
+test("when Windows ends the session, Alicia lets go of the OS and lets its windows close", async () => {
+  const { app } = await launch(tempDir("alicia-e2e-profile-"));
+  await expect.poll(async () => (await recorded(app)).shortcuts, POLL).toEqual(["Ctrl+Alt+A"]);
+  await app.evaluate(({ BrowserWindow }) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      const url = window.webContents.getURL();
+      if (URL.canParse(url) && new URL(url).searchParams.get("surface") === "main") window.emit("session-end", {});
+    }
+  });
+  const state = await recorded(app);
+  expect([state.shortcuts, state.tray]).toEqual([[], []]);
+  // The close button now closes for real (no more hiding in the tray).
+  await closeWindow(app, "main");
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((window) => {
+    const url = window.webContents.getURL();
+    return URL.canParse(url) && new URL(url).searchParams.get("surface") === "main";
+  })), POLL).toBe(false);
+});
+
+const SavedStartup = z.object({ launchAtStartup: z.boolean() });
+
+test("every page the app creates is locked down: no navigation, no webview", async () => {
+  const { app } = await launch(tempDir("alicia-e2e-profile-"));
+  const guards = await app.evaluate(({ BrowserWindow }) => {
+    const stray = new BrowserWindow({ show: false });
+    const contents = stray.webContents;
+    const counts = [contents.listenerCount("will-navigate"), contents.listenerCount("will-attach-webview")];
+    stray.destroy();
+    return counts;
+  });
+  expect(guards.every((count) => count > 0)).toBe(true);
+});
+
+test("at start Windows wins over the saved launch-at-startup choice", async () => {
+  const userData = tempDir("alicia-e2e-profile-");
+  const file = join(userData, "settings.json");
+  writeFileSync(file, JSON.stringify({ launchAtStartup: true }));
+  // The recorder stands for a Windows profile without Alicia's login item (removed in the startup apps).
+  const { app } = await launch(userData);
+  await expect.poll(async () => (await recorded(app)).tray.find((item) => item.id === "toggle-startup")?.checked, POLL)
+    .toBe(false);
+  expect((await recorded(app)).loginItem).toBeNull();
+  await expect.poll(() => SavedStartup.parse(JSON.parse(readFileSync(file, "utf8"))).launchAtStartup, POLL).toBe(false);
 });
 
 test("the tray menu opens Alicia and switches launch at startup", async () => {
@@ -26,8 +95,8 @@ test("the tray menu opens Alicia and switches launch at startup", async () => {
   expect((await recorded(app)).tray.map((item) => item.label)).toEqual([
     "Ouvrir Alicia", "Afficher l'Holo", "Lancer au démarrage", "Quitter Alicia",
   ]);
-  // The saved choice (off by default) is applied at start.
-  expect((await recorded(app)).loginItem).toBe(false);
+  // Nothing is written to Windows at start: only an explicit change writes the login item.
+  expect((await recorded(app)).loginItem).toBeNull();
 
   await callHook(app, "trayAction", "toggle-startup");
   await expect.poll(async () => (await recorded(app)).loginItem, POLL).toBe(true);
@@ -79,7 +148,7 @@ test("a tray change that cannot be saved says so in a notification, and changes 
   await expect.poll(async () => (await recorded(app)).notifications, POLL).toEqual([
     { title: "Alicia", body: "Impossible d'enregistrer ce réglage pour l'instant." },
   ]);
-  expect((await recorded(app)).loginItem).toBe(false);
+  expect((await recorded(app)).loginItem).toBeNull();
   expect((await recorded(app)).tray.find((item) => item.id === "toggle-startup")?.checked).toBe(false);
 });
 
@@ -174,6 +243,9 @@ test("Spotlight: Escape closes the bar without sending, and it opens again empty
   await callHook(app, "triggerShortcut");
   const bar = await surfacePage(app, "spotlight");
   await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  // The bar never needs the device token: it only knows whether Alicia is paired.
+  await expect(bar.evaluate(() => window.alicia.getSession())).rejects.toThrow();
+  expect(await bar.evaluate(() => window.alicia.paired())).toBe(true);
   await bar.getByTestId("spotlight-input").fill("Rien du tout");
   await bar.getByTestId("spotlight-input").press("Escape");
   await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(false);

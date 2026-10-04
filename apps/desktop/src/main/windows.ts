@@ -22,6 +22,8 @@ export interface WindowManagerOptions {
   icon: string | undefined;
   /** Alt+F4 on the Holo: the person does not want it any more (same as unticking it). */
   onHoloDismissed(): void;
+  /** Windows is logging off or shutting down: the process ends without before-quit nor will-quit. */
+  onSessionEnd(): void;
 }
 
 /** Only web links leave the app; anything else (file:, custom schemes) is refused. */
@@ -37,6 +39,23 @@ function isWebUrl(url: string): boolean {
 /** A window whose page can still receive messages (a closing window's contents may already be gone). */
 function isAlive(window: BrowserWindow | null): window is BrowserWindow {
   return window !== null && !window.isDestroyed() && !window.webContents.isDestroyed();
+}
+
+/**
+ * No page of the app ever navigates away, opens a window (web links go to the browser) or embeds a webview.
+ * Applied to every web contents the app creates (`web-contents-created`), and again to each of our windows.
+ */
+export function hardenWebContents(contents: WebContents): void {
+  contents.on("will-navigate", (event) => {
+    event.preventDefault();
+  });
+  contents.on("will-attach-webview", (event) => {
+    event.preventDefault();
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isWebUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
 }
 
 function secureWebPreferences(): WebPreferences {
@@ -84,6 +103,11 @@ export class WindowManager {
       if (this.#quitting) return;
       event.preventDefault();
       window.hide();
+    });
+    // Logoff or shutdown: Windows ends the process without before-quit, so the windows must let go here.
+    window.on("session-end", () => {
+      this.#quitting = true;
+      this.#options.onSessionEnd();
     });
     if (options.show) {
       window.once("ready-to-show", () => {
@@ -368,13 +392,7 @@ export class WindowManager {
 
   /** The app never navigates away nor opens windows; external links go to the browser. */
   #harden(window: BrowserWindow): void {
-    window.webContents.on("will-navigate", (event) => {
-      event.preventDefault();
-    });
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (isWebUrl(url)) void shell.openExternal(url);
-      return { action: "deny" };
-    });
+    hardenWebContents(window.webContents);
   }
 
   #load(window: BrowserWindow, surface: Surface): void {

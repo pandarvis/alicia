@@ -1,8 +1,12 @@
 import {
   app, globalShortcut, Menu, type MenuItemConstructorOptions, nativeImage, Notification, Tray,
 } from "electron";
+import { HIDDEN_ARG } from "./lifecycle.ts";
 import type { OsIntegration, TrayHandle } from "./os-integration.ts";
 import type { TrayAction, TrayItem } from "./tray-menu.ts";
+
+/** Started by Windows at login: stay in the notification area. */
+const LOGIN_ITEM_ARGS = [HIDDEN_ARG];
 
 function menuTemplate(items: readonly TrayItem[], onAction: (action: TrayAction) => void): MenuItemConstructorOptions[] {
   return items.map((item): MenuItemConstructorOptions => {
@@ -38,7 +42,13 @@ export function electronOs(options: { trayIcon: string; notificationIcon: string
     },
     // Only the installed app registers itself with Windows: a dev build never writes a login item.
     setLoginItem: (openAtLogin) => {
-      if (app.isPackaged) app.setLoginItemSettings({ openAtLogin, args: ["--hidden"] });
+      if (app.isPackaged) app.setLoginItemSettings({ openAtLogin, args: LOGIN_ITEM_ARGS });
+    },
+    // Read with the same arguments it was written with; disabled in Windows's startup apps counts as off.
+    isLoginItemEnabled: () => {
+      if (!app.isPackaged) return null;
+      const login = app.getLoginItemSettings({ args: LOGIN_ITEM_ARGS });
+      return login.openAtLogin && login.executableWillLaunchAtLogin;
     },
     notify: (request) => {
       if (!Notification.isSupported()) return;

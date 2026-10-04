@@ -6,8 +6,8 @@ const FUNCTION_KEY = /^F(?:[1-9]|1[0-9]|2[0-4])$/;
 /** F13–F24 exist on no ordinary keyboard row: nothing types with them, so they may be used alone. */
 const SPARE_FUNCTION_KEY = /^F(?:1[3-9]|2[0-4])$/;
 const KEY = /^(?:[A-Z]|[0-9]|num[0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space)$/;
-/** Window commands Windows itself relies on (close, window menu). */
-const RESERVED = new Set(["Alt+F4", "Alt+Space"]);
+/** Window commands Windows itself relies on (Alt+F4 closes; Alt+Space already fails the two-modifier rule). */
+const RESERVED = new Set(["Alt+F4"]);
 
 function isModifier(part: string): boolean {
   return MODIFIERS.some((modifier) => modifier === part);
@@ -19,7 +19,7 @@ function isModifier(part: string): boolean {
  * command:
  * - a letter, digit or Space needs two modifiers, or Super (Ctrl+C, Alt+letter menus, Shift+letter stay free);
  * - F1–F12 need Ctrl, Alt or Super (Shift+F10 is the context menu); F13–F24 may be used alone;
- * - Alt+F4 and Alt+Space are refused.
+ * - Alt+F4 is refused (Alt+Space, the window menu, already lacks a second modifier).
  */
 export function isValidAccelerator(value: string): boolean {
   const parts = value.split("+");
@@ -62,20 +62,37 @@ function typesCharacter(key: string): boolean {
   return key === "Dead" || /^\S$/u.test(key);
 }
 
+/**
+ * The keyboard layout: physical key code → the character it types without any modifier (`Digit1` → `&` on
+ * French AZERTY), as given by Chromium's `navigator.keyboard.getLayoutMap()`.
+ */
+export type KeyboardLayout = ReadonlyMap<string, string>;
+
 type KeyName = { ok: true; name: string } | { ok: false; reason: ShortcutRefusal };
+
+/**
+ * Ctrl+Alt is AltGr on many layouts. When the key reports its own base character, AltGr typed nothing on it
+ * (French AZERTY: AltGr+& is empty), so the combination steals nothing. A keydown event alone cannot tell the
+ * base character of a key (`&` could be AltGr's), hence the layout map; without it, the safe answer is "it types".
+ */
+function altGrTypesNothing(event: KeyLike, layout: KeyboardLayout | undefined): boolean {
+  return layout?.get(event.code) === event.key;
+}
 
 /**
  * Letters and digits from the typed key (layout-aware: an AZERTY A stays A); the physical key for the AZERTY
  * top-row digits (& é " …) and numpad digits. With Ctrl+Alt, which is AltGr on many layouts, a key that
  * typed a symbol (€, @…) is refused: the shortcut would steal that character.
  */
-function keyName(event: KeyLike): KeyName {
+function keyName(event: KeyLike, layout: KeyboardLayout | undefined): KeyName {
   const { key, code } = event;
   const numpad = /^Numpad([0-9])$/.exec(code)?.[1];
   if (numpad !== undefined) return { ok: true, name: `num${numpad}` };
   if (code.startsWith("Numpad")) return { ok: false, reason: "not_a_shortcut" };
   if (/^[a-z0-9]$/i.test(key)) return { ok: true, name: key.toUpperCase() };
-  if (event.ctrlKey && event.altKey && typesCharacter(key)) return { ok: false, reason: "types_character" };
+  if (event.ctrlKey && event.altKey && typesCharacter(key) && !altGrTypesNothing(event, layout)) {
+    return { ok: false, reason: "types_character" };
+  }
   const letter = /^Key([A-Z])$/.exec(code)?.[1];
   if (letter !== undefined) return { ok: true, name: letter };
   const digit = /^Digit([0-9])$/.exec(code)?.[1];
@@ -84,9 +101,12 @@ function keyName(event: KeyLike): KeyName {
   return code === "Space" ? { ok: true, name: "Space" } : { ok: false, reason: "not_a_shortcut" };
 }
 
-/** The accelerator for a key press, or why it cannot be a shortcut. */
-export function captureShortcut(event: KeyLike): ShortcutCapture {
-  const key = keyName(event);
+/**
+ * The accelerator for a key press, or why it cannot be a shortcut. `layout` (when the page could read it) lets
+ * Ctrl+Alt on a key without an AltGr character fall back to the physical key.
+ */
+export function captureShortcut(event: KeyLike, layout?: KeyboardLayout): ShortcutCapture {
+  const key = keyName(event, layout);
   if (!key.ok) return key;
   const modifiers: string[] = [];
   if (event.ctrlKey) modifiers.push("Ctrl");

@@ -8,8 +8,9 @@ import { type SaveSessionResult, StoredSession } from "../shared/session.ts";
 import type { SettingsPatch } from "../shared/settings.ts";
 import { BrainHub } from "./brain-hub.ts";
 import { electronOs } from "./electron-os.ts";
-import { eventRecipients } from "./event-routing.ts";
+import { eventRecipients, mayReadSession } from "./event-routing.ts";
 import { registerIpc } from "./ipc.ts";
+import { isHiddenLaunch, runOnce } from "./lifecycle.ts";
 import type { OsIntegration, TrayHandle } from "./os-integration.ts";
 import { Presence } from "./presence.ts";
 import { RecordingOs, TEST_HOOKS_KEY } from "./recording-os.ts";
@@ -19,7 +20,7 @@ import { SettingsStore } from "./settings-store.ts";
 import { type TrayAction, type TrayItem, trayMenuItems } from "./tray-menu.ts";
 import { isTrustedSenderUrl } from "./trusted-sender.ts";
 import { notificationFor } from "./turn-notifications.ts";
-import { WindowManager } from "./windows.ts";
+import { hardenWebContents, WindowManager } from "./windows.ts";
 
 const RENDERER_INDEX = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
 /** Mascot head icon (design/mascotte/icone/v1), packaged with the app (electron-builder `files`). */
@@ -39,7 +40,7 @@ if (!app.isPackaged && userDataOverride !== undefined) app.setPath("userData", u
  */
 const osIntegrationOff = !app.isPackaged && process.env["ALICIA_OS_INTEGRATION"] === "off";
 /** Started by Windows at login (login item argument): stay in the notification area. */
-const startHidden = process.argv.includes("--hidden");
+const startHidden = isHiddenLaunch(process.argv);
 
 /** Said in a Windows notification when a change from the tray menu could not be saved. */
 const SETTING_NOT_SAVED = "Impossible d'enregistrer ce réglage pour l'instant.";
@@ -89,6 +90,9 @@ function start(): void {
     icon: existsSync(ICON_PNG) ? ICON_PNG : undefined,
     onHoloDismissed: () => {
       updateFromOutside({ showHolo: false });
+    },
+    onSessionEnd: () => {
+      quitCleanup();
     },
   });
   const presence = new Presence({
@@ -142,10 +146,17 @@ function start(): void {
     setLoginItem: (openAtLogin) => {
       os.setLoginItem(openAtLogin);
     },
+    isLoginItemEnabled: () => os.isLoginItemEnabled(),
     onChange: () => {
       applyHolo();
       refreshTray();
     },
+  });
+
+  /** Lets go of the brain and the OS (shortcut, tray icon); shared by every way of quitting. */
+  const quitCleanup = runOnce(() => {
+    hub.disconnect();
+    os.dispose();
   });
 
   function trayItems(): TrayItem[] {
@@ -202,7 +213,8 @@ function start(): void {
     current = next;
     if (next === null) hub.disconnect();
     else hub.connect(next);
-    windows.broadcast(PUSH.session, next);
+    for (const surface of windows.surfaces().filter(mayReadSession)) windows.sendTo(surface, PUSH.session, next);
+    windows.broadcast(PUSH.paired, next !== null);
     applyHolo();
     refreshTray();
   }
@@ -224,6 +236,7 @@ function start(): void {
     isTrusted,
     session: {
       get: () => sessions.load(),
+      paired: () => current !== null,
       save: saveSession,
       clear: () => {
         sessions.clear();
@@ -246,17 +259,22 @@ function start(): void {
   settings.start();
   if (current !== null) hub.connect(current);
 
-  app.on("second-instance", () => {
-    windows.showMain();
+  // A second launch brings Alicia forward, unless it is Windows starting her at login.
+  app.on("second-instance", (_event, argv) => {
+    if (!isHiddenLaunch(argv)) windows.showMain();
   });
   app.on("before-quit", () => {
     windows.prepareQuit();
   });
   app.on("will-quit", () => {
-    hub.disconnect();
-    os.dispose();
+    quitCleanup();
   });
 }
+
+// Defense in depth: whatever creates a web page (our windows, a future dialog…), it is locked down.
+app.on("web-contents-created", (_event, contents) => {
+  hardenWebContents(contents);
+});
 
 // One Alicia per Windows session (per profile): a second launch only brings the first one forward.
 if (app.requestSingleInstanceLock()) {

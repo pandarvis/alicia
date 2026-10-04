@@ -3,15 +3,17 @@
   import { fade, fly } from "svelte/transition";
   import type { ConnectionStatus } from "../../shared/chat-connection.ts";
   import type { MascotState } from "../../shared/mascot.ts";
-  import type { StoredSession } from "../../shared/session.ts";
   import Mascot from "./components/Mascot.svelte";
   import { mirror } from "./lib/mirror.ts";
   import { motion } from "./lib/motion.ts";
+  import { throttle, TYPING_INTERVAL_MS } from "./lib/throttle.ts";
 
   const FADE_MS = 160;
   const UNREACHABLE = "Alicia n'est pas joignable pour l'instant.";
+  /** Typing is reported a few times a second at most, not on every key. */
+  const typing = throttle(() => { window.alicia.presence.typing(); }, TYPING_INTERVAL_MS);
 
-  let session = $state<StoredSession | null>(null);
+  let paired = $state(false);
   let status = $state<ConnectionStatus>("connecting");
   let mood = $state<MascotState>("idle");
   let text = $state("");
@@ -22,8 +24,8 @@
 
   onMount(() => {
     const offs = [
-      mirror(() => window.alicia.getSession(), (listener) => window.alicia.onSessionChanged(listener), (next) => {
-        session = next;
+      mirror(() => window.alicia.paired(), (listener) => window.alicia.onPairedChanged(listener), (next) => {
+        paired = next;
       }),
       mirror(() => window.alicia.brain.status(), (listener) => window.alicia.brain.onStatus(listener), (next) => {
         status = next;
@@ -68,7 +70,7 @@
   async function submit(): Promise<void> {
     const message = text.trim();
     if (message === "" || sending) return;
-    if (session === null) {
+    if (!paired) {
       await window.alicia.app.showMain();
       await close();
       return;
@@ -114,10 +116,10 @@
         bind:this={input}
         bind:value={text}
         onkeydown={handleKeydown}
-        oninput={() => { window.alicia.presence.typing(); }}
+        oninput={typing}
         maxlength="2000"
         disabled={sending}
-        placeholder={session === null ? "Appaire d'abord Alicia : Entrée ouvre l'app" : "Demande à Alicia…"}
+        placeholder={paired ? "Demande à Alicia…" : "Appaire d'abord Alicia : Entrée ouvre l'app"}
         aria-label="Message pour Alicia"
         autocomplete="off"
         data-testid="spotlight-input"

@@ -53,6 +53,11 @@ export class RecordingOs implements OsIntegration {
     this.#loginItem = openAtLogin;
   }
 
+  /** Like a fresh Windows profile: no login item until the app writes one. */
+  isLoginItemEnabled(): boolean {
+    return this.#loginItem ?? false;
+  }
+
   notify(request: NotificationRequest): void {
     this.#notifications.push(request);
   }

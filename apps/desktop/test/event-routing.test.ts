@@ -1,6 +1,6 @@
 import type { ServerEvent } from "@alicia/protocol";
 import { describe, expect, test } from "vitest";
-import { eventRecipients } from "../src/main/event-routing.ts";
+import { eventRecipients, mayReadSession } from "../src/main/event-routing.ts";
 import type { Surface } from "../src/shared/surface.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
@@ -15,6 +15,12 @@ const TURN_EVENTS: ServerEvent[] = [
   { type: "error", requestId: REQUEST, code: "engine", message: "Raté." },
 ];
 const DONE: ServerEvent = { type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 };
+
+describe("mayReadSession", () => {
+  test("the device token only reaches the windows that call the brain over HTTP", () => {
+    expect(OPEN.filter(mayReadSession)).toEqual(["main", "holo"]);
+  });
+});
 
 describe("eventRecipients", () => {
   test("a turn's events go to the window that asked, and only to it", () => {

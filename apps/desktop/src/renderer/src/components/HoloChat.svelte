@@ -6,6 +6,7 @@
   import { fade } from "svelte/transition";
   import type { MiniChat } from "../lib/mini-chat.svelte.ts";
   import { motion, scrollBehavior } from "../lib/motion.ts";
+  import { throttle, TYPING_INTERVAL_MS } from "../lib/throttle.ts";
 
   let { chat, onClose }: { chat: MiniChat; onClose: () => void } = $props();
 
@@ -17,6 +18,8 @@
   /** Changes whenever a message is added or grows: the list then follows its end. */
   const tail = $derived(`${store.messages.length}:${store.messages.at(-1)?.text.length ?? 0}`);
   let seenTail = "";
+  /** Typing is reported a few times a second at most, not on every key. */
+  const typing = throttle(() => { window.alicia.presence.typing(); }, TYPING_INTERVAL_MS);
 
   onMount(() => {
     input?.focus();
@@ -71,7 +74,7 @@
     bind:this={input}
     bind:value={text}
     onkeydown={handleKeydown}
-    oninput={() => { window.alicia.presence.typing(); }}
+    oninput={typing}
     rows="2"
     placeholder={ready ? "Écris à Alicia…" : "Connexion à Alicia…"}
     aria-label="Message pour Alicia"

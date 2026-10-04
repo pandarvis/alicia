@@ -3,6 +3,7 @@
   import { untrack } from "svelte";
   import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
+  import { throttle, TYPING_INTERVAL_MS } from "../lib/throttle.ts";
 
   let { store, status }: { store: ChatStore; status: ConnectionStatus } = $props();
   let text = $state("");
@@ -10,6 +11,8 @@
   const canSend = $derived(ready && !store.busy && !store.loading && text.trim() !== "");
   let textarea = $state<HTMLTextAreaElement | null>(null);
   let previousStatus = untrack(() => status);
+  /** Typing is reported a few times a second at most, not on every key. */
+  const typing = throttle(() => { window.alicia.presence.typing(); }, TYPING_INTERVAL_MS);
 
   // Back online after a drop: give the focus back to the composer, unless the user is elsewhere.
   $effect(() => {
@@ -46,7 +49,7 @@
     bind:value={text}
     bind:this={textarea}
     onkeydown={handleKeydown}
-    oninput={() => { window.alicia.presence.typing(); }}
+    oninput={typing}
     rows="1"
     placeholder={ready ? "Demande à Alicia…" : "Connexion à Alicia…"}
     aria-label="Message pour Alicia"

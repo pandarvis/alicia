@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { SettingsController } from "../src/main/settings-controller.ts";
 import { Settings, type SettingsSnapshot } from "../src/shared/settings.ts";
 
-function setup(initial: Partial<Settings> = {}, taken: string[] = []) {
+/** `osLoginItem`: what Windows says about the login item (null: cannot tell, as in a dev build). */
+function setup(initial: Partial<Settings> = {}, taken: string[] = [], osLoginItem: boolean | null = null) {
   let saved: Settings = { ...Settings.parse({}), ...initial };
   const disk = { failing: false };
   const registered = new Set<string>();
@@ -24,6 +25,7 @@ function setup(initial: Partial<Settings> = {}, taken: string[] = []) {
       },
       unregisterShortcut: (accelerator) => { registered.delete(accelerator); },
       setLoginItem: (open) => { loginItems.push(open); },
+      isLoginItemEnabled: () => osLoginItem,
       onChange: (snapshot) => { changes.push(snapshot); },
     },
   );
@@ -35,12 +37,47 @@ afterEach(() => {
 });
 
 describe("SettingsController", () => {
-  test("start registers the saved shortcut and re-applies the login item", () => {
-    const { controller, registered, loginItems } = setup({ launchAtStartup: true });
+  test("start registers the saved shortcut and never writes the login item", () => {
+    const { controller, registered, loginItems, changes } = setup({ launchAtStartup: true }, [], true);
     controller.start();
     expect([...registered]).toEqual(["Ctrl+Alt+A"]);
     expect(controller.snapshot.shortcutActive).toBe(true);
-    expect(loginItems).toEqual([true]);
+    expect(loginItems).toEqual([]);
+    expect(changes).toEqual([]);
+  });
+
+  test("at start Windows wins: a login item removed outside the app unticks the setting, saved", () => {
+    const { controller, loginItems, changes, saved } = setup({ launchAtStartup: true }, [], false);
+    controller.start();
+    expect(controller.snapshot.settings.launchAtStartup).toBe(false);
+    expect(saved().launchAtStartup).toBe(false);
+    expect(loginItems).toEqual([]);
+    expect(changes.at(-1)?.settings.launchAtStartup).toBe(false);
+  });
+
+  test("at start Windows wins: a login item added outside the app ticks the setting", () => {
+    const { controller, saved } = setup({ launchAtStartup: false }, [], true);
+    controller.start();
+    expect(controller.snapshot.settings.launchAtStartup).toBe(true);
+    expect(saved().launchAtStartup).toBe(true);
+  });
+
+  test("when Windows cannot tell (dev build), the saved choice stays as it is", () => {
+    const { controller, loginItems, changes } = setup({ launchAtStartup: true }, [], null);
+    controller.start();
+    expect(controller.snapshot.settings.launchAtStartup).toBe(true);
+    expect(loginItems).toEqual([]);
+    expect(changes).toEqual([]);
+  });
+
+  test("the login item read at start is followed even when it cannot be saved, without throwing", () => {
+    const { controller, disk, saved } = setup({ launchAtStartup: true }, [], false);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    disk.failing = true;
+    expect(() => { controller.start(); }).not.toThrow();
+    expect(controller.snapshot.settings.launchAtStartup).toBe(false);
+    expect(saved().launchAtStartup).toBe(true);
+    expect(logged).toHaveBeenCalledOnce();
   });
 
   test("a shortcut held by another app at start is reported, not fatal", () => {

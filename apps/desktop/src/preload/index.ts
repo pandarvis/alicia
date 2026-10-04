@@ -44,6 +44,8 @@ const bridge: AliciaBridge = {
     return typeof raw === "string" ? raw : "PC";
   },
   onSessionChanged: (listener) => subscribe(PUSH.session, StoredSession.nullable(), listener),
+  paired: () => call(z.boolean(), INVOKE.paired),
+  onPairedChanged: (listener) => subscribe(PUSH.paired, z.boolean(), listener),
   brain: {
     async status() {
       const raw: unknown = await ipcRenderer.invoke(INVOKE.brainStatus);

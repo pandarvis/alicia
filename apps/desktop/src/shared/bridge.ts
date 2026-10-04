@@ -60,6 +60,9 @@ export interface AliciaBridge {
   deviceName(): Promise<string>;
   /** Paired or signed out, whichever window did it. */
   onSessionChanged(listener: (session: StoredSession | null) => void): Unsubscribe;
+  /** Whether the device is paired, for windows that may not read the session (Spotlight). */
+  paired(): Promise<boolean>;
+  onPairedChanged(listener: (paired: boolean) => void): Unsubscribe;
   brain: BrainBridge;
   presence: PresenceBridge;
   app: AppBridge;
@@ -70,6 +73,7 @@ export interface AliciaBridge {
 /** Page → main process (ipcRenderer.invoke); every handler checks the sender and validates the payload. */
 export const INVOKE = {
   getSession: "session:get",
+  paired: "session:paired",
   saveSession: "session:save",
   clearSession: "session:clear",
   deviceName: "device:name",
@@ -90,6 +94,7 @@ export const INVOKE = {
 /** Main process → pages (webContents.send); the preload validates every payload. */
 export const PUSH = {
   session: "push:session",
+  paired: "push:paired",
   brainEvent: "push:brain-event",
   brainStatus: "push:brain-status",
   presence: "push:presence",

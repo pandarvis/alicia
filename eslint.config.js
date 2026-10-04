@@ -1,6 +1,12 @@
+import { builtinModules } from "node:module";
 import svelte from "eslint-plugin-svelte";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+
+/** Node's built-in modules, written without `node:` (`fs`, `path`…); `node:*` is banned by pattern. */
+function bannedBuiltins(message) {
+  return builtinModules.map((name) => ({ name, message }));
+}
 
 export default tseslint.config(
   { ignores: ["**/node_modules/**", "**/drizzle/**", "**/out/**", ".superpowers/**"] },
@@ -33,8 +39,21 @@ export default tseslint.config(
     files: ["apps/desktop/src/shared/**", "apps/desktop/src/renderer/**"],
     rules: {
       "no-restricted-imports": ["error", {
-        paths: [{ name: "electron", message: "Pages and shared code cannot use Electron: go through window.alicia." }],
+        paths: [
+          { name: "electron", message: "Pages and shared code cannot use Electron: go through window.alicia." },
+          ...bannedBuiltins("Pages and shared code cannot use Node modules."),
+        ],
         patterns: [{ group: ["node:*"], message: "Pages and shared code cannot use Node modules." }],
+      }],
+    },
+  },
+  {
+    // The preload runs sandboxed: only Electron's renderer modules, no Node modules.
+    files: ["apps/desktop/src/preload/**"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        paths: bannedBuiltins("The sandboxed preload cannot use Node modules."),
+        patterns: [{ group: ["node:*"], message: "The sandboxed preload cannot use Node modules." }],
       }],
     },
   },

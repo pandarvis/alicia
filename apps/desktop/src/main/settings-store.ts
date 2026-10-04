@@ -1,5 +1,5 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { Settings } from "../shared/settings.ts";
+import { Settings, StrictSettings } from "../shared/settings.ts";
 
 export interface SettingsStoreOptions {
   /** The rename that publishes the new file (a fake in tests). */
@@ -43,9 +43,11 @@ export class SettingsStore {
 
   /** Throws when the file cannot be written; the previous file is then left untouched. */
   save(settings: Settings): void {
+    // Strict: broken settings are a bug to surface, never silently replaced by defaults on disk.
+    const valid = StrictSettings.parse(settings);
     // Write then rename, so a crash never leaves a half-written file.
     const temporary = `${this.#path}.tmp`;
-    writeFileSync(temporary, JSON.stringify(Settings.parse(settings), null, 2));
+    writeFileSync(temporary, JSON.stringify(valid, null, 2));
     try {
       this.#publish(temporary);
     } catch (error) {

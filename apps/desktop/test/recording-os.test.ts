@@ -51,6 +51,15 @@ describe("RecordingOs", () => {
     }).success).toBe(false);
   });
 
+  test("like a fresh Windows profile, no login item until the app writes one", () => {
+    const os = new RecordingOs();
+    expect(os.isLoginItemEnabled()).toBe(false);
+    os.setLoginItem(true);
+    expect(os.isLoginItemEnabled()).toBe(true);
+    os.setLoginItem(false);
+    expect(os.isLoginItemEnabled()).toBe(false);
+  });
+
   test("an unregistered shortcut is gone", () => {
     const os = new RecordingOs();
     os.registerShortcut("Ctrl+Alt+A", () => undefined);

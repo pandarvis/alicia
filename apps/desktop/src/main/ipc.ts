@@ -7,6 +7,7 @@ import { DragDelta } from "../shared/holo.ts";
 import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
 import type { Surface } from "../shared/surface.ts";
 import type { BrainHub } from "./brain-hub.ts";
+import { mayReadSession } from "./event-routing.ts";
 import type { Presence } from "./presence.ts";
 import type { SettingsController } from "./settings-controller.ts";
 import type { WindowManager } from "./windows.ts";
@@ -14,7 +15,7 @@ import type { WindowManager } from "./windows.ts";
 export interface IpcDependencies {
   /** Only our own page (any surface) may call the main process. */
   isTrusted(event: IpcMainInvokeEvent): boolean;
-  session: { get(): StoredSession | null; save(raw: unknown): SaveSessionResult; clear(): void };
+  session: { get(): StoredSession | null; paired(): boolean; save(raw: unknown): SaveSessionResult; clear(): void };
   windows: WindowManager;
   hub: BrainHub;
   presence: Presence;
@@ -40,7 +41,12 @@ export function registerIpc(deps: IpcDependencies): void {
     return surface;
   }
 
-  handle(INVOKE.getSession, NONE, () => deps.session.get());
+  // The device token only reaches the windows that need it.
+  handle(INVOKE.getSession, NONE, (_none, sender) => {
+    if (!mayReadSession(surfaceOf(sender))) throw new Error("Session not available to this window");
+    return deps.session.get();
+  });
+  handle(INVOKE.paired, NONE, () => deps.session.paired());
   // An invalid session is answered with a reason, not an exception (the pairing screen explains it).
   handle(INVOKE.saveSession, z.unknown(), (raw) => deps.session.save(raw));
   handle(INVOKE.clearSession, NONE, () => {

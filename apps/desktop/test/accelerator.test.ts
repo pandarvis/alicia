@@ -81,6 +81,25 @@ describe("captureShortcut", () => {
     expect(captureShortcut(press("Dead", "BracketLeft", { ctrlKey: true, altKey: true }))).toEqual({ ok: false, reason: "types_character" });
   });
 
+  test("Ctrl+Alt on a key whose AltGr layer is empty falls back to the physical key, when the layout says so", () => {
+    // French AZERTY: AltGr+& types nothing, so the key reports its base character.
+    const azerty = new Map([["Digit1", "&"], ["Digit0", "à"], ["KeyE", "e"]]);
+    expect(captureShortcut(press("&", "Digit1", { ctrlKey: true, altKey: true }), azerty))
+      .toEqual({ ok: true, accelerator: "Ctrl+Alt+1" });
+    // AltGr produced something new: still refused.
+    expect(captureShortcut(press("@", "Digit0", { ctrlKey: true, altKey: true }), azerty))
+      .toEqual({ ok: false, reason: "types_character" });
+    expect(captureShortcut(press("€", "KeyE", { ctrlKey: true, altKey: true }), azerty))
+      .toEqual({ ok: false, reason: "types_character" });
+  });
+
+  test("without the keyboard layout, Ctrl+Alt on a character stays refused (it may be an AltGr character)", () => {
+    expect(captureShortcut(press("&", "Digit1", { ctrlKey: true, altKey: true })))
+      .toEqual({ ok: false, reason: "types_character" });
+    expect(captureShortcut(press("&", "Digit1", { ctrlKey: true, altKey: true }), new Map()))
+      .toEqual({ ok: false, reason: "types_character" });
+  });
+
   test("anything else is not a shortcut", () => {
     expect(captureShortcut(press("k", "KeyK", { ctrlKey: true }))).toEqual({ ok: false, reason: "not_a_shortcut" });
   });

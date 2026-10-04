@@ -50,6 +50,14 @@ describe("SettingsStore", () => {
     expect(readdirSync(dir)).toEqual(["settings.json"]);
   });
 
+  test("saving broken settings is a bug: refused, the previous file is left as it was", () => {
+    const { dir, path, store } = setup();
+    store.save({ ...DEFAULTS, showHolo: false });
+    expect(() => { store.save({ ...DEFAULTS, shortcut: "Ctrl+C" }); }).toThrow();
+    expect(new SettingsStore(path).load()).toEqual({ ...DEFAULTS, showHolo: false });
+    expect(readdirSync(dir)).toEqual(["settings.json"]);
+  });
+
   test("a broken field falls back to its default, the others are kept", () => {
     const { path, store } = setup();
     writeFileSync(path, JSON.stringify({ shortcut: "Ctrl+Hyper+A", launchAtStartup: true, showHolo: "yes", holoAnchor: { x: 10, y: 20 } }));

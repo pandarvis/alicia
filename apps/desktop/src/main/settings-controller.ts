@@ -12,6 +12,8 @@ export interface SettingsPorts {
   registerShortcut(accelerator: string): boolean;
   unregisterShortcut(accelerator: string): void;
   setLoginItem(openAtLogin: boolean): void;
+  /** Whether Windows starts the app at login; null when it cannot tell (a dev build has no login item). */
+  isLoginItemEnabled(): boolean | null;
   onChange(snapshot: SettingsSnapshot): void;
 }
 
@@ -33,12 +35,21 @@ export class SettingsController {
   }
 
   /**
-   * Registers the saved shortcut (another app may already hold it: reported in the snapshot) and re-applies the
-   * login item, in case it was changed outside the app.
+   * Registers the saved shortcut (another app may already hold it: reported in the snapshot) and reads the login
+   * item back from Windows, which wins: the person may have turned it off in Windows's startup apps, and the app
+   * must not turn it on again behind their back. Only `update` ever writes the login item. Never throws.
    */
   start(): void {
     this.#shortcutActive = this.#ports.registerShortcut(this.#settings.shortcut);
-    this.#ports.setLoginItem(this.#settings.launchAtStartup);
+    const launchAtStartup = this.#ports.isLoginItemEnabled();
+    if (launchAtStartup === null || launchAtStartup === this.#settings.launchAtStartup) return;
+    this.#settings = { ...this.#settings, launchAtStartup };
+    try {
+      this.#store.save(this.#settings);
+    } catch (error) {
+      console.error("login item state could not be saved", error);
+    }
+    this.#ports.onChange(this.snapshot);
   }
 
   /**

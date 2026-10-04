@@ -110,8 +110,12 @@ export interface Launched {
   page: Page;
 }
 
-export async function launch(userData: string, extraEnv: Readonly<Record<string, string>> = {}): Promise<Launched> {
-  const app = await electron.launch({ args: [MAIN], env: appEnv(userData, extraEnv) });
+export async function launch(
+  userData: string,
+  extraEnv: Readonly<Record<string, string>> = {},
+  extraArgs: readonly string[] = [],
+): Promise<Launched> {
+  const app = await electron.launch({ args: [MAIN, ...extraArgs], env: appEnv(userData, extraEnv) });
   cleanups.push(async () => {
     await app.close();
   });
@@ -185,14 +189,25 @@ export async function recorded(app: ElectronApplication): Promise<RecordedState>
 const electronBinary: unknown = createRequire(import.meta.url)("electron");
 
 /** Starts Alicia again on the same profile, like a second click on its shortcut; resolves with its exit code. */
-export function secondInstance(userData: string): Promise<number | null> {
+export function secondInstance(userData: string, extraArgs: readonly string[] = []): Promise<number | null> {
   if (typeof electronBinary !== "string") throw new Error("Electron binary not found");
-  const child = spawn(electronBinary, [MAIN], { env: appEnv(userData), stdio: "ignore" });
+  const child = spawn(electronBinary, [MAIN, ...extraArgs], { env: appEnv(userData), stdio: "ignore" });
   return new Promise((resolve, reject) => {
     child.once("exit", (code) => {
       resolve(code);
     });
     child.once("error", reject);
+  });
+}
+
+/** Resolves when the app's process has exited. */
+export function exited(app: ElectronApplication): Promise<void> {
+  const child = app.process();
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    child.once("exit", () => {
+      resolve();
+    });
   });
 }
 
