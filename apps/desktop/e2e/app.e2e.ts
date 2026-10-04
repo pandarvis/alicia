@@ -314,7 +314,7 @@ test("Souvenirs: a memory added by hand, then a conversation deleted from the me
   await page.getByTestId("message-user").filter({ hasText: ASKED }).waitFor();
   const row = page.getByTestId("conversation-list").locator("li").filter({ hasText: ASKED });
   const trash = row.getByTestId("delete-conversation");
-  // The 🗑 fades in on hover; activated from the keyboard, so a slow paint of the hover cannot misplace a click.
+  // The trash button fades in on hover; activated from the keyboard, so a slow paint of the hover cannot misplace a click.
   await trash.press("Enter");
   await page.getByTestId("delete-conversation-yes").click();
   await page.getByTestId("chat-welcome").waitFor();

@@ -185,7 +185,11 @@
                 aria-describedby={refusal?.id === conversation.id ? `${uid}-refusal` : undefined}
                 data-conversation-id={conversation.id}
                 data-testid="delete-conversation"
-              >🗑</button>
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                  <path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12a2 2 0 0 0 2 1.8h7a2 2 0 0 0 2-1.8l1-12M9 7V4.8A.8.8 0 0 1 9.8 4h4.4a.8.8 0 0 1 .8.8V7" />
+                </svg>
+              </button>
             {/if}
           </div>
           {#if refusal?.id === conversation.id}
@@ -241,14 +245,16 @@
     flex: 1; min-width: 0; padding: 7px 10px; color: var(--cream-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   li.active .open { color: var(--cream); font-weight: 700; }
-  /* The 🗑 shows on hover and on keyboard focus; it covers the end of the title, on the row's background. */
+  /* The trash shows on hover and on keyboard focus; the title then stops short of it. */
+  li:hover .open, li:focus-within .open { padding-right: 34px; }
   .delete {
-    position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
-    padding: 3px 7px; font-size: 13px; opacity: 0; pointer-events: none;
-    background: var(--surface);
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+    color: var(--muted); opacity: 0; pointer-events: none;
   }
-  li:hover .delete:not(:disabled), .delete:focus-visible { opacity: 0.75; pointer-events: auto; }
-  .delete:hover:not(:disabled), .delete:focus-visible { opacity: 1; background: var(--surface-raised); }
+  .delete svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  li:hover .delete:not(:disabled), .delete:focus-visible { opacity: 1; pointer-events: auto; }
+  .delete:hover:not(:disabled), .delete:focus-visible { color: var(--amber); background: var(--surface-raised); }
   .ask { flex: 1; display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; font-size: 13px; }
   .ask .question { flex: 1; color: var(--cream); font-weight: 700; }
   .ask button { padding: 3px 10px; }
