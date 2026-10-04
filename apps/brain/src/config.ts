@@ -10,7 +10,9 @@ export const ConfigSchema = z.object({
   host: z.string().default("0.0.0.0"),
   dataDir: z.string().default("./data"),
   timezone: z.string().default("Europe/Paris"),
-  people: z.array(Person).min(1),
+  people: z.array(Person).min(1).refine((list) => list.every((p) => p.id !== "common"), {
+    message: "« common » est réservé à la mémoire commune : choisis un autre identifiant.",
+  }),
   engine: z.object({ mode: z.enum(["subscription", "api_key"]) }),
   models: z
     .object({ sonnet: z.string().min(1), opus: z.string().min(1) })

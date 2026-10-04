@@ -8,6 +8,20 @@
       "when": 1791125452541,
       "tag": "0000_hard_wallop",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791132812270,
+      "tag": "0001_productive_thaddeus_ross",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791132818088,
+      "tag": "0002_memories_fts",
+      "breakpoints": true
     }
   ]
 }

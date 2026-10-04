@@ -10,6 +10,10 @@ engine:
 `;
 
 describe("parseConfig", () => {
+  test("'common' is reserved and can't be a person id", () => {
+    expect(() => parseConfig("people: [{ id: common, name: Tous }]\nengine: { mode: subscription }")).toThrow(/common/);
+  });
+
   test("applies the defaults", () => {
     const c = parseConfig(MINIMAL_YAML);
     expect(c.port).toBe(8780);

@@ -2,6 +2,9 @@ import { describe, expect, test } from "vitest";
 import {
   ClientMessage,
   ConversationSummary,
+  MEMORY_KINDS,
+  MemoryPatch,
+  MemorySummary,
   PairingRequest,
   Person,
   PersonId,
@@ -128,5 +131,23 @@ describe("HTTP", () => {
     expect(
       ConversationSummary.safeParse({ id: UUID, title: "t", updatedAt: "2026-10-04T12:00:00Z" }).success,
     ).toBe(true);
+  });
+});
+
+describe("memory", () => {
+  test("five kinds", () => {
+    expect(MEMORY_KINDS).toEqual(["rule", "preference", "habit", "fact", "event"]);
+  });
+  test("summary", () => {
+    expect(MemorySummary.safeParse({
+      id: "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192", scope: "personal", kind: "preference", text: "Aime les lasagnes",
+      pinned: false, createdAt: "2026-10-04T13:30:00.000Z", updatedAt: "2026-10-04T13:30:00.000Z", recallCount: 2,
+    }).success).toBe(true);
+  });
+  test("patch is strict and bounded", () => {
+    expect(MemoryPatch.safeParse({ pinned: true }).success).toBe(true);
+    expect(MemoryPatch.safeParse({ text: "" }).success).toBe(false);
+    expect(MemoryPatch.safeParse({ scope: "elodie" }).success).toBe(false);
+    expect(MemoryPatch.safeParse({ admin: true }).success).toBe(false);
   });
 });
