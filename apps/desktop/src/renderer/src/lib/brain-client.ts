@@ -13,11 +13,28 @@ export class UnauthorizedError extends Error {
   }
 }
 
-export function normalizeServerUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, "");
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+const PAIRING_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Cleans what the user typed into a brain address: adds `http://` when no scheme is given,
+ * lowercases the scheme, drops query, fragment and trailing slashes.
+ * Returns null when it is not a usable http(s) URL.
+ */
+export function normalizeServerUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
+/** Takes an already-normalized server URL. */
 export function webSocketUrl(serverUrl: string): string {
   return `${serverUrl.replace(/^http/i, "ws")}/ws`;
 }
@@ -35,18 +52,22 @@ export async function pair(
   deviceName: string,
 ): Promise<PairingResult> {
   const serverUrl = normalizeServerUrl(rawServerUrl);
-  let response: Response;
+  if (serverUrl === null) return { ok: false, reason: "invalid_request" };
+  let payload: unknown;
   try {
-    response = await fetchFn(`${serverUrl}/pairing`, {
+    const response = await fetchFn(`${serverUrl}/pairing`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code, deviceName }),
+      signal: AbortSignal.timeout(PAIRING_TIMEOUT_MS),
     });
+    if (!response.ok) return { ok: false, reason: FAILURE_BY_STATUS[response.status] ?? "unreachable" };
+    payload = await response.json();
   } catch {
+    // Network failure, timeout, or a body that is not JSON: the brain cannot be reached properly.
     return { ok: false, reason: "unreachable" };
   }
-  if (!response.ok) return { ok: false, reason: FAILURE_BY_STATUS[response.status] ?? "unreachable" };
-  const parsed = PairingResponse.safeParse(await response.json());
+  const parsed = PairingResponse.safeParse(payload);
   if (!parsed.success) return { ok: false, reason: "unreachable" };
   return { ok: true, session: { serverUrl, token: parsed.data.token, person: parsed.data.person } };
 }
@@ -70,8 +91,11 @@ export class BrainApi {
   }
 
   async #get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    const response = await this.#fetch(`${this.#session.serverUrl}${path}`, {
+    // Called as a plain function: native fetch throws "Illegal invocation" when `this` is not the global.
+    const fetchFn = this.#fetch;
+    const response = await fetchFn(`${this.#session.serverUrl}${path}`, {
       headers: { authorization: `Bearer ${this.#session.token}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (response.status === 401) throw new UnauthorizedError();
     if (!response.ok) throw new Error(`Brain answered HTTP ${response.status} on ${path}`);
