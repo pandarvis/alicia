@@ -241,3 +241,103 @@ describe("MemoryStore warm-up", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("trash", () => {
+  test("forgotten memories are listed for 30 days, then purged from the list", async () => {
+    const { store, time } = setup();
+    const result = await remember(store, "kevin", "Rendez-vous chez le dentiste mardi");
+    if (result.status !== "created") throw new Error("not created");
+    store.forget("kevin", result.memory.id);
+    expect(store.listForgotten("kevin").map((m) => m.id)).toEqual([result.memory.id]);
+    expect(store.listForgotten("elodie")).toEqual([]);
+    time.advance(31 * 24 * 3_600_000);
+    expect(store.listForgotten("kevin")).toEqual([]);
+  });
+
+  test("the trash lists newest forgotten first, and includes common memories", async () => {
+    const { store, time } = setup();
+    const a = await remember(store, "kevin", "Premier souvenir", "common");
+    const b = await remember(store, "kevin", "Second souvenir");
+    const c = await remember(store, "kevin", "Souvenir resté actif");
+    if (a.status !== "created" || b.status !== "created" || c.status !== "created") throw new Error("not created");
+    store.forget("kevin", a.memory.id);
+    time.advance(1000);
+    store.forget("kevin", b.memory.id);
+    expect(store.listForgotten("kevin").map((m) => m.id)).toEqual([b.memory.id, a.memory.id]);
+    expect(store.listForgotten("elodie").map((m) => m.id)).toEqual([a.memory.id]);
+  });
+
+  test("restore brings it back; not for someone else; not after 30 days", async () => {
+    const { store, time } = setup();
+    const a = await remember(store, "kevin", "Kévin boit du thé le matin");
+    const b = await remember(store, "kevin", "Kévin court le dimanche");
+    if (a.status !== "created" || b.status !== "created") throw new Error("not created");
+    store.forget("kevin", a.memory.id);
+    store.forget("kevin", b.memory.id);
+    expect(store.restore("elodie", a.memory.id)).toBeUndefined();
+    expect(store.restore("kevin", a.memory.id)?.forgottenAt).toBeNull();
+    expect(await store.search("kevin", "thé")).toHaveLength(1);
+    time.advance(31 * 24 * 3_600_000);
+    expect(store.restore("kevin", b.memory.id)).toBeUndefined();
+  });
+
+  test("restoring an active memory does nothing", async () => {
+    const { store } = setup();
+    const result = await remember(store, "kevin", "Kévin boit du thé le matin");
+    if (result.status !== "created") throw new Error("not created");
+    expect(store.restore("kevin", result.memory.id)).toBeUndefined();
+  });
+});
+
+describe("explain", () => {
+  test("same order as search, with reasons, and no recall counted", async () => {
+    const { store } = setup();
+    await remember(store, "kevin", "Kévin adore les lasagnes");
+    await remember(store, "kevin", "Les lasagnes de mamie sont les meilleures");
+    const explained = await store.explain("kevin", "lasagnes");
+    const searched = await store.search("kevin", "lasagnes", { recall: false });
+    expect(explained.map((e) => e.memory.id)).toEqual(searched.map((m) => m.id));
+    expect(explained.map((e) => e.rank)).toEqual([1, 2]);
+    expect(explained.every((e) => e.textMatch)).toBe(true);
+    expect(explained[0]?.similarity).toBeGreaterThan(0);
+    expect(explained[0]?.memory.recallCount).toBe(0);
+  });
+
+  test("respects cloisonnement", async () => {
+    const { store } = setup();
+    await remember(store, "kevin", "Surprise pour Élodie");
+    expect(await store.explain("elodie", "surprise")).toEqual([]);
+  });
+
+  test("honours the limit like search does", async () => {
+    const { store } = setup();
+    await remember(store, "kevin", "Kévin adore les lasagnes");
+    await remember(store, "kevin", "Les lasagnes de mamie sont les meilleures");
+    expect(await store.explain("kevin", "lasagnes", 1)).toHaveLength(1);
+    expect(await store.explain("kevin", "lasagnes", 0)).toEqual([]);
+  });
+
+  test("a vector-only hit is not a text match; a memory from another model has similarity 0", async () => {
+    const db = createTestDb();
+    const { clock } = createTestClock();
+    const older = new MemoryStore(db, constantEmbedder("old-model"), clock);
+    const current = new MemoryStore(db, constantEmbedder("new-model"), clock);
+    await remember(older, "kevin", "Kévin adore les lasagnes");
+    await remember(current, "kevin", "Le chat dort sur le canapé");
+
+    const vectorOnly = await current.explain("kevin", "météo demain");
+    expect(vectorOnly.map((e) => [e.memory.text, e.textMatch])).toEqual([["Le chat dort sur le canapé", false]]);
+    expect(vectorOnly[0]?.similarity).toBeCloseTo(1, 5);
+
+    const textOnly = await current.explain("kevin", "lasagnes");
+    const old = textOnly.find((e) => e.memory.text === "Kévin adore les lasagnes");
+    expect(old).toMatchObject({ textMatch: true, similarity: 0 });
+  });
+
+  test("explaining never touches the recall bookkeeping in the database", async () => {
+    const { store } = setup();
+    await remember(store, "kevin", "Kévin adore les lasagnes");
+    await store.explain("kevin", "lasagnes");
+    expect(store.list("kevin", {}).map((m) => [m.recallCount, m.lastRecalledAt])).toEqual([[0, null]]);
+  });
+});

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MemoryKind, MemoryScope } from "@alicia/protocol";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/open.ts";
 import { memories } from "../db/schema.ts";
@@ -64,6 +64,23 @@ export interface MemoryStoreOptions {
    * (2026-10-04): related query/memory ≈ 0.83–0.86, unrelated ≈ 0.78–0.81.
    */
   minSimilarity?: number;
+}
+
+/** One search hit with the reasons it was found. */
+export interface SearchExplanation {
+  memory: Memory;
+  /** 1-based, same order as `search`. */
+  rank: number;
+  /** Found by the full-text index. */
+  textMatch: boolean;
+  /** Cosine with the query; 0 when the memory's vector comes from another embedding model. */
+  similarity: number;
+}
+
+interface Ranking {
+  ids: string[];
+  textMatches: ReadonlySet<string>;
+  similarities: ReadonlyMap<string, number>;
 }
 
 export interface SheetMemories {
@@ -213,39 +230,52 @@ export class MemoryStore {
 
   /** Hybrid search (full text + similarity) within the person's scopes; counts each hit as a recall. */
   async search(personId: string, query: string, options: SearchOptions = {}): Promise<Memory[]> {
-    const scopes = this.#scopes(personId);
-    const textRanked = this.#fullText(query, scopes);
-    const vector = await this.#embed(query, "query");
-    const vectorRanked = this.#comparable(scopes)
-      .map((row) => ({ id: row.id, similarity: cosine(vector, fromBlob(row.embedding)) }))
-      .filter((hit) => hit.similarity >= this.#minSimilarity)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, CANDIDATES)
-      .map((hit) => hit.id);
-
-    const ids = fuse([textRanked, vectorRanked]).slice(0, Math.max(0, options.limit ?? SEARCH_LIMIT));
+    const { ids } = await this.#rank(personId, query, options.limit ?? SEARCH_LIMIT);
     if (ids.length === 0) return [];
-    // The embedding was awaited: re-check reach, a memory may have moved or been forgotten meanwhile.
-    const found = and(inArray(memories.id, ids), this.#reachable(personId));
     if (options.recall ?? true) {
+      // The embedding was awaited: re-check reach, a memory may have moved or been forgotten meanwhile.
       this.#db
         .update(memories)
         .set({ recallCount: sql`${memories.recallCount} + 1`, lastRecalledAt: this.#clock() })
-        .where(found)
+        .where(and(inArray(memories.id, ids), this.#reachable(personId)))
         .run();
     }
-    const rows = new Map(
-      this.#db
-        .select()
-        .from(memories)
-        .where(found)
-        .all()
-        .map((row) => [row.id, row]),
-    );
-    return ids.flatMap((id) => {
-      const row = rows.get(id);
-      return row === undefined ? [] : [strip(row)];
-    });
+    return this.#hydrate(personId, ids);
+  }
+
+  /**
+   * Exactly what `search` would return for this question, with the reasons. It shares the ranking
+   * with `search` and never counts as a recall, so a bench screen cannot drift from what Alicia sees.
+   */
+  async explain(personId: string, query: string, limit: number = SEARCH_LIMIT): Promise<SearchExplanation[]> {
+    const { ids, textMatches, similarities } = await this.#rank(personId, query, limit);
+    return this.#hydrate(personId, ids).map((memory, index) => ({
+      memory,
+      rank: index + 1,
+      textMatch: textMatches.has(memory.id),
+      similarity: similarities.get(memory.id) ?? 0,
+    }));
+  }
+
+  /** Forgotten memories still recoverable (forgotten less than 30 days ago), newest first. */
+  listForgotten(personId: string): Memory[] {
+    return this.#db
+      .select()
+      .from(memories)
+      .where(and(inArray(memories.scope, this.#scopes(personId)), this.#recoverable()))
+      .orderBy(desc(memories.forgottenAt), sql`rowid desc`)
+      .all()
+      .map(strip);
+  }
+
+  /** Brings a forgotten memory back (same reach rules, within 30 days of forgetting). */
+  restore(personId: string, id: string): Memory | undefined {
+    const { changes } = this.#db
+      .update(memories)
+      .set({ forgottenAt: null, updatedAt: this.#clock() })
+      .where(and(eq(memories.id, id), inArray(memories.scope, this.#scopes(personId)), this.#recoverable()))
+      .run();
+    return changes === 1 ? this.get(personId, id) : undefined;
   }
 
   /** Edits a visible memory; a scope change moves it between common and the person's own. */
@@ -322,6 +352,48 @@ export class MemoryStore {
       pinnedCommon: pinnedOrRule.filter((m) => m.scope === COMMON && m.kind !== "rule"),
       pinnedPersonal: pinnedOrRule.filter((m) => m.scope === personId),
     };
+  }
+
+  /** SQL condition: forgotten, but less than 30 days ago. */
+  #recoverable() {
+    return and(isNotNull(memories.forgottenAt), gte(memories.forgottenAt, this.#clock() - FORGET_RETENTION_MS));
+  }
+
+  /**
+   * The one ranking behind `search` and `explain`: full text and similarity, fused. Also returns
+   * why each id was found (text match, similarity with the query when its vector is comparable).
+   */
+  async #rank(personId: string, query: string, limit: number): Promise<Ranking> {
+    const scopes = this.#scopes(personId);
+    const textRanked = this.#fullText(query, scopes);
+    const vector = await this.#embed(query, "query");
+    const similarities = new Map(
+      this.#comparable(scopes).map((row) => [row.id, cosine(vector, fromBlob(row.embedding))] as const),
+    );
+    const vectorRanked = [...similarities]
+      .filter(([, similarity]) => similarity >= this.#minSimilarity)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, CANDIDATES)
+      .map(([id]) => id);
+    const ids = fuse([textRanked, vectorRanked]).slice(0, Math.max(0, limit));
+    return { ids, textMatches: new Set(textRanked), similarities };
+  }
+
+  /** The reachable memories among these ids, in the same order (one may have left reach meanwhile). */
+  #hydrate(personId: string, ids: readonly string[]): Memory[] {
+    if (ids.length === 0) return [];
+    const rows = new Map(
+      this.#db
+        .select()
+        .from(memories)
+        .where(and(inArray(memories.id, [...ids]), this.#reachable(personId)))
+        .all()
+        .map((row) => [row.id, row]),
+    );
+    return ids.flatMap((id) => {
+      const row = rows.get(id);
+      return row === undefined ? [] : [strip(row)];
+    });
   }
 
   /**
