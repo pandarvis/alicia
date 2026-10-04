@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Model } from "@alicia/protocol";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/open.ts";
 import { conversations, messages, turnLog } from "../db/schema.ts";
 import type { Clock } from "../clock.ts";
+
+/** Spec, « Journal » : turn log entries are kept 90 days. */
+export const TURN_LOG_RETENTION_MS = 90 * 24 * 3_600_000;
 
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
@@ -141,5 +144,13 @@ export class ConversationRepository {
         createdAt: this.#clock(),
       })
       .run();
+  }
+
+  /** Journal rotation: deletes the turn log entries older than 90 days. Returns how many were deleted. */
+  purgeTurnLog(): number {
+    return this.#db
+      .delete(turnLog)
+      .where(lt(turnLog.createdAt, this.#clock() - TURN_LOG_RETENTION_MS))
+      .run().changes;
   }
 }

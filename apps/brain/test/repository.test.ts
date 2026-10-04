@@ -52,6 +52,22 @@ describe("ConversationRepository", () => {
     expect(repository.lastMessages(c.id, 2).map((m) => m.text)).toEqual(["2", "3"]);
   });
 
+  test("turn log rotation drops entries older than 90 days and keeps the rest", () => {
+    const { db, time, repository } = createRepository();
+    const DAY = 24 * 3_600_000;
+    const c = repository.create("kevin", "T");
+    const entry = {
+      conversationId: c.id, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1, tools: [], error: null,
+    } as const;
+    repository.logTurn(entry);
+    time.advance(89 * DAY);
+    repository.logTurn(entry);
+    time.advance(2 * DAY); // the first entry is now 91 days old, the second 2 days old
+    expect(repository.purgeTurnLog()).toBe(1);
+    expect(db.select().from(turnLog).all()).toHaveLength(1);
+    expect(repository.purgeTurnLog()).toBe(0);
+  });
+
   test("stores then clears the SDK session", () => {
     const { repository } = createRepository();
     const c = repository.create("kevin", "T");
