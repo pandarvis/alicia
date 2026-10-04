@@ -1,12 +1,17 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
+  import { fade } from "svelte/transition";
   import type { ServerEvent } from "@alicia/protocol";
   import type { StoredSession } from "../../../shared/session.ts";
+  import type { AppView } from "../lib/app-view.ts";
   import { BrainApi, UnauthorizedError, webSocketUrl } from "../lib/brain-client.ts";
   import { browserSocket, ChatConnection, type ConnectionStatus } from "../lib/chat-connection.ts";
   import { ChatStore } from "../lib/chat-store.svelte.ts";
+  import { MemoryScreen } from "../lib/memory-screen.svelte.ts";
+  import { motion } from "../lib/motion.ts";
   import ChatView from "./ChatView.svelte";
   import Composer from "./Composer.svelte";
+  import MemoryView from "./MemoryView.svelte";
   import Sidebar from "./Sidebar.svelte";
   import TitleBar from "./TitleBar.svelte";
 
@@ -26,6 +31,7 @@
   const api = new BrainApi(fetch, initialSession);
   let status = $state<ConnectionStatus>("connecting");
   let sidebarOpen = $state(true);
+  let view = $state<AppView>("chat");
   /** Set once the connection dropped, until it is ready again (resync, and the label stays "offline" during retries). */
   let wasOffline = $state(false);
   /** What the user sees: retries after a drop still read as offline, not as a fresh "connecting". */
@@ -45,8 +51,20 @@
     listConversations: () => guarded(() => api.listConversations()),
     history: (id) => guarded(() => api.history(id)),
     send: (message) => connection.send(message),
+    deleteConversation: (id) => guarded(() => api.deleteConversation(id)),
     newId: () => crypto.randomUUID(),
     schedule,
+  });
+
+  // Its own error messages are in French; a revoked device still signs out first.
+  const memories = new MemoryScreen({
+    list: (filter) => guarded(() => api.listMemories(filter)),
+    create: (input) => guarded(() => api.createMemory(input)),
+    update: (id, patch) => guarded(() => api.updateMemory(id, patch)),
+    forget: (id) => guarded(() => api.forgetMemory(id)),
+    restore: (id) => guarded(() => api.restoreMemory(id)),
+    test: (q) => guarded(() => api.testMemory(q)),
+    now: () => Date.now(),
   });
 
   function handleEvent(event: ServerEvent): void {
@@ -77,7 +95,21 @@
     onStatus: handleStatus,
   });
 
-  const title = $derived(store.conversations.find((c) => c.id === store.activeId)?.title ?? "Nouvelle conversation");
+  const title = $derived(
+    view === "memories"
+      ? "Souvenirs"
+      : (store.conversations.find((c) => c.id === store.activeId)?.title ?? "Nouvelle conversation"),
+  );
+
+  function showView(next: AppView): void {
+    view = next;
+  }
+
+  /** From a memory, back to the conversation it was remembered in. */
+  function openConversation(conversationId: string): void {
+    view = "chat";
+    void store.open(conversationId);
+  }
 
   function toggleSidebar(): void {
     sidebarOpen = !sidebarOpen;
@@ -100,11 +132,19 @@
   <TitleBar {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar} />
   <div class="body">
     {#if sidebarOpen}
-      <Sidebar {store} personName={session.person.name} onSignOut={signOut} />
+      <Sidebar {store} personName={session.person.name} {view} onView={showView} onSignOut={signOut} />
     {/if}
     <main>
-      <ChatView {store} personName={session.person.name} />
-      <Composer {store} status={shownStatus} />
+      <!-- The chat stays mounted while Souvenirs is shown: its draft and scroll position are kept. -->
+      <div class="pane chat" class:hidden={view !== "chat"} inert={view !== "chat"}>
+        <ChatView {store} personName={session.person.name} />
+        <Composer {store} status={shownStatus} />
+      </div>
+      {#if view === "memories"}
+        <div class="pane" transition:fade={{ duration: motion(180) }}>
+          <MemoryView screen={memories} onOpenConversation={openConversation} />
+        </div>
+      {/if}
     </main>
   </div>
 </div>
@@ -112,5 +152,9 @@
 <style>
   .app { height: 100%; display: flex; flex-direction: column; }
   .body { flex: 1; min-height: 0; display: flex; }
-  main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--night); }
+  /* Both views share one cell, so they cross-fade in place. */
+  main { flex: 1; min-width: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); background: var(--night); }
+  .pane { grid-area: 1 / 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .chat { transition: opacity var(--duration) ease, visibility 0s; }
+  .chat.hidden { opacity: 0; visibility: hidden; transition: opacity var(--duration) ease, visibility 0s linear var(--duration); }
 </style>

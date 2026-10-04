@@ -16,6 +16,7 @@ export interface ChatPorts {
   listConversations(): Promise<ConversationSummary[]>;
   history(conversationId: string): Promise<HistoryMessage[]>;
   send(message: SendMessage): boolean;
+  deleteConversation(conversationId: string): Promise<"deleted" | "not_found" | "busy">;
   newId(): string;
   schedule(run: () => void, ms: number): () => void;
 }
@@ -82,6 +83,29 @@ export class ChatStore {
   async resync(): Promise<void> {
     if (this.busy || this.activeId === null) return;
     await Promise.all([this.#loadHistory(this.activeId), this.refreshConversations()]);
+  }
+
+  /**
+   * Deletes a conversation for good. Gone (or already gone): it leaves the list and, if it was open,
+   * the welcome shows again. Refused while Alicia answers in it, or when the brain cannot be reached: kept, with a notice.
+   */
+  async removeConversation(conversationId: string): Promise<"deleted" | "not_found" | "busy" | "failed"> {
+    let result: "deleted" | "not_found" | "busy";
+    try {
+      result = await this.#ports.deleteConversation(conversationId);
+    } catch {
+      this.notice = "Impossible de supprimer cette conversation.";
+      return "failed";
+    }
+    if (result === "busy") {
+      this.notice = "Alicia répond dans cette conversation : réessaie après sa réponse.";
+      return result;
+    }
+    // A list fetched before the deletion would bring it back.
+    this.#refreshToken++;
+    this.conversations = this.conversations.filter((c) => c.id !== conversationId);
+    if (this.activeId === conversationId) this.startNew();
+    return result;
   }
 
   startNew(): void {

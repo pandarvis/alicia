@@ -31,6 +31,7 @@ function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {
       sent.push(m);
       return true;
     },
+    deleteConversation: () => Promise.resolve("deleted"),
     newId: () => `00000000-0000-4000-8000-00000000000${counter++}`,
     schedule: (run, ms) => {
       const t = { run, ms, cancelled: false };
@@ -341,5 +342,78 @@ describe("ChatStore", () => {
     await store.resync();
     expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
     expect(store.notice).toBe("Impossible de charger cette conversation.");
+  });
+
+  describe("removeConversation", () => {
+    const list: ConversationSummary[] = [
+      { id: CONV, title: "Lasagnes", updatedAt: "2026-10-04T13:30:00.000Z" },
+      { id: CONV_B, title: "Week-end", updatedAt: "2026-10-04T13:00:00.000Z" },
+    ];
+
+    test("deleted: leaves the list, and the open conversation goes back to the welcome", async () => {
+      const deleteConversation = vi.fn<ChatPorts["deleteConversation"]>(() => Promise.resolve("deleted"));
+      const { store, setConversations } = setup([msg("a", "Salut")], { deleteConversation });
+      setConversations(list);
+      await store.refreshConversations();
+      await store.open(CONV);
+      expect(await store.removeConversation(CONV)).toBe("deleted");
+      expect(deleteConversation).toHaveBeenCalledWith(CONV);
+      expect(store.conversations.map((c) => c.id)).toEqual([CONV_B]);
+      expect(store.activeId).toBeNull();
+      expect(store.messages).toEqual([]);
+      expect(store.notice).toBeNull();
+    });
+
+    test("not_found: leaves the list too, another open conversation stays open", async () => {
+      const { store, setConversations } = setup([msg("a", "Salut")], {
+        deleteConversation: () => Promise.resolve("not_found"),
+      });
+      setConversations(list);
+      await store.refreshConversations();
+      await store.open(CONV_B);
+      expect(await store.removeConversation(CONV)).toBe("not_found");
+      expect(store.conversations.map((c) => c.id)).toEqual([CONV_B]);
+      expect(store.activeId).toBe(CONV_B);
+      expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
+    });
+
+    test("busy: kept, with a notice", async () => {
+      const { store, setConversations } = setup([msg("a", "Salut")], {
+        deleteConversation: () => Promise.resolve("busy"),
+      });
+      setConversations(list);
+      await store.refreshConversations();
+      await store.open(CONV);
+      expect(await store.removeConversation(CONV)).toBe("busy");
+      expect(store.conversations.map((c) => c.id)).toEqual([CONV, CONV_B]);
+      expect(store.activeId).toBe(CONV);
+      expect(store.notice).toBe("Alicia répond dans cette conversation : réessaie après sa réponse.");
+    });
+
+    test("a refresh that started before the deletion does not bring it back", async () => {
+      const pending = deferred<ConversationSummary[]>();
+      let calls = 0;
+      const { store } = setup([], {
+        listConversations: () => (++calls === 1 ? Promise.resolve(list) : pending.promise),
+        deleteConversation: () => Promise.resolve("deleted"),
+      });
+      await store.refreshConversations();
+      const refresh = store.refreshConversations();
+      await store.removeConversation(CONV);
+      pending.resolve(list);
+      await refresh;
+      expect(store.conversations.map((c) => c.id)).toEqual([CONV_B]);
+    });
+
+    test("brain unreachable: kept, with a notice", async () => {
+      const { store, setConversations } = setup([], {
+        deleteConversation: () => Promise.reject(new Error("offline")),
+      });
+      setConversations(list);
+      await store.refreshConversations();
+      expect(await store.removeConversation(CONV)).toBe("failed");
+      expect(store.conversations).toHaveLength(2);
+      expect(store.notice).toBe("Impossible de supprimer cette conversation.");
+    });
   });
 });
