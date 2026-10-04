@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import { openDb } from "../src/db/open.ts";
 import { people } from "../src/db/schema.ts";
 
@@ -17,12 +18,14 @@ test("foreign keys are enforced", () => {
   ).toThrow(/FOREIGN KEY/);
 });
 
+const PlanRow = z.object({ detail: z.string() });
+
 /** SQLite's plan for a query, one line per step. */
 function plan(db: ReturnType<typeof openDb>, query: string, ...params: readonly unknown[]): string {
   return db.$client
     .prepare(`EXPLAIN QUERY PLAN ${query}`)
     .all(...params)
-    .map((row) => (row as { detail: string }).detail)
+    .map((row) => PlanRow.parse(row).detail)
     .join("\n");
 }
 
@@ -39,6 +42,11 @@ describe("hot queries use an index", () => {
     ["turn log of a deleted conversation", "SELECT id FROM turn_log WHERE conversation_id = ?", ["c"], "turn_log_conversation_idx"],
     ["turn log rotation", "SELECT id FROM turn_log WHERE created_at < ?", [0], "turn_log_created_idx"],
   ] as const)("%s", (_label, query, params, index) => {
-    expect(plan(openDb(":memory:"), query, ...params)).toContain(index);
+    const db = openDb(":memory:");
+    try {
+      expect(plan(db, query, ...params)).toContain(index);
+    } finally {
+      db.$client.close();
+    }
   });
 });

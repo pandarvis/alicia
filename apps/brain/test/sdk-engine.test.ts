@@ -232,6 +232,11 @@ describe("classifyError", () => {
       classifyError("Claude Code process exited with code 1. stderr: No conversation found with session ID: 0b6f2c1e-1111-4222-8333-944455566677"),
     ).toEqual({ code: "unreadable_session", message: "La session précédente est illisible." });
   });
+  test("resume of a session that exists but cannot be loaded → unreadable_session", () => {
+    expect(
+      classifyError("Claude Code process exited with code 1. stderr: Failed to resume session abc: transcript is corrupted").code,
+    ).toBe("unreadable_session");
+  });
   test("network failures and crashes stay engine errors", () => {
     expect(classifyError("fetch failed: ECONNRESET").code).toBe("engine");
     expect(classifyError("Claude Code process exited with code 1").code).toBe("engine");

@@ -22,10 +22,22 @@ const TITLE_LENGTH = 60;
 const RESUME_MESSAGE_COUNT = 10;
 const RESUME_MESSAGE_CHARS = 1_000;
 const RESUME_TOTAL_CHARS = 8_000;
+const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
+
+/**
+ * At most `max` UTF-16 units, the ellipsis included when cut. Never splits a surrogate pair: an emoji
+ * cut in half would leave an invalid character in the title or the prompt.
+ */
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = max - 1;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd8_00 && last <= 0xdb_ff) end -= 1;
+  return `${text.slice(0, end)}…`;
+}
 
 function resumeLine(m: Message): string {
-  const text = m.text.length > RESUME_MESSAGE_CHARS ? `${m.text.slice(0, RESUME_MESSAGE_CHARS - 1)}…` : m.text;
-  return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${text}`;
+  return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${truncate(m.text, RESUME_MESSAGE_CHARS)}`;
 }
 
 function toEngineError(cause: unknown): EngineError {
@@ -33,25 +45,26 @@ function toEngineError(cause: unknown): EngineError {
 }
 
 export function titleFrom(text: string): string {
-  const line = (text.split("\n")[0] ?? "").trim();
-  return line.length > TITLE_LENGTH ? `${line.slice(0, TITLE_LENGTH - 1)}…` : line;
+  return truncate((text.split("\n")[0] ?? "").trim(), TITLE_LENGTH);
 }
 
 /**
  * Primes a new SDK session when the previous one is lost or unreadable (spec, « Erreurs »): the last
- * exchanges stored in the database, each cut to 1,000 characters, the most recent kept first, 8,000 in all.
+ * exchanges stored in the database, each cut to 1,000 characters, the most recent kept first. The context
+ * (header, exchanges and line breaks) never exceeds 8,000 characters; the new message follows it, whole.
  */
 export function buildResumePrompt(history: readonly Message[], prompt: string): string {
   const lines: string[] = [];
-  let total = 0;
+  let total = RESUME_HEADER.length;
   for (const m of [...history].reverse()) {
     const line = resumeLine(m);
-    if (total + line.length > RESUME_TOTAL_CHARS) break;
+    // + 1: the line break before each exchange.
+    if (total + 1 + line.length > RESUME_TOTAL_CHARS) break;
     lines.unshift(line);
-    total += line.length;
+    total += 1 + line.length;
   }
   if (lines.length === 0) return prompt;
-  return `Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :\n${lines.join("\n")}\n\nNouveau message :\n${prompt}`;
+  return `${RESUME_HEADER}\n${lines.join("\n")}\n\nNouveau message :\n${prompt}`;
 }
 
 export async function* handleSend(

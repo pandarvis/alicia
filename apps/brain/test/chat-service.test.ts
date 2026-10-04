@@ -1,6 +1,6 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { buildResumePrompt, handleSend } from "../src/conversations/chat-service.ts";
+import { buildResumePrompt, handleSend, titleFrom } from "../src/conversations/chat-service.ts";
 import { ConversationRepository, type Message } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
 import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
@@ -305,11 +305,42 @@ describe("buildResumePrompt", () => {
   test("long messages are cut and the most recent ones are kept within the budget", () => {
     const history = Array.from({ length: 10 }, (_, i) => message(i, `${i}:${"x".repeat(1_500)}`));
     const prompt = buildResumePrompt(history, "Nouveau");
+    // Each line is cut to 1,000 characters of text: messages 9 to 3 fit in the budget, 2 no longer does.
     expect(prompt).toContain("Alicia : 9:");
-    expect(prompt).toContain("Utilisateur : 4:");
-    expect(prompt).not.toContain("Utilisateur : 0:");
-    expect(prompt).toContain("…");
-    expect(prompt.length).toBeLessThan(9_000);
+    expect(prompt).toContain("Alicia : 3:");
+    expect(prompt).not.toContain("Utilisateur : 2:");
+    expect(prompt).toContain(`Alicia : 9:${"x".repeat(997)}…\n`);
     expect(prompt.endsWith("Nouveau message :\nNouveau")).toBe(true);
+  });
+
+  test("the context is capped at 8,000 characters, header and line breaks included", () => {
+    // Eight lines of exactly 1,000 characters: 8,000 without the header and the line breaks.
+    const history = Array.from({ length: 8 }, (_, i) =>
+      message(i, `${i}:${"y".repeat((i % 2 === 0 ? 986 : 991) - 2)}`),
+    );
+    const prompt = buildResumePrompt(history, "Nouveau");
+    const context = prompt.slice(0, prompt.indexOf("\n\nNouveau message :"));
+    expect(context.length).toBeLessThanOrEqual(8_000);
+    expect(prompt).toContain("Alicia : 7:");
+    expect(prompt).not.toContain("Utilisateur : 0:");
+  });
+
+  test("a cut never splits an emoji in two", () => {
+    const prompt = buildResumePrompt([message(1, `${"a".repeat(998)}😀b`)], "Nouveau");
+    expect(prompt.isWellFormed()).toBe(true);
+    expect(prompt).toContain(`Alicia : ${"a".repeat(998)}…\n`);
+  });
+});
+
+describe("titleFrom", () => {
+  test("first line, trimmed, cut to 60 characters", () => {
+    expect(titleFrom("  Volets du salon  \net le reste")).toBe("Volets du salon");
+    expect(titleFrom("x".repeat(70))).toBe(`${"x".repeat(59)}…`);
+  });
+
+  test("a cut never splits an emoji in two", () => {
+    const title = titleFrom(`${"a".repeat(58)}😀 et la suite`);
+    expect(title.isWellFormed()).toBe(true);
+    expect(title).toBe(`${"a".repeat(58)}…`);
   });
 });

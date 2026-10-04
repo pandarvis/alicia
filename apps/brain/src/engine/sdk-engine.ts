@@ -19,10 +19,14 @@ const LIMIT_PATTERN = /usage limit|rate[ _]?limit|(?<!disk )quota (?:exceeded|re
 const QUOTA_MESSAGE = "Je me repose : le quota de l'abonnement est atteint.";
 /**
  * What the Claude Code process prints when `resume` names a session it cannot load (strings of the CLI
- * bundled with SDK 0.3.288, relayed by the SDK as "...exited with code 1. stderr: ..."). Re-check on every
- * SDK update, like USAGE_LIMIT_ERROR_PREFIXES.
+ * bundled with SDK 0.3.288, relayed by the SDK as "...exited with code 1. stderr: ..."):
+ * - "No conversation found with session ID: <id>": the session is unknown;
+ * - "Failed to resume session <id>[: <reason>]": it exists but could not be loaded or processed;
+ * - "--resume session load failed (...)": the same failure as logged by the CLI, kept in case it reaches stderr.
+ * The SDK only keeps the last 2,048 characters of stderr: a very chatty process could push the line out.
+ * Re-check on every SDK update, like USAGE_LIMIT_ERROR_PREFIXES.
  */
-const UNREADABLE_SESSION_PATTERN = /No conversation found with session ID|--resume session load failed/i;
+const UNREADABLE_SESSION_PATTERN = /No conversation found with session ID|Failed to resume session|--resume session load failed/i;
 const UNREADABLE_SESSION_MESSAGE = "La session précédente est illisible.";
 const STATUS_TOO_MANY_REQUESTS = 429;
 const MASKED_SECRET = "[secret]";
