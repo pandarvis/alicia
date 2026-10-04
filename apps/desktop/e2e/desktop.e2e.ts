@@ -139,3 +139,47 @@ test("Holo: follows Alicia's mood, opens a mini-chat, hides from the tray, and k
   await expect.poll(() => windowVisible(again.app, "holo"), POLL).toBe(true);
   expect(await windowBounds(again.app, "holo")).toEqual(moved);
 });
+
+test("Spotlight: the shortcut opens the bar, Enter sends, the answer comes back as a notification", async () => {
+  const brain = await startBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  expect((await recorded(app)).shortcuts).toEqual(["Ctrl+Alt+A"]);
+  await closeWindow(app, "main");
+  await expect.poll(() => windowVisible(app, "main"), POLL).toBe(false);
+
+  await callHook(app, "triggerShortcut");
+  const bar = await surfacePage(app, "spotlight");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  const input = bar.getByTestId("spotlight-input");
+  await expect.poll(() => input.evaluate((element) => element === document.activeElement), POLL).toBe(true);
+  await input.fill("Quel temps fait-il ?");
+  await input.press("Enter");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(false);
+
+  await expect.poll(async () => (await recorded(app)).notifications, POLL).toEqual([
+    { title: "Alicia", body: "Bonjour Kévin, je suis là !" },
+  ]);
+  // The notification opens the main window on that conversation.
+  await callHook(app, "clickNotification", 0);
+  await expect.poll(() => windowVisible(app, "main"), POLL).toBe(true);
+  await page.getByTestId("message-user").filter({ hasText: "Quel temps fait-il ?" }).waitFor();
+  await page.getByTestId("conversation-list").getByText("Quel temps fait-il ?").waitFor();
+});
+
+test("Spotlight: Escape closes the bar without sending, and it opens again empty", async () => {
+  const brain = await startBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await callHook(app, "triggerShortcut");
+  const bar = await surfacePage(app, "spotlight");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  await bar.getByTestId("spotlight-input").fill("Rien du tout");
+  await bar.getByTestId("spotlight-input").press("Escape");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(false);
+  expect(brain.engine.requests).toHaveLength(0);
+
+  await callHook(app, "triggerShortcut");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  await expect.poll(() => bar.getByTestId("spotlight-input").inputValue(), POLL).toBe("");
+});

@@ -3,7 +3,10 @@ import { BrowserWindow, screen, shell, type WebContents, type WebPreferences } f
 import { PUSH } from "../shared/bridge.ts";
 import type { DragDelta, HoloView, Point } from "../shared/holo.ts";
 import type { Surface } from "../shared/surface.ts";
-import { clampAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type Rect } from "./layout.ts";
+import {
+  clampAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type Rect, SPOTLIGHT_SIZE,
+  spotlightBounds,
+} from "./layout.ts";
 import type { Visibility } from "./turn-notifications.ts";
 
 const PRELOAD = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
@@ -50,6 +53,7 @@ export class WindowManager {
   readonly #options: WindowManagerOptions;
   #main: BrowserWindow | null = null;
   #holo: BrowserWindow | null = null;
+  #spotlight: BrowserWindow | null = null;
   #quitting = false;
   /** Where the collapsed Holo sits (null: the default corner). */
   #anchor: Point | null = null;
@@ -141,6 +145,26 @@ export class WindowManager {
     for (const [, window] of this.#all()) window.webContents.send(channel, payload);
   }
 
+  /** Created hidden at startup, so the shortcut shows it at once. */
+  createSpotlight(): void {
+    this.#ensureSpotlight();
+  }
+
+  /** The global shortcut: shows the bar on the screen under the pointer, or closes it. */
+  toggleSpotlight(): void {
+    const window = this.#ensureSpotlight();
+    if (window.isVisible() && !this.#hiding.has(window)) {
+      this.#requestHide(window);
+      return;
+    }
+    this.#cancelHide(window);
+    const { areas, primary } = workAreas();
+    window.setBounds(spotlightBounds(nearestWorkArea(screen.getCursorScreenPoint(), areas, primary)));
+    window.show();
+    window.focus();
+    this.#sendWhenLoaded(window, PUSH.shown);
+  }
+
   /** The remembered place of the Holo (null: default corner). */
   setHoloAnchor(anchor: Point | null): void {
     this.#anchor = anchor;
@@ -195,7 +219,10 @@ export class WindowManager {
     return { expanded, panelSide: layout.panelSide, mascot: layout.mascot };
   }
 
-  /** The page finished its exit animation. The Holo only hides when the main process asked for it. */
+  /**
+   * The page finished its exit animation (the Spotlight bar also closes itself, after Enter or Escape). The Holo
+   * only hides when the main process asked for it.
+   */
   hideSelf(contents: WebContents): void {
     const found = this.#all().find(([surface, window]) => surface !== "main" && window.webContents === contents);
     if (found === undefined) return;
@@ -206,7 +233,9 @@ export class WindowManager {
 
   /** The open windows with their surface. */
   #all(): [Surface, BrowserWindow][] {
-    const windows: [Surface, BrowserWindow | null][] = [["main", this.#main], ["holo", this.#holo]];
+    const windows: [Surface, BrowserWindow | null][] = [
+      ["main", this.#main], ["holo", this.#holo], ["spotlight", this.#spotlight],
+    ];
     return windows.filter((entry): entry is [Surface, BrowserWindow] => isAlive(entry[1]));
   }
 
@@ -259,6 +288,41 @@ export class WindowManager {
     this.#harden(window);
     this.#load(window, "holo");
     this.#holo = window;
+    return window;
+  }
+
+  #ensureSpotlight(): BrowserWindow {
+    const existing = this.#spotlight;
+    if (existing !== null && !existing.isDestroyed()) return existing;
+    const window = new BrowserWindow({
+      ...SPOTLIGHT_SIZE,
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: "#00000000",
+      resizable: false,
+      movable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      alwaysOnTop: true,
+      webPreferences: secureWebPreferences(),
+    });
+    window.setAlwaysOnTop(true, "pop-up-menu");
+    // Like Spotlight: clicking anywhere else closes the bar.
+    window.on("blur", () => {
+      if (window.isVisible()) this.#requestHide(window);
+    });
+    window.on("close", (event) => {
+      if (this.#quitting) return;
+      event.preventDefault();
+      this.#requestHide(window);
+    });
+    this.#harden(window);
+    this.#load(window, "spotlight");
+    this.#spotlight = window;
     return window;
   }
 

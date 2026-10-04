@@ -132,10 +132,9 @@ function start(): void {
     },
   });
   const settings = new SettingsController(new SettingsStore(join(app.getPath("userData"), "settings.json")), {
-    // Until the Spotlight bar exists (task 10), the shortcut brings Alicia's window forward.
     registerShortcut: (accelerator) =>
       os.registerShortcut(accelerator, () => {
-        windows.showMain();
+        windows.toggleSpotlight();
       }),
     unregisterShortcut: (accelerator) => {
       os.unregisterShortcut(accelerator);
@@ -238,6 +237,7 @@ function start(): void {
   });
 
   windows.createMain({ show: !startHidden });
+  windows.createSpotlight();
   windows.setHoloAnchor(settings.snapshot.settings.holoAnchor);
   applyHolo();
   tray = os.createTray(trayItems(), onTrayAction, () => {
