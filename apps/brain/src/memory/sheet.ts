@@ -34,7 +34,7 @@ export function buildSheet(memories: SheetMemories, personName: string, budget =
     let size = title.length + 1;
     for (const item of items) {
       const line = oneLine(item.text).length + 3;
-      if (used + size + line > budget) break;
+      if (used + size + line > budget) continue;
       chosen.push(item);
       size += line;
     }

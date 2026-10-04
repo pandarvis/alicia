@@ -36,6 +36,6 @@ export function words(text: string): string[] {
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
+    .split(/[^\p{L}\p{N}]+/u)
     .filter((word) => word.length >= 2);
 }

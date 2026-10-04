@@ -7,7 +7,7 @@ import { createTestClock, createTestDb } from "./helpers.ts";
 function setup() {
   const db = createTestDb();
   const time = createTestClock();
-  const store = new MemoryStore(db, new FakeEmbedder(), time.clock, { duplicateThreshold: 0.95, minSimilarity: 0.3 });
+  const store = new MemoryStore(db, new FakeEmbedder(), time.clock, { minSimilarity: 0.3 });
   return { db, time, store };
 }
 
@@ -73,6 +73,21 @@ describe("MemoryStore", () => {
     expect(store.list("kevin", {})).toHaveLength(1);
   });
 
+  test("close but distinct facts are both kept (vectors can't tell them apart with e5)", async () => {
+    // An embedder for which every text looks identical: only the text decides what a duplicate is.
+    const sameVector: Embedder = {
+      model: "same-vector", dimensions: 2,
+      embed: (texts) => Promise.resolve(texts.map(() => new Float32Array([1, 0]))),
+    };
+    const store = new MemoryStore(createTestDb(), sameVector, createTestClock().clock, { minSimilarity: 0.3 });
+    await remember(store, "kevin", "Kévin est allergique aux noix");
+    expect((await remember(store, "kevin", "Kévin est allergique aux noisettes")).status).toBe("created");
+    expect((await remember(store, "kevin", "Rendez-vous chez le dentiste mardi")).status).toBe("created");
+    expect((await remember(store, "kevin", "Rendez-vous chez le dentiste jeudi")).status).toBe("created");
+    expect((await remember(store, "kevin", "kevin est ALLERGIQUE aux noix.")).status).toBe("duplicate");
+    expect(store.list("kevin", {})).toHaveLength(4);
+  });
+
   test.each([
     "Le mot de passe du wifi est hunter2",
     "mdp: x",
@@ -118,7 +133,7 @@ describe("MemoryStore", () => {
     const db = createTestDb();
     const { clock } = createTestClock();
     const embedder = new GatedEmbedder();
-    const store = new MemoryStore(db, embedder, clock, { duplicateThreshold: 0.95, minSimilarity: 0.3 });
+    const store = new MemoryStore(db, embedder, clock, { minSimilarity: 0.3 });
     const result = await remember(store, "kevin", "Le code couleur du salon est le bleu", "common");
     if (result.status !== "created") throw new Error("not created");
     const id = result.memory.id;
@@ -170,20 +185,18 @@ describe("MemoryStore", () => {
     expect(await store.search("kevin", "météo demain")).toEqual([]);
   });
 
-  test("vectors from another embedding model are never compared (search and dedupe)", async () => {
+  test("vectors from another embedding model are never compared in search", async () => {
     const db = createTestDb();
     const { clock } = createTestClock();
     const older = new MemoryStore(db, constantEmbedder("old-model"), clock);
     const current = new MemoryStore(db, constantEmbedder("new-model"), clock);
     expect((await remember(older, "kevin", "Kévin adore les lasagnes")).status).toBe("created");
 
-    // Same model: every vector is identical, so anything matches and everything is a duplicate.
+    // Same model: every vector is identical, so any query matches.
     expect((await older.search("kevin", "météo demain")).map((m) => m.text)).toEqual(["Kévin adore les lasagnes"]);
-    expect((await remember(older, "kevin", "Rien à voir")).status).toBe("duplicate");
 
     // Another model: the old vector is ignored...
     expect(await current.search("kevin", "météo demain")).toEqual([]);
-    expect((await remember(current, "kevin", "Rien à voir")).status).toBe("created");
     // ...but full text still finds the old memory.
     expect((await current.search("kevin", "lasagnes")).map((m) => m.text)).toContain("Kévin adore les lasagnes");
   });

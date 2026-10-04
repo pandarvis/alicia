@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { cosine, type Embedder, fromBlob, toBlob } from "../src/memory/embedder.ts";
+import { cosine, type Embedder, fromBlob, toBlob, words } from "../src/memory/embedder.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
 import { TransformersEmbedder } from "../src/memory/transformers-embedder.ts";
 
@@ -14,6 +14,9 @@ describe("vector helpers", () => {
   test("cosine of normalized vectors", () => {
     expect(cosine(new Float32Array([1, 0]), new Float32Array([1, 0]))).toBeCloseTo(1);
     expect(cosine(new Float32Array([1, 0]), new Float32Array([0, 1]))).toBeCloseTo(0);
+  });
+  test("words keep ligatures like œ (same tokens as the FTS index)", () => {
+    expect(words("Un cœur d'Œuvre, à l'été !")).toEqual(["un", "cœur", "œuvre", "ete"]);
   });
   test("vectors of different sizes (different models) are refused", () => {
     expect(() => cosine(new Float32Array(2), new Float32Array(3))).toThrow(/different embedding models/);

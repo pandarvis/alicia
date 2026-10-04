@@ -28,5 +28,5 @@ export function createTestDb() {
 
 /** Memory store with the deterministic embedder (never downloads a model). */
 export function createTestMemory(db: Db, clock: Clock) {
-  return new MemoryStore(db, new FakeEmbedder(), clock, { duplicateThreshold: 0.95, minSimilarity: 0.3 });
+  return new MemoryStore(db, new FakeEmbedder(), clock, { minSimilarity: 0.3 });
 }

@@ -35,7 +35,7 @@ function fakeChroma(path: string): void {
 }
 
 function newStore(): MemoryStore {
-  return new MemoryStore(createTestDb(), new FakeEmbedder(), createTestClock().clock, { duplicateThreshold: 0.95, minSimilarity: 0.3 });
+  return new MemoryStore(createTestDb(), new FakeEmbedder(), createTestClock().clock, { minSimilarity: 0.3 });
 }
 
 describe("import from the old Alice", () => {

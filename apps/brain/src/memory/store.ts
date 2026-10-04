@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "dri
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/open.ts";
 import { memories } from "../db/schema.ts";
-import { cosine, type Embedder, fromBlob, toBlob } from "./embedder.ts";
+import { cosine, type Embedder, fromBlob, toBlob, words } from "./embedder.ts";
 import { ftsQuery, fuse } from "./ranking.ts";
 
 export type MemoryRow = typeof memories.$inferSelect;
@@ -59,9 +59,10 @@ export interface MemoryFilter {
 }
 
 export interface MemoryStoreOptions {
-  /** Same-scope similarity at or above which a new memory is a duplicate. */
-  duplicateThreshold?: number;
-  /** Below this similarity a vector-only match is noise (e5 has a high floor). */
+  /**
+   * Below this similarity a vector-only match is noise. Calibrated on multilingual-e5-small
+   * (2026-10-04): related query/memory ≈ 0.83–0.86, unrelated ≈ 0.78–0.81.
+   */
   minSimilarity?: number;
 }
 
@@ -112,15 +113,13 @@ export class MemoryStore {
   readonly #db: Db;
   readonly #embedder: Embedder;
   readonly #clock: Clock;
-  readonly #duplicateThreshold: number;
   readonly #minSimilarity: number;
 
   constructor(db: Db, embedder: Embedder, clock: Clock, options: MemoryStoreOptions = {}) {
     this.#db = db;
     this.#embedder = embedder;
     this.#clock = clock;
-    this.#duplicateThreshold = options.duplicateThreshold ?? 0.92;
-    this.#minSimilarity = options.minSimilarity ?? 0.8;
+    this.#minSimilarity = options.minSimilarity ?? 0.82;
   }
 
   /** Scopes a person may read and write: the household's and their own. */
@@ -180,11 +179,11 @@ export class MemoryStore {
     const scope = this.#storedScope(input.personId, input.scope);
     const vector = await this.#embed(text, "passage");
 
-    const duplicate = this.#closest(vector, [scope]);
-    if (duplicate !== undefined && duplicate.similarity >= this.#duplicateThreshold) {
-      const existing = this.#visible(input.personId, duplicate.id);
-      if (existing !== undefined) return { status: "duplicate", memory: strip(existing) };
-    }
+    // Duplicates are decided on the text, not the vector: with e5, distinct facts ("noix" /
+    // "noisettes", "mardi" / "jeudi") score higher than true rephrasings. Rephrasings are left
+    // to Alicia, who searches and updates instead of remembering twice.
+    const existing = this.#sameText(text, scope);
+    if (existing !== undefined) return { status: "duplicate", memory: strip(existing) };
 
     const now = this.#clock();
     const row: MemoryRow = {
@@ -338,13 +337,15 @@ export class MemoryStore {
       .all();
   }
 
-  #closest(vector: Float32Array, scopes: string[]): { id: string; similarity: number } | undefined {
-    let best: { id: string; similarity: number } | undefined;
-    for (const row of this.#comparable(scopes)) {
-      const similarity = cosine(vector, fromBlob(row.embedding));
-      if (best === undefined || similarity > best.similarity) best = { id: row.id, similarity };
-    }
-    return best;
+  /** An active memory of this scope with the same words (case, accents and punctuation ignored). */
+  #sameText(text: string, scope: string): MemoryRow | undefined {
+    const key = words(text).join(" ");
+    return this.#db
+      .select()
+      .from(memories)
+      .where(and(eq(memories.scope, scope), isNull(memories.forgottenAt)))
+      .all()
+      .find((row) => words(row.text).join(" ") === key);
   }
 
   #fullText(query: string, scopes: string[]): string[] {
