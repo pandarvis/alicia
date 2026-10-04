@@ -66,12 +66,20 @@ describe("addressKey", () => {
     ["2001:0DB8:0001:0002::1", "2001:db8:1:2::/64"],
     ["2001:db8:1:3::1", "2001:db8:1:3::/64"],
     ["2001:db8::1", "2001:db8:0:0::/64"],
-    ["::1", "0:0:0:0::/64"],
-    ["fe80::1%eth0", "fe80:0:0:0::/64"],
-  ])("IPv6 %s → its /64 prefix %s", (ip, key) => {
+    ["3fff::1", "3fff:0:0:0::/64"],
+  ])("global IPv6 %s → its /64 prefix %s", (ip, key) => {
     expect(addressKey(ip)).toBe(key);
   });
-  test.each(["10.0.0.1", "::ffff:10.0.0.1", "not an address"])("%s is kept as is", (ip) => {
+  test.each([
+    "10.0.0.1",
+    "::ffff:10.0.0.1",
+    "not an address",
+    // Local networks: each address is its own device (Tailscale hands out addresses in fd7a:115c:a1e0::/48).
+    "fd7a:115c:a1e0::1",
+    "fc00::1",
+    "fe80::1%eth0",
+    "::1",
+  ])("%s is kept as is", (ip) => {
     expect(addressKey(ip)).toBe(ip);
   });
 });

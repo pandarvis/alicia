@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -53,6 +53,69 @@ describe("backupDatabase", () => {
     expect(readdirSync(backups)).toEqual(["alicia-2026-10-04.db"]);
     expect(peopleIn(path)).toEqual(["elodie", "kevin"]);
   });
+
+  test("only the leftovers of interrupted backups are cleaned", async () => {
+    const { db, backups } = liveDb();
+    mkdirSync(backups);
+    for (const name of [
+      "alicia-2026-10-03.db.4242.partial",
+      "alicia-2026-10-03.db.4242.partial-journal",
+      "alicia-2026-10-03.db.partial-journal",
+      "notes.partial",
+    ]) {
+      writeFileSync(join(backups, name), "junk");
+    }
+    await backupDatabase(db.$client, backups, "2026-10-04");
+    expect(readdirSync(backups).sort()).toEqual(["alicia-2026-10-04.db", "notes.partial"]);
+  });
+
+  test("a leftover that cannot be removed does not fail the backup", async () => {
+    const { db, backups } = liveDb();
+    // A directory under a leftover's name: removing it as a file fails.
+    mkdirSync(join(backups, "alicia-2026-10-03.db.partial"), { recursive: true });
+    const path = await backupDatabase(db.$client, backups, "2026-10-04");
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(join(backups, "alicia-2026-10-03.db.partial"))).toBe(true);
+  });
+
+  test("a busy file during the final rename is retried", async () => {
+    const { db, backups } = liveDb();
+    let calls = 0;
+    const rename = (from: string, to: string): void => {
+      calls++;
+      if (calls < 3) throw Object.assign(new Error("resource busy"), { code: calls === 1 ? "EBUSY" : "EPERM" });
+      renameSync(from, to);
+    };
+    const path = await backupDatabase(db.$client, backups, "2026-10-04", { rename, retryDelayMs: 0 });
+    expect(calls).toBe(3);
+    expect(readdirSync(backups)).toEqual(["alicia-2026-10-04.db"]);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test("a rename that keeps failing gives up after 3 tries, without leaving its partial file", async () => {
+    const { db, backups } = liveDb();
+    let calls = 0;
+    const rename = (): void => {
+      calls++;
+      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    };
+    await expect(backupDatabase(db.$client, backups, "2026-10-04", { rename, retryDelayMs: 0 })).rejects.toThrow(
+      /not permitted/,
+    );
+    expect(calls).toBe(3);
+    expect(readdirSync(backups)).toEqual([]);
+  });
+
+  test("another rename error is not retried", async () => {
+    const { db, backups } = liveDb();
+    let calls = 0;
+    const rename = (): void => {
+      calls++;
+      throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+    };
+    await expect(backupDatabase(db.$client, backups, "2026-10-04", { rename, retryDelayMs: 0 })).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
 });
 
 describe("pruneBackups", () => {
@@ -66,6 +129,15 @@ describe("pruneBackups", () => {
     expect(listBackups(dir)).toHaveLength(14);
     expect(listBackups(dir)[0]).toBe("alicia-2026-09-03.db");
     expect(existsSync(join(dir, "notes.txt"))).toBe(true);
+  });
+
+  test("the backup just written is never pruned, even when later-dated ones exist (clock set back)", () => {
+    dir = mkdtempSync(join(tmpdir(), "alicia-backup-"));
+    for (let day = 10; day <= 23; day++) writeFileSync(join(dir, backupFileName(`2026-09-${day}`)), "");
+    writeFileSync(join(dir, backupFileName("2026-09-01")), "");
+    expect(pruneBackups(dir, "alicia-2026-09-01.db")).toEqual(["alicia-2026-09-10.db"]);
+    expect(listBackups(dir)).toHaveLength(14);
+    expect(listBackups(dir)[0]).toBe("alicia-2026-09-01.db");
   });
 
   test("no backup directory yet: nothing to list or prune", () => {

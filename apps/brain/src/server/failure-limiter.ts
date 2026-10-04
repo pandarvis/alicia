@@ -9,13 +9,8 @@ function groupsOf(part: string): string[] {
   return part.split(":").flatMap((group) => (group.includes(".") ? ["0", "0"] : [group]));
 }
 
-/**
- * The key under which an address's failures are counted. An IPv6 host usually controls a whole /64
- * (it can pick any address in it at will): IPv6 addresses are keyed by their /64 prefix.
- * IPv4 and IPv4-mapped addresses are kept as they are.
- */
-export function addressKey(ip: string): string {
-  if (!isIPv6(ip) || IPV4_MAPPED.test(ip)) return ip;
+/** The eight 16-bit groups of an IPv6 address, as numbers (zone id dropped). */
+function ipv6Groups(ip: string): number[] {
   const address = ip.split("%")[0] ?? ip;
   const halves = address.split("::");
   const head = groupsOf(halves[0] ?? "");
@@ -24,9 +19,26 @@ export function addressKey(ip: string): string {
     halves.length === 2
       ? [...head, ...Array.from({ length: 8 - head.length - tail.length }, () => "0"), ...tail]
       : head;
+  return groups.map((group) => Number.parseInt(group, 16));
+}
+
+/** Global unicast, 2000::/3: the first three bits are 001. */
+const isGlobalUnicast = (firstGroup: number): boolean => (firstGroup & 0xe0_00) === 0x20_00;
+
+/**
+ * The key under which an address's failures are counted. On the internet, an IPv6 host usually controls
+ * a whole /64 (it can pick any address in it at will): global unicast addresses (2000::/3) are keyed by
+ * their /64 prefix. Everything else is kept as is: IPv4 and IPv4-mapped, and local IPv6 networks (unique
+ * local fc00::/7, Tailscale's fd7a:115c:a1e0::/48 included; link-local fe80::/10; loopback), where each
+ * address is its own device and keying by /64 would let one device lock the others out.
+ */
+export function addressKey(ip: string): string {
+  if (!isIPv6(ip) || IPV4_MAPPED.test(ip)) return ip;
+  const groups = ipv6Groups(ip);
+  if (!isGlobalUnicast(groups[0] ?? 0)) return ip;
   return `${groups
     .slice(0, 4)
-    .map((group) => Number.parseInt(group, 16).toString(16))
+    .map((group) => group.toString(16))
     .join(":")}::/64`;
 }
 

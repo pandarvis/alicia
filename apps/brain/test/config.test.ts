@@ -28,6 +28,10 @@ describe("parseConfig", () => {
   test("rejects an unknown engine mode", () => {
     expect(() => parseConfig("people: [{ id: kevin, name: K }]\nengine: { mode: free }")).toThrow();
   });
+  test("timezone: an IANA name, refused with a French message otherwise", () => {
+    expect(parseConfig(`${MINIMAL_YAML}timezone: America/Montreal\n`).timezone).toBe("America/Montreal");
+    expect(() => parseConfig(`${MINIMAL_YAML}timezone: Europe/Pariss\n`)).toThrow(/Fuseau horaire inconnu/);
+  });
   test("allowedOrigins: none by default, exact origins only", () => {
     expect(parseConfig(MINIMAL_YAML).allowedOrigins).toEqual([]);
     expect(parseConfig(`${MINIMAL_YAML}allowedOrigins: ["https://alicia.tailnet.ts.net"]\n`).allowedOrigins).toEqual([

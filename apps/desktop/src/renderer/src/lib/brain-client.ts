@@ -148,12 +148,12 @@ export class BrainApi {
   }
 
   async createMemory(input: MemoryCreate): Promise<MemoryWriteResult> {
-    return this.#writeResult(await this.#request("POST", "/memories", input), "/memories");
+    return this.#writeResult(await this.#request("POST", "/memories", input), "/memories", "create");
   }
 
   async updateMemory(id: string, patch: MemoryPatch): Promise<MemoryWriteResult> {
     const path = `/memories/${encodeURIComponent(id)}`;
-    return this.#writeResult(await this.#request("PATCH", path, patch), path);
+    return this.#writeResult(await this.#request("PATCH", path, patch), path, "update");
   }
 
   /** False when the memory does not exist (or is not the caller's to forget). */
@@ -195,11 +195,11 @@ export class BrainApi {
   }
 
   /** Reads the answer of a create or update: the memory, or the reason the brain did not write it. */
-  async #writeResult(response: Response, path: string): Promise<MemoryWriteResult> {
+  async #writeResult(response: Response, path: string, write: WriteKind): Promise<MemoryWriteResult> {
     if (response.ok) return { ok: true, memory: MemorySummary.parse(await response.json()) };
     const body = await readJson(response);
     const typed = HttpErrorBody.safeParse(body);
-    if (!typed.success) return untypedWriteResult(response.status, body, path);
+    if (!typed.success) return untypedWriteResult(response.status, body, path, write);
     const error = typed.data.error;
     switch (error.code) {
       case "duplicate":
@@ -233,13 +233,17 @@ export class BrainApi {
   }
 }
 
+type WriteKind = "create" | "update";
+
 /** A write answered without the typed error body (older brain, proxy): the status decides. */
-function untypedWriteResult(status: number, body: unknown, path: string): MemoryWriteResult {
+function untypedWriteResult(status: number, body: unknown, path: string, write: WriteKind): MemoryWriteResult {
   switch (status) {
     case 409:
       return { ok: false, reason: "duplicate" };
     case 404:
-      return { ok: false, reason: "not_found" };
+      // Only an update names a memory that may be gone; a 404 on a creation is a wrong address or a proxy.
+      if (write === "update") return { ok: false, reason: "not_found" };
+      throw statusError(status, path);
     case 400:
       return { ok: false, reason: "invalid" };
     case 422: {

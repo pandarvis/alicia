@@ -5,6 +5,16 @@ import { z } from "zod";
 
 const DEFAULT_MODELS = { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
 
+/** A time zone the runtime knows (IANA name): the nightly job and the dates shown to Alicia rely on it. */
+function isTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** An exact web origin: http(s)://host[:port], no path, no trailing slash. */
 function isOrigin(value: string): boolean {
   try {
@@ -19,7 +29,10 @@ export const ConfigSchema = z.object({
   port: z.number().int().min(1).max(65_535).default(8780),
   host: z.string().default("0.0.0.0"),
   dataDir: z.string().default("./data"),
-  timezone: z.string().default("Europe/Paris"),
+  timezone: z
+    .string()
+    .refine(isTimeZone, { message: "Fuseau horaire inconnu : écrire un nom IANA, par exemple « Europe/Paris »." })
+    .default("Europe/Paris"),
   people: z.array(Person).min(1).refine((list) => list.every((p) => p.id !== "common"), {
     message: "« common » est réservé à la mémoire commune : choisis un autre identifiant.",
   }),

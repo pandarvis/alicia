@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -21,7 +21,7 @@ afterEach(() => {
   dir = undefined;
 });
 
-function setup(options: { blockBackups?: boolean } = {}) {
+function setup(options: { blockBackups?: boolean; start?: number } = {}) {
   dir = mkdtempSync(join(tmpdir(), "alicia-maintenance-"));
   const db = openDb(join(dir, "alicia.db"));
   opened.push(db);
@@ -29,10 +29,12 @@ function setup(options: { blockBackups?: boolean } = {}) {
   const backupDir = join(dir, "backups");
   // A file where the directory should be: every backup fails.
   if (options.blockBackups === true) writeFileSync(backupDir, "");
-  const time = createTestClock(Date.UTC(2026, 9, 4, 0, 30)); // 02:30 in Paris (summer time)
+  // Default: 02:30 in Paris (summer time).
+  const time = createTestClock(options.start ?? Date.UTC(2026, 9, 4, 0, 30));
   const repository = new ConversationRepository(db, time.clock);
   const intervals: { ms: number; run: () => void; stopped: boolean }[] = [];
   const logs: string[] = [];
+  const errors: string[] = [];
   const maintenance = new Maintenance({
     sqlite: db.$client,
     repository,
@@ -49,8 +51,11 @@ function setup(options: { blockBackups?: boolean } = {}) {
     log: (message) => {
       logs.push(message);
     },
+    logError: (message) => {
+      errors.push(message);
+    },
   });
-  return { db, time, repository, maintenance, intervals, logs, backups: () => listBackups(backupDir) };
+  return { db, time, repository, maintenance, intervals, logs, errors, backups: () => listBackups(backupDir) };
 }
 
 describe("localTime", () => {
@@ -58,6 +63,16 @@ describe("localTime", () => {
     expect(localTime(Date.UTC(2026, 9, 4, 0, 30), "Europe/Paris")).toEqual({ day: "2026-10-04", hour: 2 });
     expect(localTime(Date.UTC(2026, 9, 3, 22, 30), "Europe/Paris")).toEqual({ day: "2026-10-04", hour: 0 });
     expect(localTime(Date.UTC(2027, 0, 3, 2, 30), "Europe/Paris")).toEqual({ day: "2027-01-03", hour: 3 });
+  });
+
+  test("daylight saving days", () => {
+    // 2027-03-28: 02:00 jumps to 03:00.
+    expect(localTime(Date.UTC(2027, 2, 28, 0, 30), "Europe/Paris")).toEqual({ day: "2027-03-28", hour: 1 });
+    expect(localTime(Date.UTC(2027, 2, 28, 1, 0), "Europe/Paris")).toEqual({ day: "2027-03-28", hour: 3 });
+    // 2026-10-25: 03:00 falls back to 02:00, so 02:xx happens twice.
+    expect(localTime(Date.UTC(2026, 9, 25, 0, 30), "Europe/Paris")).toEqual({ day: "2026-10-25", hour: 2 });
+    expect(localTime(Date.UTC(2026, 9, 25, 1, 30), "Europe/Paris")).toEqual({ day: "2026-10-25", hour: 2 });
+    expect(localTime(Date.UTC(2026, 9, 25, 2, 0), "Europe/Paris")).toEqual({ day: "2026-10-25", hour: 3 });
   });
 });
 
@@ -109,10 +124,65 @@ describe("Maintenance", () => {
     await first;
   });
 
-  test("a failure is logged, never thrown", async () => {
-    const { time, maintenance, logs } = setup({ blockBackups: true });
+  test("a failure is logged as an error, never thrown", async () => {
+    const { time, maintenance, logs, errors } = setup({ blockBackups: true });
     time.advance(HOUR);
     await maintenance.tick();
-    expect(logs.some((m) => m.startsWith("Maintenance nocturne échouée"))).toBe(true);
+    expect(errors.some((m) => m.startsWith("Maintenance nocturne échouée"))).toBe(true);
+    expect(logs).toEqual([]);
+  });
+
+  test("spring forward (2027-03-28): the job runs once, at 03:xx", async () => {
+    const { time, maintenance, backups } = setup({ start: Date.UTC(2027, 2, 27, 23, 30) }); // 00:30
+    await maintenance.tick();
+    time.advance(HOUR); // 01:30
+    await maintenance.tick();
+    expect(backups()).toEqual([]);
+    time.advance(HOUR); // 03:30 (02:xx does not exist that night)
+    await maintenance.tick();
+    time.advance(HOUR);
+    await maintenance.tick();
+    expect(backups()).toEqual(["alicia-2027-03-28.db"]);
+  });
+
+  test("fall back (2026-10-25): the twice-lived 02:xx does not run it; it runs once from 03:00", async () => {
+    const { time, maintenance, backups } = setup({ start: Date.UTC(2026, 9, 25, 0, 30) }); // 02:30 summer time
+    await maintenance.tick();
+    time.advance(HOUR); // 02:30 again, winter time
+    await maintenance.tick();
+    expect(backups()).toEqual([]);
+    time.advance(HOUR); // 03:30
+    await maintenance.tick();
+    time.advance(HOUR);
+    await maintenance.tick();
+    expect(backups()).toEqual(["alicia-2026-10-25.db"]);
+  });
+
+  test("a manual run before 3:00 counts for that night", async () => {
+    const { time, maintenance, backups } = setup(); // 02:30
+    await maintenance.runNow();
+    time.advance(HOUR); // 03:30
+    await maintenance.tick();
+    expect(backups()).toEqual(["alicia-2026-10-04.db"]);
+  });
+
+  test("stop waits for a running backup", async () => {
+    const { time, maintenance, backups } = setup();
+    time.advance(HOUR);
+    void maintenance.tick();
+    await maintenance.stop();
+    expect(backups()).toEqual(["alicia-2026-10-04.db"]);
+  });
+
+  test("the backup just written is kept even when later-dated ones exist (clock set back)", async () => {
+    const { time, maintenance, backups } = setup();
+    time.advance(HOUR);
+    for (let day = 10; day <= 23; day++) {
+      await maintenance.runNow();
+      renameSync(join(dir ?? "", "backups", "alicia-2026-10-04.db"), join(dir ?? "", "backups", `alicia-2026-11-${day}.db`));
+    }
+    await maintenance.runNow();
+    expect(backups()).toHaveLength(14);
+    expect(backups()[0]).toBe("alicia-2026-10-04.db");
   });
 });

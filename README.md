@@ -78,7 +78,8 @@ mémoire… », « Alicia retient ça… »).
   `alicia.db-wal` et `alicia.db-shm` s'ils existent, relancer.
 - **Journal** : le détail des tours (modèle, tokens, outils, durée) est effacé au-delà de 90 jours, au même moment.
 - **Appairage** : 5 codes faux en 15 minutes depuis une même adresse bloquent cette adresse (en plus de la limite
-  globale de 5 par minute). Une adresse IPv6 compte pour tout son /64 ; un appairage réussi remet son compteur à zéro.
+  globale de 5 par minute). Sur Internet, une adresse IPv6 compte pour tout son /64 ; sur un réseau local
+  (y compris Tailscale), chaque adresse compte seule. Un appairage réussi remet le compteur de l'adresse à zéro.
 - **Origines web** : seule l'app de bureau peut appeler le cerveau depuis une page web ; `allowedOrigins` (config)
   ajoute des origines exactes, pour la future PWA. Une autre origine reçoit 403, en HTTP comme en WebSocket.
 - **Connexions** : le cerveau sonde chaque connexion toutes les 30 s et coupe celles qui ne répondent plus ; l'app

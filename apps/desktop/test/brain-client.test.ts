@@ -237,7 +237,6 @@ describe("BrainApi", () => {
     // Old flat shape on purpose (an older brain, or a proxy page): the status decides.
     test.each([
       [409, { error: "duplicate" }, "duplicate"],
-      [404, { error: "not_found" }, "not_found"],
       [400, { error: "invalid_request" }, "invalid"],
       [422, { error: "refused", reason: "secret" }, "secret"],
       [422, { error: "refused", reason: "empty" }, "empty"],
@@ -249,6 +248,10 @@ describe("BrainApi", () => {
       await expect(api(422, { error: "refused", reason: "weird" }).createMemory(input)).rejects.toThrow(/422/);
       await expect(api(422, { error: "refused" }).createMemory(input)).rejects.toThrow(/422/);
       await expect(api(503, { error: "boom" }).createMemory(input)).rejects.toThrow(/503/);
+    });
+    test("createMemory: an untyped 404 is not a missing memory (wrong address, proxy): it throws", async () => {
+      await expect(api(404, { error: "not_found" }).createMemory(input)).rejects.toThrow(/404/);
+      await expect(api(404, "<html>Not Found</html>").createMemory(input)).rejects.toThrow(/404/);
     });
     test("updateMemory: untyped 404 → not_found", async () => {
       expect(await api(404, { error: "not_found" }).updateMemory(MEMORY_ID, { text: "x" })).toEqual({

@@ -289,8 +289,8 @@ consommés et durée totale, en base. Rotation au-delà de 90 jours.
   distinct (8780). **Mac mini (cible)** : même code, service launchd.
 - **Secrets** (hors dépôt) : jeton d'abonnement ou clé API, clé de chiffrement des jetons
   Google, `google_client_secret.json`.
-- **Sauvegarde** : copie nocturne de la base SQLite (API de sauvegarde SQLite), 14 jours
-  conservés.
+- **Sauvegarde** : copie nocturne de la base SQLite (API de sauvegarde SQLite), les 14 copies
+  les plus récentes conservées.
 
 ## Hors périmètre du socle
 

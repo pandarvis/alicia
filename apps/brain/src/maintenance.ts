@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Clock } from "./clock.ts";
 import type { ConversationRepository } from "./conversations/repository.ts";
 import { backupDatabase, backupFileName, pruneBackups } from "./db/backup.ts";
@@ -20,6 +20,8 @@ export interface MaintenanceOptions {
   /** Repeats `run` every `ms`; returns a stop function (default: an unref'd setInterval). */
   every?: (run: () => void, ms: number) => () => void;
   log?: (message: string) => void;
+  /** Failures (default: console.error). */
+  logError?: (message: string) => void;
 }
 
 const everyInterval = (run: () => void, ms: number): (() => void) => {
@@ -42,7 +44,8 @@ export function localTime(ms: number, timeZone: string): { day: string; hour: nu
 /**
  * The brain's nightly job: turn log rotation (90 days), then a backup of the database (14 kept).
  * Checked every hour; runs once per local day, at the first tick from 3:00. Today's backup file is the
- * proof it ran, so a restart does not run it twice, and a brain that was off at 3:00 catches up.
+ * proof it ran, so a restart does not run it twice, and a brain that was off at 3:00 catches up. A manual
+ * run (`alicia backup`) before 3:00 writes that file too, so it counts for that night.
  */
 export class Maintenance {
   readonly #sqlite: Db["$client"];
@@ -52,6 +55,7 @@ export class Maintenance {
   readonly #clock: Clock;
   readonly #every: (run: () => void, ms: number) => () => void;
   readonly #log: (message: string) => void;
+  readonly #logError: (message: string) => void;
   #stopTimer: (() => void) | undefined;
   #running: Promise<void> | undefined;
 
@@ -64,6 +68,9 @@ export class Maintenance {
     this.#every = options.every ?? everyInterval;
     this.#log = options.log ?? ((message) => {
       console.log(message);
+    });
+    this.#logError = options.logError ?? ((message) => {
+      console.error(message);
     });
   }
 
@@ -95,7 +102,7 @@ export class Maintenance {
     const purged = this.#repository.purgeTurnLog();
     const { day } = localTime(this.#clock(), this.#timezone);
     const path = await backupDatabase(this.#sqlite, this.#backupDir, day);
-    const removed = pruneBackups(this.#backupDir);
+    const removed = pruneBackups(this.#backupDir, basename(path));
     this.#log(
       `Sauvegarde écrite : ${path} (journal : ${purged} entrées de plus de 90 jours supprimées ; ${removed.length} anciennes sauvegardes supprimées).`,
     );
@@ -108,7 +115,7 @@ export class Maintenance {
       if (hour < NIGHTLY_HOUR || existsSync(join(this.#backupDir, backupFileName(day)))) return;
       await this.runNow();
     } catch (error) {
-      this.#log(`Maintenance nocturne échouée : ${error instanceof Error ? error.message : String(error)}`);
+      this.#logError(`Maintenance nocturne échouée : ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }
