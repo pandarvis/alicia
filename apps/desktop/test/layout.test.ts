@@ -35,6 +35,13 @@ describe("Holo layout", () => {
     expect(holoLayout({ x: 1760, y: 50 }, true, SCREEN)).toMatchObject({ bounds: { y: 0 }, mascot: { y: 50 } });
   });
 
+  test("on a screen too narrow for either side, the expanded window stays on screen, beside the mascot", () => {
+    const narrow = { x: 0, y: 0, width: 600, height: 1040 };
+    expect(holoLayout({ x: 200, y: 864 }, true, narrow)).toEqual({
+      bounds: { x: 136, y: 596, width: 464, height: 420 }, panelSide: "right", mascot: { x: 0, y: 268 },
+    });
+  });
+
   test("on a second screen", () => {
     const right = { x: 1920, y: 0, width: 2560, height: 1400 };
     expect(holoLayout(defaultAnchor(right), false, right).bounds.x).toBeGreaterThan(1920);

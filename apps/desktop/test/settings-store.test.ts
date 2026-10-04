@@ -1,9 +1,27 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { SettingsStore } from "../src/main/settings-store.ts";
-import { SettingsPatch } from "../src/shared/settings.ts";
+import {
+  Settings, SETTINGS_UPDATE_MESSAGES, SettingsPatch, SettingsSnapshot, SettingsUpdateResult,
+} from "../src/shared/settings.ts";
+
+function fsError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code });
+}
+
+/** A rename that fails with `codes` (one per call) before behaving normally. */
+function flakyRename(codes: string[]) {
+  const calls: string[] = [];
+  const rename = (from: string, to: string): void => {
+    const code = codes[calls.length];
+    calls.push(code ?? "ok");
+    if (code !== undefined) throw fsError(code);
+    renameSync(from, to);
+  };
+  return { rename, calls };
+}
 
 const DEFAULTS = { shortcut: "Ctrl+Alt+A", launchAtStartup: false, showHolo: true, holoAnchor: null };
 const dirs: string[] = [];
@@ -44,6 +62,49 @@ describe("SettingsStore", () => {
     expect(store.load()).toEqual(DEFAULTS);
     writeFileSync(path, "[1, 2]");
     expect(store.load()).toEqual(DEFAULTS);
+  });
+
+  test("a file briefly locked (antivirus, indexer) is retried", () => {
+    const { dir, path } = setup();
+    const flaky = flakyRename(["EPERM", "EBUSY"]);
+    const store = new SettingsStore(path, { rename: flaky.rename });
+    store.save({ ...Settings.parse({}), showHolo: false });
+    expect(flaky.calls).toEqual(["EPERM", "EBUSY", "ok"]);
+    expect(store.load().showHolo).toBe(false);
+    expect(readdirSync(dir)).toEqual(["settings.json"]);
+  });
+
+  test("a file locked for good fails after three tries and leaves no temporary file", () => {
+    const { dir, path } = setup();
+    const flaky = flakyRename(["EACCES", "EACCES", "EACCES", "EACCES"]);
+    const store = new SettingsStore(path, { rename: flaky.rename });
+    expect(() => { store.save(Settings.parse({})); }).toThrow("EACCES");
+    expect(flaky.calls).toHaveLength(3);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("other errors are not retried", () => {
+    const { path } = setup();
+    const flaky = flakyRename(["ENOSPC"]);
+    expect(() => { new SettingsStore(path, { rename: flaky.rename }).save(Settings.parse({})); }).toThrow("ENOSPC");
+    expect(flaky.calls).toEqual(["ENOSPC"]);
+  });
+});
+
+describe("SettingsSnapshot (main to windows)", () => {
+  test("strict: a broken field is refused, not replaced by its default", () => {
+    const settings = Settings.parse({});
+    expect(SettingsSnapshot.safeParse({ settings, shortcutActive: true }).success).toBe(true);
+    expect(SettingsSnapshot.safeParse({ settings: { ...settings, shortcut: "A" }, shortcutActive: true }).success).toBe(false);
+    expect(SettingsSnapshot.safeParse({ settings: { ...settings, showHolo: "yes" }, shortcutActive: true }).success).toBe(false);
+    expect(SettingsSnapshot.safeParse({ settings: { ...settings, extra: 1 }, shortcutActive: true }).success).toBe(false);
+  });
+
+  test("an update that could not be saved says so, in French", () => {
+    const snapshot = { settings: Settings.parse({}), shortcutActive: true };
+    expect(SettingsUpdateResult.safeParse({ ok: false, reason: "save_failed", snapshot }).success).toBe(true);
+    expect(SETTINGS_UPDATE_MESSAGES.save_failed).toBe("Impossible d'enregistrer ce réglage sur cet ordinateur ; rien n'a changé.");
+    expect(Object.keys(SETTINGS_UPDATE_MESSAGES).sort()).toEqual(["invalid", "save_failed", "shortcut_unavailable"]);
   });
 });
 

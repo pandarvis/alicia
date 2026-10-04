@@ -3,6 +3,7 @@ import type { Settings, SettingsPatch, SettingsSnapshot, SettingsUpdateResult } 
 
 export interface SettingsPersistence {
   load(): Settings;
+  /** Throws when the settings cannot be written. */
   save(settings: Settings): void;
 }
 
@@ -31,37 +32,65 @@ export class SettingsController {
     return { settings: this.#settings, shortcutActive: this.#shortcutActive };
   }
 
-  /** Registers the saved shortcut; another app may already hold it (reported in the snapshot). */
+  /**
+   * Registers the saved shortcut (another app may already hold it: reported in the snapshot) and re-applies the
+   * login item, in case it was changed outside the app.
+   */
   start(): void {
     this.#shortcutActive = this.#ports.registerShortcut(this.#settings.shortcut);
+    this.#ports.setLoginItem(this.#settings.launchAtStartup);
   }
 
+  /**
+   * Applies a patch all-or-nothing: the new shortcut is registered first (the step that may be refused), then
+   * the settings are saved, and only then is the old shortcut freed and the login item changed. When the save
+   * fails, the new shortcut is freed again and nothing has changed.
+   */
   update(patch: SettingsPatch): SettingsUpdateResult {
-    const next: Settings = { ...this.#settings };
-    if (patch.shortcut !== undefined && (patch.shortcut !== next.shortcut || !this.#shortcutActive)) {
+    const previous = this.#settings;
+    const next: Settings = { ...previous };
+    let registered: string | null = null;
+    if (patch.shortcut !== undefined && (patch.shortcut !== previous.shortcut || !this.#shortcutActive)) {
       if (!this.#ports.registerShortcut(patch.shortcut)) {
         return { ok: false, reason: "shortcut_unavailable", snapshot: this.snapshot };
       }
-      if (this.#shortcutActive && patch.shortcut !== next.shortcut) this.#ports.unregisterShortcut(next.shortcut);
-      this.#shortcutActive = true;
+      registered = patch.shortcut;
       next.shortcut = patch.shortcut;
     }
-    if (patch.launchAtStartup !== undefined && patch.launchAtStartup !== next.launchAtStartup) {
-      this.#ports.setLoginItem(patch.launchAtStartup);
-      next.launchAtStartup = patch.launchAtStartup;
-    }
+    if (patch.launchAtStartup !== undefined) next.launchAtStartup = patch.launchAtStartup;
     if (patch.showHolo !== undefined) next.showHolo = patch.showHolo;
-    this.#commit(next);
+
+    try {
+      this.#store.save(next);
+    } catch (error) {
+      console.error("settings could not be saved", error);
+      if (registered === previous.shortcut) {
+        // The saved shortcut, retried: it is registered now, and still the one on disk.
+        this.#shortcutActive = true;
+      } else if (registered !== null) {
+        this.#ports.unregisterShortcut(registered);
+      }
+      return { ok: false, reason: "save_failed", snapshot: this.snapshot };
+    }
+
+    if (registered !== null) {
+      if (this.#shortcutActive && registered !== previous.shortcut) this.#ports.unregisterShortcut(previous.shortcut);
+      this.#shortcutActive = true;
+    }
+    if (next.launchAtStartup !== previous.launchAtStartup) this.#ports.setLoginItem(next.launchAtStartup);
+    this.#settings = next;
+    this.#ports.onChange(this.snapshot);
     return { ok: true, snapshot: this.snapshot };
   }
 
+  /** The Holo was moved: it stays there for this session even if the position cannot be saved. Never throws. */
   setHoloAnchor(anchor: Point): void {
-    this.#commit({ ...this.#settings, holoAnchor: anchor });
-  }
-
-  #commit(next: Settings): void {
-    this.#store.save(next);
-    this.#settings = next;
+    this.#settings = { ...this.#settings, holoAnchor: anchor };
+    try {
+      this.#store.save(this.#settings);
+    } catch (error) {
+      console.error("Holo position could not be saved", error);
+    }
     this.#ports.onChange(this.snapshot);
   }
 }

@@ -45,7 +45,7 @@
 7. **Notifications** : quand le tour vient de Spotlight (toujours), de la fenêtre principale cachée ou réduite, ou du mini-chat de l'Holo refermé. Réponse : titre « Alicia », texte de la réponse sans Markdown, coupé à 180 caractères. Échec : « Alicia n'a pas pu répondre » + le message du cerveau.
 8. **Réglages sur disque** : `settings.json` en clair dans le profil (rien de secret), validé par Zod **champ par champ** (`.catch`) : un champ abîmé reprend sa valeur par défaut sans effacer les autres. *Écarté : `electron-store`* (une dépendance pour trente lignes, alors que `SessionStore` donne déjà le modèle d'écriture atomique). Valeurs par défaut : raccourci `Ctrl+Alt+A`, lancement au démarrage **désactivé** (rien ne s'inscrit dans Windows sans l'accord explicite de la personne), Holo **affiché** (c'est la surface que Kévin a demandée).
 9. **Lancement au démarrage** : entrée de connexion par utilisateur (`app.setLoginItemSettings`, clé `HKCU\…\Run`) avec l'argument `--hidden` (l'app démarre dans la zone de notification, sans ouvrir la fenêtre), **seulement dans l'app installée**.
-10. **Raccourci configurable** : capture au clavier dans Réglages ; au moins Ctrl, Alt ou Windows (sauf touches F1–F24) ; lettre lue sur la touche tapée, avec repli sur la touche physique quand Ctrl+Alt (AltGr sur AZERTY) produit un symbole. Un raccourci déjà pris par une autre application est refusé avec une explication, l'ancien reste actif.
+10. **Raccourci configurable** : capture au clavier dans Réglages. Pour ne jamais voler la frappe ordinaire ni une commande de fenêtre (règles fixées à la revue des tâches 1–3, voir `src/shared/accelerator.ts`) : une lettre, un chiffre ou Espace demande **deux** modificateurs (Ctrl, Alt, Maj) **ou** la touche Windows ; F1–F12 demandent Ctrl, Alt ou Windows (Maj+F10 est le menu contextuel) ; F13–F24 peuvent servir seules ; `Alt+F4` et `Alt+Space` sont refusés. La lettre est lue sur la touche tapée (un A AZERTY reste A), avec repli sur la touche physique pour les chiffres de la rangée du haut (& é "…) ; le pavé numérique donne `num0`–`num9`. Quand Ctrl+Alt (AltGr) tape un caractère (€, @…), la combinaison est **refusée** (« Cette combinaison tape un caractère sur ce clavier. ») au lieu de prendre la touche physique : elle volerait ce caractère. La capture renvoie la raison du refus (`captureShortcut`), affichée en français (`SHORTCUT_REFUSAL_MESSAGES`). Un raccourci déjà pris par une autre application est refusé avec une explication, l'ancien reste actif. Un changement de réglages est **tout ou rien** : si l'enregistrement sur disque échoue (`save_failed`), le nouveau raccourci est libéré et rien ne change.
 11. **mDNS** : le cerveau s'annonce (`bonjour-service`) en `_alicia._tcp`, nom « Alicia sur <machine> », TXT `version` ; pas d'annonce quand il n'écoute que sur la boucle locale, et `discovery: false` dans sa config pour couper. L'app **ne cherche que sur l'écran d'appairage** (et ouvre le socket mDNS à ce moment-là seulement, ce qui limite l'éventuelle question du pare-feu Windows au premier lancement) ; un seul cerveau trouvé remplit l'adresse tout seul ; la saisie manuelle reste (Tailscale). Dans les tests, `ALICIA_TEST_BRAINS` (JSON validé, seulement avec `ALICIA_OS_INTEGRATION=off`) remplace le réseau.
 12. **Mises à jour** : route `/updates/` (la spec disait `/mises-a-jour/` ; le code est en anglais) qui sert les fichiers de `<dataDir>/updates/` en lecture seule, **sans jeton** : un installateur ne contient aucun secret, le cerveau n'est joignable que par le réseau de la maison ou Tailscale, et c'est ce qui permet le **premier** téléchargement depuis un navigateur (`http://<cerveau>:8780/updates/Alicia-Setup-0.1.0.exe`) avant tout appairage. Pas de listage, pas de fichiers cachés, `latest.yml` jamais mis en cache. *Écarté : exiger le jeton d'appareil* (casse le premier téléchargement, et `electron-updater` le supporte mal pour un flux générique). Sans signature de code, `electron-updater` vérifie seulement l'empreinte SHA-512 annoncée par `latest.yml` (servi par le même cerveau) : risque accepté pour un usage familial sur réseau privé.
 13. **Installateur** : `electron-builder`, cible NSIS « en un clic » **par utilisateur** (`%LOCALAPPDATA%\Programs\Alicia`, sans droits admin), icône `build/icon.ico`, pas de signature de code. Dans l'app installée, le nom d'app devient « Alicia » (`extraMetadata`) : son profil (`%APPDATA%\Alicia`) et son verrou d'instance unique sont distincts de ceux du développement (`@alicia/desktop`). L'adresse de mise à jour est fixée à l'exécution (`setFeedURL`) sur le cerveau appairé.
@@ -294,6 +294,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ---
 
 ### Task 2: Réglages — schéma, raccourci clavier, fichier
+
+> **Revue (commit `fix(desktop): 4b review — safe settings updates, keyboard-safe shortcuts`) :** les règles du raccourci ci-dessous ont été durcies (décision 10) ; `captureShortcut`/`SHORTCUT_REFUSAL_MESSAGES` s'ajoutent à `acceleratorFromKey` ; `SettingsSnapshot` est strict (`StrictSettings`, sans `.catch`) pour le sens principal → fenêtres ; `SettingsUpdateResult.reason` gagne `save_failed`, avec les messages français dans `SETTINGS_UPDATE_MESSAGES` ; `SettingsStore` réessaie le renommage (3 fois sur EPERM/EBUSY/EACCES). Le code réel fait foi ; les blocs de cette tâche sont l'état initial.
 
 **Files:**
 - Create: `apps/desktop/src/shared/holo.ts`, `apps/desktop/src/shared/accelerator.ts`, `apps/desktop/src/shared/settings.ts`, `apps/desktop/src/main/settings-store.ts`
@@ -593,6 +595,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ---
 
 ### Task 3: Appliquer les réglages, menu de la zone de notification, intégration système enregistrable
+
+> **Revue (même commit de correction) :** `SettingsController.update` est tout ou rien (nouveau raccourci enregistré, puis sauvegarde, puis seulement ancien raccourci libéré et entrée de démarrage changée ; sauvegarde ratée → `save_failed`) ; `start()` réapplique aussi l'entrée de démarrage ; `setHoloAnchor` ne lève jamais. `RecordingOs` gagne le crochet `occupy(accelerator)` (le raccourci devient indisponible), et `trayAction`/`trayClick` lèvent « No tray » sans icône. Le code réel fait foi.
 
 **Files:**
 - Create: `apps/desktop/src/main/tray-menu.ts`, `apps/desktop/src/main/os-integration.ts`, `apps/desktop/src/main/recording-os.ts`, `apps/desktop/src/main/settings-controller.ts`
@@ -1370,6 +1374,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 5: Humeur commune d'Alicia et notifications de réponse
 
+> **Revue :** `Presence.status("ready")` ne remet l'humeur au repos que si elle venait de la connexion (hors ligne ou appareil refusé) : une Alicia endormie (quota) reste endormie, et une réussite ou une erreur affichée un instant garde son minuteur. Le code réel fait foi.
+
 **Files:**
 - Create: `apps/desktop/src/main/presence.ts`, `apps/desktop/src/main/turn-notifications.ts`
 - Test: `apps/desktop/test/presence.test.ts`, `apps/desktop/test/turn-notifications.test.ts`
@@ -1714,6 +1720,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ---
 
 ### Task 6: Géométrie de l'Holo et de Spotlight, clic ou glisser, miroir d'état
+
+> **Revue :** `holoLayout` garde aussi la fenêtre agrandie dans l'écran à droite (et en bas) : sur un écran trop étroit pour le mini-chat des deux côtés, la fenêtre est ramenée dans l'écran et la mascotte la suit, toujours collée à son mini-chat (`mascot.x` vaut 0 côté droit, `largeur − 136` côté gauche). Le code réel fait foi.
 
 **Files:**
 - Create: `apps/desktop/src/main/layout.ts`, `apps/desktop/src/renderer/src/lib/drag.ts`, `apps/desktop/src/renderer/src/lib/mirror.ts`
@@ -4692,7 +4700,9 @@ describe("SettingsScreen", () => {
     await screen.captureKey(key("Control", "ControlLeft", { ctrlKey: true }));
     expect([screen.capturing, screen.error]).toEqual([true, null]);
     await screen.captureKey(key("k", "KeyK"));
-    expect([screen.capturing, screen.error]).toEqual([true, SETTINGS_MESSAGES.needsModifier]);
+    expect([screen.capturing, screen.error]).toEqual([true, SETTINGS_MESSAGES.not_a_shortcut]);
+    await screen.captureKey(key("€", "KeyE", { ctrlKey: true, altKey: true }));
+    expect([screen.capturing, screen.error]).toEqual([true, SETTINGS_MESSAGES.types_character]);
     await screen.captureKey(key("K", "KeyK", { ctrlKey: true, shiftKey: true }));
     expect(screen.capturing).toBe(false);
     expect(patches).toEqual([{ shortcut: "Ctrl+Shift+K" }]);
@@ -4707,6 +4717,13 @@ describe("SettingsScreen", () => {
     await screen.captureKey(key("K", "KeyK", { ctrlKey: true, shiftKey: true }));
     expect(screen.error).toBe(SETTINGS_MESSAGES.shortcut_unavailable);
     expect(screen.snapshot?.settings.shortcut).toBe("Ctrl+Alt+A");
+  });
+
+  test("a setting the main process could not write to disk is explained", async () => {
+    const { screen } = setup((_patch, current) => Promise.resolve({ ok: false, reason: "save_failed", snapshot: current }));
+    await started(screen);
+    await screen.toggleHolo();
+    expect(screen.error).toBe(SETTINGS_MESSAGES.save_failed);
   });
 
   test("a setting that cannot be saved is explained", async () => {
@@ -4830,8 +4847,10 @@ le champ `settings: SettingsBridge;` dans `AliciaBridge`, `settingsGet: "setting
 
 `apps/desktop/src/renderer/src/lib/settings-screen.svelte.ts` :
 ```ts
-import { acceleratorFromKey, DEFAULT_SHORTCUT, type KeyLike } from "../../../shared/accelerator.ts";
-import type { SettingsPatch, SettingsSnapshot, SettingsUpdateResult } from "../../../shared/settings.ts";
+import { captureShortcut, DEFAULT_SHORTCUT, type KeyLike, SHORTCUT_REFUSAL_MESSAGES } from "../../../shared/accelerator.ts";
+import {
+  SETTINGS_UPDATE_MESSAGES, type SettingsPatch, type SettingsSnapshot, type SettingsUpdateResult,
+} from "../../../shared/settings.ts";
 import { mirror } from "./mirror.ts";
 
 /** What the screen needs from the main process (window.alicia.settings; a fake in tests). */
@@ -4842,10 +4861,9 @@ export interface SettingsPorts {
 }
 
 export const SETTINGS_MESSAGES = {
-  shortcut_unavailable: "Ce raccourci est déjà pris par une autre application.",
-  invalid: "Ce réglage n'est pas valable.",
+  ...SETTINGS_UPDATE_MESSAGES,
+  ...SHORTCUT_REFUSAL_MESSAGES,
   failed: "Impossible d'enregistrer ce réglage pour l'instant.",
-  needsModifier: "Ajoute Ctrl, Alt ou Windows à la touche (ou choisis une touche F1 à F24).",
 } as const;
 
 const MODIFIER_KEYS = new Set(["Control", "Alt", "AltGraph", "Shift", "Meta"]);
@@ -4908,13 +4926,13 @@ export class SettingsScreen {
       return;
     }
     if (MODIFIER_KEYS.has(key.key)) return;
-    const accelerator = acceleratorFromKey(key);
-    if (accelerator === null) {
-      this.error = SETTINGS_MESSAGES.needsModifier;
+    const capture = captureShortcut(key);
+    if (!capture.ok) {
+      this.error = SETTINGS_MESSAGES[capture.reason];
       return;
     }
     this.capturing = false;
-    await this.#update({ shortcut: accelerator });
+    await this.#update({ shortcut: capture.accelerator });
   }
 
   resetShortcut(): Promise<void> {

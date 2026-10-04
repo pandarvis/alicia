@@ -3,7 +3,11 @@ export const DEFAULT_SHORTCUT = "Ctrl+Alt+A";
 
 const MODIFIERS = ["Ctrl", "Alt", "Shift", "Super"] as const;
 const FUNCTION_KEY = /^F(?:[1-9]|1[0-9]|2[0-4])$/;
-const KEY = /^(?:[A-Z]|[0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space)$/;
+/** F13–F24 exist on no ordinary keyboard row: nothing types with them, so they may be used alone. */
+const SPARE_FUNCTION_KEY = /^F(?:1[3-9]|2[0-4])$/;
+const KEY = /^(?:[A-Z]|[0-9]|num[0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space)$/;
+/** Window commands Windows itself relies on (close, window menu). */
+const RESERVED = new Set(["Alt+F4", "Alt+Space"]);
 
 function isModifier(part: string): boolean {
   return MODIFIERS.some((modifier) => modifier === part);
@@ -11,8 +15,11 @@ function isModifier(part: string): boolean {
 
 /**
  * An Electron accelerator we accept: modifiers in canonical order (Ctrl, Alt, Shift, Super) then one key
- * (A–Z, 0–9, F1–F24, Space). Ctrl, Alt or Super is required, except for function keys: Shift+letter would
- * steal ordinary typing.
+ * (A–Z, 0–9, num0–num9, F1–F24, Space). So that a global shortcut never steals ordinary typing or a window
+ * command:
+ * - a letter, digit or Space needs two modifiers, or Super (Ctrl+C, Alt+letter menus, Shift+letter stay free);
+ * - F1–F12 need Ctrl, Alt or Super (Shift+F10 is the context menu); F13–F24 may be used alone;
+ * - Alt+F4 and Alt+Space are refused.
  */
 export function isValidAccelerator(value: string): boolean {
   const parts = value.split("+");
@@ -22,7 +29,10 @@ export function isValidAccelerator(value: string): boolean {
   if (!modifiers.every(isModifier)) return false;
   const canonical = MODIFIERS.filter((modifier) => modifiers.includes(modifier));
   if (canonical.join("+") !== modifiers.join("+")) return false;
-  return FUNCTION_KEY.test(key) || modifiers.some((modifier) => modifier !== "Shift");
+  if (RESERVED.has(value)) return false;
+  if (SPARE_FUNCTION_KEY.test(key)) return true;
+  if (FUNCTION_KEY.test(key)) return modifiers.some((modifier) => modifier !== "Shift");
+  return modifiers.includes("Super") || modifiers.length >= 2;
 }
 
 /** The parts of a keydown event used to capture a shortcut. */
@@ -35,26 +45,60 @@ export interface KeyLike {
   metaKey: boolean;
 }
 
-/** Letters and digits from the typed key (layout-aware); the physical key when Ctrl+Alt (AltGr) typed a symbol. */
-function keyName(key: string, code: string): string | null {
-  if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
-  const letter = /^Key([A-Z])$/.exec(code)?.[1];
-  if (letter !== undefined) return letter;
-  const digit = /^Digit([0-9])$/.exec(code)?.[1];
-  if (digit !== undefined) return digit;
-  if (FUNCTION_KEY.test(code)) return code;
-  return code === "Space" ? "Space" : null;
+export type ShortcutRefusal = "types_character" | "not_a_shortcut";
+
+export type ShortcutCapture = { ok: true; accelerator: string } | { ok: false; reason: ShortcutRefusal };
+
+/** Why a key press cannot become the shortcut, for the Réglages screen. */
+export const SHORTCUT_REFUSAL_MESSAGES: Readonly<Record<ShortcutRefusal, string>> = {
+  types_character: "Cette combinaison tape un caractère sur ce clavier.",
+  not_a_shortcut:
+    "Choisis deux touches parmi Ctrl, Alt et Maj avec une lettre ou un chiffre, la touche Windows avec une touche, "
+    + "Ctrl, Alt ou Windows avec F1 à F12, ou une touche F13 à F24.",
+};
+
+/** A key that typed a character (or a dead key, the start of one), as opposed to a named key (Enter, F5…). */
+function typesCharacter(key: string): boolean {
+  return key === "Dead" || /^\S$/u.test(key);
 }
 
-/** The accelerator for a key press, or null when it cannot be a shortcut. */
-export function acceleratorFromKey(event: KeyLike): string | null {
-  const key = keyName(event.key, event.code);
-  if (key === null) return null;
+type KeyName = { ok: true; name: string } | { ok: false; reason: ShortcutRefusal };
+
+/**
+ * Letters and digits from the typed key (layout-aware: an AZERTY A stays A); the physical key for the AZERTY
+ * top-row digits (& é " …) and numpad digits. With Ctrl+Alt, which is AltGr on many layouts, a key that
+ * typed a symbol (€, @…) is refused: the shortcut would steal that character.
+ */
+function keyName(event: KeyLike): KeyName {
+  const { key, code } = event;
+  const numpad = /^Numpad([0-9])$/.exec(code)?.[1];
+  if (numpad !== undefined) return { ok: true, name: `num${numpad}` };
+  if (code.startsWith("Numpad")) return { ok: false, reason: "not_a_shortcut" };
+  if (/^[a-z0-9]$/i.test(key)) return { ok: true, name: key.toUpperCase() };
+  if (event.ctrlKey && event.altKey && typesCharacter(key)) return { ok: false, reason: "types_character" };
+  const letter = /^Key([A-Z])$/.exec(code)?.[1];
+  if (letter !== undefined) return { ok: true, name: letter };
+  const digit = /^Digit([0-9])$/.exec(code)?.[1];
+  if (digit !== undefined) return { ok: true, name: digit };
+  if (FUNCTION_KEY.test(code)) return { ok: true, name: code };
+  return code === "Space" ? { ok: true, name: "Space" } : { ok: false, reason: "not_a_shortcut" };
+}
+
+/** The accelerator for a key press, or why it cannot be a shortcut. */
+export function captureShortcut(event: KeyLike): ShortcutCapture {
+  const key = keyName(event);
+  if (!key.ok) return key;
   const modifiers: string[] = [];
   if (event.ctrlKey) modifiers.push("Ctrl");
   if (event.altKey) modifiers.push("Alt");
   if (event.shiftKey) modifiers.push("Shift");
   if (event.metaKey) modifiers.push("Super");
-  const accelerator = [...modifiers, key].join("+");
-  return isValidAccelerator(accelerator) ? accelerator : null;
+  const accelerator = [...modifiers, key.name].join("+");
+  return isValidAccelerator(accelerator) ? { ok: true, accelerator } : { ok: false, reason: "not_a_shortcut" };
+}
+
+/** The accelerator for a key press, or null when it cannot be a shortcut. */
+export function acceleratorFromKey(event: KeyLike): string | null {
+  const capture = captureShortcut(event);
+  return capture.ok ? capture.accelerator : null;
 }

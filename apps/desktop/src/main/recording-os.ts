@@ -10,12 +10,14 @@ export const RecordedState = z.object({
   shortcuts: z.array(z.string()),
   loginItem: z.boolean().nullable(),
   notifications: z.array(z.object({ title: z.string(), body: z.string() })),
-  tray: z.array(z.object({ id: z.string(), label: z.string(), checked: z.boolean().nullable() })),
+  tray: z.array(z.object({ id: TrayAction.or(z.literal("separator")), label: z.string(), checked: z.boolean().nullable() })),
 });
 export type RecordedState = z.infer<typeof RecordedState>;
 
 export interface TestHooks {
   state(): RecordedState;
+  /** Another application now holds this accelerator: registering it fails. */
+  occupy(accelerator: string): void;
   triggerShortcut(): void;
   clickNotification(index: number): void;
   trayAction(id: string): void;
@@ -32,11 +34,13 @@ interface RecordedTray {
 /** Stand-in for the OS in tests: nothing leaves the app, everything is recorded and can be triggered. */
 export class RecordingOs implements OsIntegration {
   readonly #shortcuts = new Map<string, () => void>();
+  readonly #occupied = new Set<string>();
   readonly #notifications: NotificationRequest[] = [];
   #loginItem: boolean | null = null;
   #tray: RecordedTray | null = null;
 
   registerShortcut(accelerator: string, run: () => void): boolean {
+    if (this.#occupied.has(accelerator)) return false;
     this.#shortcuts.set(accelerator, run);
     return true;
   }
@@ -68,6 +72,11 @@ export class RecordingOs implements OsIntegration {
     this.#tray = null;
   }
 
+  #requireTray(): RecordedTray {
+    if (this.#tray === null) throw new Error("No tray");
+    return this.#tray;
+  }
+
   hooks(): TestHooks {
     return {
       state: () => ({
@@ -78,6 +87,9 @@ export class RecordingOs implements OsIntegration {
           .filter((item) => item.id !== "separator")
           .map((item) => ({ id: item.id, label: item.label, checked: item.checked })),
       }),
+      occupy: (accelerator) => {
+        this.#occupied.add(accelerator);
+      },
       triggerShortcut: () => {
         const [run] = this.#shortcuts.values();
         if (run === undefined) throw new Error("No shortcut registered");
@@ -89,10 +101,10 @@ export class RecordingOs implements OsIntegration {
         notification.onClick();
       },
       trayAction: (id) => {
-        this.#tray?.onAction(TrayAction.parse(id));
+        this.#requireTray().onAction(TrayAction.parse(id));
       },
       trayClick: () => {
-        this.#tray?.onClick();
+        this.#requireTray().onClick();
       },
     };
   }

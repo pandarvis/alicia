@@ -37,18 +37,24 @@ export function clampAnchor(anchor: Point, workArea: Rect): Point {
   };
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(value, max));
+}
+
 /**
  * The Holo window for a mascot at `anchor`. Expanded, the window grows towards the side with room (left first)
- * and upwards, so the mascot stays exactly where it is on screen.
+ * and upwards, so the mascot stays exactly where it is on screen. On a screen too narrow for the mini-chat on
+ * either side, the window is kept on screen and the mascot moves with it, still beside its mini-chat.
  */
 export function holoLayout(anchor: Point, expanded: boolean, workArea: Rect): HoloLayout {
   if (!expanded) return { bounds: { ...anchor, ...HOLO_SIZE }, panelSide: "left", mascot: { x: 0, y: 0 } };
   const width = HOLO_SIZE.width + HOLO_PANEL.gap + HOLO_PANEL.width;
   const height = Math.max(HOLO_SIZE.height, HOLO_PANEL.height);
   const panelSide: PanelSide = anchor.x - workArea.x >= HOLO_PANEL.width + HOLO_PANEL.gap ? "left" : "right";
-  const x = panelSide === "left" ? anchor.x - HOLO_PANEL.gap - HOLO_PANEL.width : anchor.x;
-  const y = Math.max(workArea.y, anchor.y + HOLO_SIZE.height - height);
-  return { bounds: { x, y, width, height }, panelSide, mascot: { x: anchor.x - x, y: anchor.y - y } };
+  const mascotX = panelSide === "left" ? width - HOLO_SIZE.width : 0;
+  const x = clamp(anchor.x - mascotX, workArea.x, workArea.x + workArea.width - width);
+  const y = clamp(anchor.y + HOLO_SIZE.height - height, workArea.y, workArea.y + workArea.height - height);
+  return { bounds: { x, y, width, height }, panelSide, mascot: { x: mascotX, y: anchor.y - y } };
 }
 
 /** The Spotlight bar: centred, a little above the middle of the screen under the pointer. */

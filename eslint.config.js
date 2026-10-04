@@ -26,5 +26,25 @@ export default tseslint.config(
       parserOptions: { parser: tseslint.parser },
     },
   },
+  {
+    // Shared code also runs in the sandboxed pages, and the pages have neither Node nor Electron.
+    files: ["apps/desktop/src/shared/**", "apps/desktop/src/renderer/**"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        paths: [{ name: "electron", message: "Pages and shared code cannot use Electron: go through window.alicia." }],
+        patterns: [{ group: ["node:*"], message: "Pages and shared code cannot use Node modules." }],
+      }],
+    },
+  },
+  {
+    // Shared code also runs in the main process, which has no DOM.
+    files: ["apps/desktop/src/shared/**"],
+    rules: {
+      "no-restricted-globals": ["error",
+        { name: "window", message: "Shared code also runs in the main process, which has no window." },
+        { name: "document", message: "Shared code also runs in the main process, which has no document." },
+      ],
+    },
+  },
   { files: ["**/*.js"], ...tseslint.configs.disableTypeChecked },
 );

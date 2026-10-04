@@ -64,8 +64,11 @@ export class Presence {
 
   status(status: ConnectionStatus): void {
     if (status === "ready") {
+      // Only the connection's own mood (alert or error while offline) ends here: a sleeping (quota) Alicia
+      // stays asleep, and a success or an error shown for a moment keeps its timer.
+      const wasOffline = this.#offline;
       this.#offline = false;
-      if (this.#turns === 0) this.#set("idle");
+      if (wasOffline && this.#turns === 0) this.#set("idle");
       return;
     }
     if (status === "offline" || status === "rejected") {

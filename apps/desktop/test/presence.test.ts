@@ -91,6 +91,28 @@ describe("Presence", () => {
     expect(moods).toEqual(["thinking", "alert", "idle", "error"]);
   });
 
+  test("the brain coming back does not wake a sleeping Alicia (quota)", () => {
+    const { presence, moods } = setup();
+    presence.sent();
+    presence.event({ type: "error", code: "quota", message: "Quota atteint." });
+    presence.status("connecting");
+    presence.status("ready");
+    expect(moods).toEqual(["thinking", "sleeping"]);
+  });
+
+  test("the brain coming back does not cut a success or an error short", () => {
+    const { presence, moods, elapse } = setup();
+    presence.sent();
+    presence.event(DONE);
+    presence.status("ready");
+    elapse(SUCCESS_MS);
+    presence.sent();
+    presence.event({ type: "error", code: "engine", message: "Le moteur a échoué." });
+    presence.status("ready");
+    elapse(TURN_ERROR_MS);
+    expect(moods).toEqual(["thinking", "success", "idle", "thinking", "error", "idle"]);
+  });
+
   test("events without a turn of ours change nothing", () => {
     const { presence, moods } = setup();
     presence.event({ type: "text_delta", conversationId: CONV, text: "?" });

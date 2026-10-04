@@ -31,6 +31,26 @@ describe("RecordingOs", () => {
     expect(() => { hooks.trayAction("format-disk"); }).toThrow();
   });
 
+  test("a shortcut occupied by another application cannot be registered", () => {
+    const os = new RecordingOs();
+    os.hooks().occupy("Ctrl+Alt+A");
+    expect(os.registerShortcut("Ctrl+Alt+A", () => undefined)).toBe(false);
+    expect(os.registerShortcut("Ctrl+Shift+K", () => undefined)).toBe(true);
+    expect(os.hooks().state().shortcuts).toEqual(["Ctrl+Shift+K"]);
+  });
+
+  test("driving a tray that does not exist is a test error", () => {
+    const hooks = new RecordingOs().hooks();
+    expect(() => { hooks.trayAction("open"); }).toThrow("No tray");
+    expect(() => { hooks.trayClick(); }).toThrow("No tray");
+  });
+
+  test("the recorded tray only holds known items", () => {
+    expect(RecordedState.safeParse({
+      shortcuts: [], loginItem: null, notifications: [], tray: [{ id: "format-disk", label: "?", checked: null }],
+    }).success).toBe(false);
+  });
+
   test("an unregistered shortcut is gone", () => {
     const os = new RecordingOs();
     os.registerShortcut("Ctrl+Alt+A", () => undefined);
