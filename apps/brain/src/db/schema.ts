@@ -47,17 +47,26 @@ export const messages = sqliteTable(
   (table) => [index("messages_conversation_created_idx").on(table.conversationId, table.createdAt)],
 );
 
-export const turnLog = sqliteTable("turn_log", {
-  id: text("id").primaryKey(),
-  conversationId: text("conversation_id").notNull().references(() => conversations.id),
-  model: text("model").notNull(),
-  inputTokens: integer("input_tokens").notNull(),
-  outputTokens: integer("output_tokens").notNull(),
-  durationMs: integer("duration_ms").notNull(),
-  tools: text("tools").notNull(),
-  error: text("error"),
-  createdAt: integer("created_at").notNull(),
-});
+export const turnLog = sqliteTable(
+  "turn_log",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id").notNull().references(() => conversations.id),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    tools: text("tools").notNull(),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    // Deleting a conversation deletes its log (and the foreign key check looks it up).
+    index("turn_log_conversation_idx").on(table.conversationId),
+    // Rotation beyond 90 days.
+    index("turn_log_created_idx").on(table.createdAt),
+  ],
+);
 
 export const memories = sqliteTable(
   "memories",
@@ -82,5 +91,9 @@ export const memories = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [index("memories_scope_idx").on(table.scope, table.forgottenAt)],
+  (table) => [
+    index("memories_scope_idx").on(table.scope, table.forgottenAt),
+    // Deleting a conversation sets its memories' conversation_id to NULL.
+    index("memories_conversation_idx").on(table.conversationId),
+  ],
 );
