@@ -20,6 +20,19 @@ function constantEmbedder(model: string): Embedder {
   };
 }
 
+/** Fake embedder whose next calls wait until the test opens the gate. */
+class GatedEmbedder implements Embedder {
+  readonly #inner = new FakeEmbedder();
+  readonly model = this.#inner.model;
+  readonly dimensions = this.#inner.dimensions;
+  gate: Promise<void> = Promise.resolve();
+
+  async embed(texts: readonly string[]): Promise<Float32Array[]> {
+    await this.gate;
+    return this.#inner.embed(texts);
+  }
+}
+
 const remember = (store: MemoryStore, personId: string, text: string, scope: "common" | "personal" = "personal") =>
   store.remember({ personId, scope, kind: "preference", text, source: "conversation" });
 
@@ -41,7 +54,7 @@ describe("MemoryStore", () => {
     expect(await store.search("elodie", "surprise")).toEqual([]);
     expect(store.list("elodie", {})).toEqual([]);
     expect(store.get("elodie", id)).toBeUndefined();
-    expect(await store.update("elodie", id, { text: "piraté" })).toBeUndefined();
+    expect(await store.update("elodie", id, { text: "piraté" })).toEqual({ status: "not_found" });
     expect(store.forget("elodie", id)).toBe(false);
     expect(store.get("kevin", id)?.text).toBe("Kévin prépare une surprise pour Élodie");
   });
@@ -60,10 +73,73 @@ describe("MemoryStore", () => {
     expect(store.list("kevin", {})).toHaveLength(1);
   });
 
-  test("refuses passwords and codes", async () => {
+  test.each([
+    "Le mot de passe du wifi est hunter2",
+    "mdp: x",
+    "Code PIN de la carte : 1234",
+    "code d'accès du portail",
+    "code d’accès du portail",
+    "le code du wifi c'est 1234",
+    "digicode 4521B",
+    "IBAN FR76 3000 6000 0112 3456 7890 189",
+    "cryptogramme 123",
+    "CVV 123",
+  ])("refuses secrets: %s", async (text) => {
     const { store } = setup();
-    expect((await remember(store, "kevin", "Le mot de passe du wifi est hunter2")).status).toBe("refused");
-    expect((await remember(store, "kevin", "Code PIN de la carte : 1234")).status).toBe("refused");
+    expect(await remember(store, "kevin", text)).toEqual({ status: "refused", reason: "secret" });
+  });
+
+  test.each([
+    "On a planté un pin dans le jardin",
+    "pomme de pin",
+    "le code de la route",
+    "Kévin code en TypeScript",
+    "la porte du garage a un code couleur bleu",
+  ])("accepts ordinary text: %s", async (text) => {
+    const { store } = setup();
+    expect((await remember(store, "kevin", text)).status).toBe("created");
+  });
+
+  test("refuses empty text, on remember and on update", async () => {
+    const { store } = setup();
+    expect(await remember(store, "kevin", "   ")).toEqual({ status: "refused", reason: "empty" });
+    const result = await remember(store, "kevin", "Kévin adore les lasagnes");
+    if (result.status !== "created") throw new Error("not created");
+    expect(await store.update("kevin", result.memory.id, { text: " \n" })).toEqual({ status: "refused", reason: "empty" });
+    expect(await store.update("kevin", result.memory.id, { text: "mot de passe : hunter2" })).toEqual({
+      status: "refused",
+      reason: "secret",
+    });
+    expect(store.get("kevin", result.memory.id)?.text).toBe("Kévin adore les lasagnes");
+  });
+
+  test("update never overwrites a memory moved out of reach meanwhile", async () => {
+    const db = createTestDb();
+    const { clock } = createTestClock();
+    const embedder = new GatedEmbedder();
+    const store = new MemoryStore(db, embedder, clock, { duplicateThreshold: 0.95, minSimilarity: 0.3 });
+    const result = await remember(store, "kevin", "Le code couleur du salon est le bleu", "common");
+    if (result.status !== "created") throw new Error("not created");
+    const id = result.memory.id;
+
+    const gate = Promise.withResolvers<undefined>();
+    embedder.gate = gate.promise;
+    const kevinEdit = store.update("kevin", id, { text: "Le salon est vert" });
+    // While Kévin's new text is being embedded, Élodie takes the memory for herself.
+    expect((await store.update("elodie", id, { scope: "personal" })).status).toBe("updated");
+    gate.resolve(undefined);
+
+    expect(await kevinEdit).toEqual({ status: "not_found" });
+    expect(store.get("elodie", id)).toMatchObject({ scope: "elodie", text: "Le code couleur du salon est le bleu" });
+    expect(store.get("kevin", id)).toBeUndefined();
+  });
+
+  test("search without recall leaves the bookkeeping alone", async () => {
+    const { store } = setup();
+    await remember(store, "kevin", "Kévin adore les lasagnes");
+    const found = await store.search("kevin", "lasagnes", { recall: false });
+    expect(found.map((m) => [m.text, m.recallCount, m.lastRecalledAt])).toEqual([["Kévin adore les lasagnes", 0, null]]);
+    expect(await store.search("kevin", "lasagnes", { limit: 0 })).toEqual([]);
   });
 
   test("update text re-embeds and moves scope (common ↔ own personal only)", async () => {
@@ -71,7 +147,7 @@ describe("MemoryStore", () => {
     const result = await remember(store, "kevin", "Élodie aime le thé vert", "common");
     if (result.status !== "created") throw new Error("not created");
     const updated = await store.update("kevin", result.memory.id, { text: "Kévin aime le thé vert", scope: "personal" });
-    expect(updated?.scope).toBe("kevin");
+    expect(updated.status === "updated" ? updated.memory.scope : updated.status).toBe("kevin");
     expect((await store.search("kevin", "thé vert")).map((m) => m.text)).toEqual(["Kévin aime le thé vert"]);
     expect(await store.search("elodie", "thé vert")).toEqual([]);
   });

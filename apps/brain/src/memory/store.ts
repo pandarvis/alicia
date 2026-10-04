@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MemoryKind, MemoryScope } from "@alicia/protocol";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/open.ts";
 import { memories } from "../db/schema.ts";
@@ -26,10 +26,25 @@ export interface RememberInput {
   lastRecalledAt?: number | null;
 }
 
+/** Why a text is not stored: a secret (password, code, bank detail) or nothing at all. */
+export type RefusalReason = "secret" | "empty";
+
 export type RememberResult =
   | { status: "created"; memory: Memory }
   | { status: "duplicate"; memory: Memory }
-  | { status: "refused"; reason: "secret" };
+  | { status: "refused"; reason: RefusalReason };
+
+export type UpdateResult =
+  | { status: "updated"; memory: Memory }
+  | { status: "not_found" }
+  | { status: "refused"; reason: RefusalReason };
+
+export interface SearchOptions {
+  /** At most this many results (default 8). */
+  limit?: number;
+  /** Counts the hits as recalled (default true); a screen listing results passes false. */
+  recall?: boolean;
+}
 
 export interface MemoryPatchInput {
   text?: string;
@@ -60,7 +75,17 @@ const COMMON = "common";
 const CANDIDATES = 50;
 const SEARCH_LIMIT = 8;
 const FORGET_RETENTION_MS = 30 * 24 * 3_600_000;
-const SECRET = /\b(mots? de passe|password|mdp|code (pin|secret|d'acc[eè]s)|pin\b|cvv|cryptogramme)/i;
+/** Words that name a secret. Letter boundaries are Unicode-aware (`\b` ignores accented letters). */
+const SECRET_WORDS =
+  /(?<![\p{L}\p{N}])(mots? de passe|passwords?|mdp|code\s*pin|pin\s*:?\s*\d|codes? (d['’]acc[eè]s|secrets?|du wifi|wifi|de l['’]alarme|alarme|du portail|portail)|digicodes?|iban|cvv|cryptogrammes?)(?!\p{L})/iu;
+/** "code" followed closely by a number ("le code de la porte : 4521"), postal codes aside. */
+const SECRET_CODE = /(?<![\p{L}\p{N}])codes?(?!\s+postal)[^.!?\n]{0,30}?\d{3,}/iu;
+
+function refusal(text: string): RefusalReason | undefined {
+  if (text === "") return "empty";
+  if (SECRET_WORDS.test(text) || SECRET_CODE.test(text)) return "secret";
+  return undefined;
+}
 
 function strip(row: MemoryRow): Memory {
   return {
@@ -107,11 +132,16 @@ export class MemoryStore {
     return scope === "common" ? COMMON : personId;
   }
 
+  /** SQL condition: the memory is active and within the person's reach. */
+  #reachable(personId: string) {
+    return and(inArray(memories.scope, this.#scopes(personId)), isNull(memories.forgottenAt));
+  }
+
   #visible(personId: string, id: string): MemoryRow | undefined {
     return this.#db
       .select()
       .from(memories)
-      .where(and(eq(memories.id, id), inArray(memories.scope, this.#scopes(personId)), isNull(memories.forgottenAt)))
+      .where(and(eq(memories.id, id), this.#reachable(personId)))
       .get();
   }
 
@@ -145,13 +175,15 @@ export class MemoryStore {
 
   async remember(input: RememberInput): Promise<RememberResult> {
     const text = input.text.trim();
-    if (SECRET.test(text)) return { status: "refused", reason: "secret" };
+    const reason = refusal(text);
+    if (reason !== undefined) return { status: "refused", reason };
     const scope = this.#storedScope(input.personId, input.scope);
     const vector = await this.#embed(text, "passage");
 
     const duplicate = this.#closest(vector, [scope]);
     if (duplicate !== undefined && duplicate.similarity >= this.#duplicateThreshold) {
-      return { status: "duplicate", memory: strip(duplicate.row) };
+      const existing = this.#visible(input.personId, duplicate.id);
+      if (existing !== undefined) return { status: "duplicate", memory: strip(existing) };
     }
 
     const now = this.#clock();
@@ -181,7 +213,7 @@ export class MemoryStore {
   }
 
   /** Hybrid search (full text + similarity) within the person's scopes; counts each hit as a recall. */
-  async search(personId: string, query: string, limit = SEARCH_LIMIT): Promise<Memory[]> {
+  async search(personId: string, query: string, options: SearchOptions = {}): Promise<Memory[]> {
     const scopes = this.#scopes(personId);
     const textRanked = this.#fullText(query, scopes);
     const vector = await this.#embed(query, "query");
@@ -192,18 +224,22 @@ export class MemoryStore {
       .slice(0, CANDIDATES)
       .map((hit) => hit.id);
 
-    const ids = fuse([textRanked, vectorRanked]).slice(0, limit);
+    const ids = fuse([textRanked, vectorRanked]).slice(0, Math.max(0, options.limit ?? SEARCH_LIMIT));
     if (ids.length === 0) return [];
-    this.#db
-      .update(memories)
-      .set({ recallCount: sql`${memories.recallCount} + 1`, lastRecalledAt: this.#clock() })
-      .where(inArray(memories.id, ids))
-      .run();
+    // The embedding was awaited: re-check reach, a memory may have moved or been forgotten meanwhile.
+    const found = and(inArray(memories.id, ids), this.#reachable(personId));
+    if (options.recall ?? true) {
+      this.#db
+        .update(memories)
+        .set({ recallCount: sql`${memories.recallCount} + 1`, lastRecalledAt: this.#clock() })
+        .where(found)
+        .run();
+    }
     const rows = new Map(
       this.#db
         .select()
         .from(memories)
-        .where(inArray(memories.id, ids))
+        .where(found)
         .all()
         .map((row) => [row.id, row]),
     );
@@ -214,11 +250,12 @@ export class MemoryStore {
   }
 
   /** Edits a visible memory; a scope change moves it between common and the person's own. */
-  async update(personId: string, id: string, patch: MemoryPatchInput): Promise<Memory | undefined> {
-    const row = this.#visible(personId, id);
-    if (row === undefined) return undefined;
+  async update(personId: string, id: string, patch: MemoryPatchInput): Promise<UpdateResult> {
     const text = patch.text?.trim();
-    if (text !== undefined && SECRET.test(text)) return undefined;
+    const reason = text === undefined ? undefined : refusal(text);
+    if (reason !== undefined) return { status: "refused", reason };
+    const row = this.#visible(personId, id);
+    if (row === undefined) return { status: "not_found" };
     const reembed = text !== undefined && (text !== row.text || row.embeddingModel !== this.#embedder.model);
     const embedding = reembed ? toBlob(await this.#embed(text, "passage")) : undefined;
     const next: Partial<MemoryRow> = {
@@ -229,8 +266,14 @@ export class MemoryStore {
       ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
       updatedAt: this.#clock(),
     };
-    this.#db.update(memories).set(next).where(eq(memories.id, id)).run();
-    return this.get(personId, id);
+    // Guarded write: the embedding was awaited, so the memory may have left this person's reach meanwhile.
+    const { changes } = this.#db
+      .update(memories)
+      .set(next)
+      .where(and(eq(memories.id, id), this.#reachable(personId)))
+      .run();
+    const memory = changes === 1 ? this.get(personId, id) : undefined;
+    return memory === undefined ? { status: "not_found" } : { status: "updated", memory };
   }
 
   /** Soft forget: hidden at once, purged for good after 30 days. */
@@ -253,10 +296,14 @@ export class MemoryStore {
     const pinnedOrRule = this.#db
       .select()
       .from(memories)
-      .where(and(inArray(memories.scope, this.#scopes(personId)), isNull(memories.forgottenAt)))
+      .where(
+        and(
+          this.#reachable(personId),
+          or(eq(memories.pinned, true), and(eq(memories.kind, "rule"), eq(memories.scope, COMMON))),
+        ),
+      )
       .orderBy(desc(memories.recallCount), asc(memories.createdAt))
       .all()
-      .filter((row) => row.pinned || (row.kind === "rule" && row.scope === COMMON))
       .map(strip);
     return {
       rules: pinnedOrRule.filter((m) => m.kind === "rule" && m.scope === COMMON),
@@ -269,9 +316,9 @@ export class MemoryStore {
    * Active memories whose vector comes from the current embedding model: vectors from another
    * model live in another space and are never compared (they are re-embedded separately).
    */
-  #comparable(scopes: string[]): MemoryRow[] {
+  #comparable(scopes: string[]): { id: string; embedding: Buffer }[] {
     return this.#db
-      .select()
+      .select({ id: memories.id, embedding: memories.embedding })
       .from(memories)
       .where(
         and(
@@ -283,11 +330,11 @@ export class MemoryStore {
       .all();
   }
 
-  #closest(vector: Float32Array, scopes: string[]): { row: MemoryRow; similarity: number } | undefined {
-    let best: { row: MemoryRow; similarity: number } | undefined;
+  #closest(vector: Float32Array, scopes: string[]): { id: string; similarity: number } | undefined {
+    let best: { id: string; similarity: number } | undefined;
     for (const row of this.#comparable(scopes)) {
       const similarity = cosine(vector, fromBlob(row.embedding));
-      if (best === undefined || similarity > best.similarity) best = { row, similarity };
+      if (best === undefined || similarity > best.similarity) best = { id: row.id, similarity };
     }
     return best;
   }
