@@ -43,9 +43,9 @@
     };
   });
 
-  // Each time the bar appears, the cursor is in it.
+  // Each time the bar appears, and when a refused message gives the field back, the cursor is in it.
   $effect(() => {
-    if (shown) input?.focus();
+    if (shown && !sending) input?.focus();
   });
 
   function open(): void {
@@ -117,7 +117,7 @@
         bind:value={text}
         onkeydown={handleKeydown}
         oninput={typing}
-        maxlength="2000"
+        maxlength="20000"
         disabled={sending}
         placeholder={paired ? "Demande à Alicia…" : "Appaire d'abord Alicia : Entrée ouvre l'app"}
         aria-label="Message pour Alicia"

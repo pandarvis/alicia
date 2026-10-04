@@ -107,6 +107,8 @@ function start(): void {
     onSessionEnd: () => {
       quitCleanup();
     },
+    cursor: () => os.cursorScreenPoint(),
+    isFocused: (window) => os.isFocused(window),
   });
   const presence = new Presence({
     schedule,
@@ -134,6 +136,8 @@ function start(): void {
     },
     onTurnFinished: (turn, pendingTurns) => {
       presence.finished(turn, pendingTurns);
+      // A failed turn may have created its conversation: only its own window heard of it.
+      if (turn.outcome === "failed" && turn.conversationId !== undefined) windows.broadcast(PUSH.conversationsChanged);
       const notification = notificationFor(turn, windows.visibility());
       if (notification === null) return;
       os.notify({

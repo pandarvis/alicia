@@ -1,5 +1,5 @@
 import {
-  app, globalShortcut, Menu, type MenuItemConstructorOptions, nativeImage, Notification, Tray,
+  app, globalShortcut, Menu, type MenuItemConstructorOptions, nativeImage, Notification, screen, Tray,
 } from "electron";
 import { HIDDEN_ARG } from "./lifecycle.ts";
 import type { OsIntegration, TrayHandle } from "./os-integration.ts";
@@ -80,6 +80,8 @@ export function electronOs(options: { trayIcon: string; notificationIcon: string
       tray = created;
       return { update };
     },
+    cursorScreenPoint: () => screen.getCursorScreenPoint(),
+    isFocused: (window) => window.isFocused(),
     dispose: () => {
       globalShortcut.unregisterAll();
       tray?.destroy();

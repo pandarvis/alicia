@@ -25,6 +25,7 @@ function setup(initial: ConnectionStatus = "ready", delivered = true) {
       statusListeners.push(listener);
       return () => { statusListeners.splice(statusListeners.indexOf(listener), 1); };
     },
+    onConversationsChanged: () => () => undefined,
   };
   const events: ServerEvent[] = [];
   const statuses: ConnectionStatus[] = [];

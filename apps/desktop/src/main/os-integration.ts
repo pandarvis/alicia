@@ -1,3 +1,4 @@
+import type { Point } from "../shared/holo.ts";
 import type { TrayAction, TrayItem } from "./tray-menu.ts";
 
 export interface NotificationRequest {
@@ -20,5 +21,9 @@ export interface OsIntegration {
   isLoginItemEnabled(): boolean | null;
   notify(request: NotificationRequest): void;
   createTray(items: readonly TrayItem[], onAction: (action: TrayAction) => void, onClick: () => void): TrayHandle;
+  /** Where the mouse pointer is on the desktop (screen DIP). */
+  cursorScreenPoint(): Point;
+  /** Whether a window has the keyboard focus, i.e. is in front of the person. */
+  isFocused(window: { isFocused(): boolean }): boolean;
   dispose(): void;
 }

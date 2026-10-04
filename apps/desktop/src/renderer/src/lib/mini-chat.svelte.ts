@@ -17,6 +17,8 @@ export class MiniChat {
   status = $state<ConnectionStatus>("connecting");
   readonly store: ChatStore;
   readonly #hub: HubClient;
+  readonly #bridge: BrainBridge;
+  #offConversations: (() => void) | null = null;
   #wasOffline = false;
 
   constructor(session: StoredSession, bridge: BrainBridge, fetchFn: typeof fetch) {
@@ -41,14 +43,21 @@ export class MiniChat {
       schedule,
     });
     this.#hub = hub;
+    this.#bridge = bridge;
   }
 
   start(): void {
     this.#hub.start();
+    // Another window's turn failed after creating its conversation.
+    this.#offConversations ??= this.#bridge.onConversationsChanged(() => {
+      void this.store.refreshConversations();
+    });
   }
 
   stop(): void {
     this.#hub.stop();
+    this.#offConversations?.();
+    this.#offConversations = null;
   }
 
   #statusChanged(status: ConnectionStatus): void {

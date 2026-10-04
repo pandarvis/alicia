@@ -49,6 +49,8 @@ export class ChatStore {
   /** The conversation of this window's running turn, from its own `conversation` event. */
   #turnConversationId: string | null = null;
   #cancelMascotReset: (() => void) | null = null;
+  /** A conversation asked from outside while this window's turn runs: opened when it ends. */
+  #openAfterTurn: string | null = null;
   #loadToken = 0;
   #refreshToken = 0;
 
@@ -73,6 +75,19 @@ export class ChatStore {
     this.messages = [];
     this.#setMascot("idle");
     await this.#loadHistory(conversationId);
+  }
+
+  /**
+   * Opens a conversation asked from outside (a notification, the Holo): at once, or when this window's own
+   * answer has ended (switching in the middle would lose it).
+   */
+  openWhenIdle(conversationId: string): void {
+    if (this.busy) {
+      this.#openAfterTurn = conversationId;
+      return;
+    }
+    this.#openAfterTurn = null;
+    void this.open(conversationId);
   }
 
   /** Reloads the active conversation after the connection came back (the brain may have finished a lost turn). */
@@ -202,11 +217,12 @@ export class ChatStore {
   }
 
   /**
-   * Turn events only count while this window's turn is pending, and only for its conversation: in a new
-   * conversation, nothing counts before the brain named it (another window's answer may be streaming).
+   * Turn events only count while this window's turn is pending, and only once the brain named its conversation
+   * (its `conversation` event always comes first): before that, an event of the same conversation is another
+   * window's turn ending (its `done` reaches every window).
    */
   #isCurrentTurn(conversationId: string): boolean {
-    return this.busy && conversationId === (this.#turnConversationId ?? this.activeId);
+    return this.busy && this.#turnConversationId === conversationId;
   }
 
   /** Loads a history; only the latest load may assign messages or report an error. */
@@ -232,6 +248,9 @@ export class ChatStore {
     this.activity = null;
     this.#pendingRequestId = null;
     this.#turnConversationId = null;
+    const next = this.#openAfterTurn;
+    this.#openAfterTurn = null;
+    if (next !== null) void this.open(next);
   }
 
   /** Sets the mascot; with `resetAfterMs`, goes back to idle afterwards. */

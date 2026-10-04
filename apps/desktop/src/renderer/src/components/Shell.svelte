@@ -128,10 +128,20 @@
   onMount(() => {
     hub.start();
     void store.refreshConversations();
-    // A notification or the Holo asks for a conversation.
-    return window.alicia.app.onOpenConversation((conversationId) => {
-      openConversation(conversationId);
-    });
+    const offs = [
+      // A notification or the Holo asks for a conversation: shown once this window's own answer has ended.
+      window.alicia.app.onOpenConversation((conversationId) => {
+        view = "chat";
+        store.openWhenIdle(conversationId);
+      }),
+      // Another window's turn failed after creating its conversation.
+      window.alicia.brain.onConversationsChanged(() => {
+        void store.refreshConversations();
+      }),
+    ];
+    return () => {
+      for (const off of offs) off();
+    };
   });
   onDestroy(() => {
     hub.stop();

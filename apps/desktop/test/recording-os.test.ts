@@ -76,6 +76,28 @@ describe("RecordingOs", () => {
     }
   });
 
+  test("the pointer is where the test puts it (top-left corner of the main screen until then)", () => {
+    const os = new RecordingOs();
+    expect(os.cursorScreenPoint()).toEqual({ x: 0, y: 0 });
+    os.hooks().moveCursor({ x: -1200, y: 340 });
+    expect(os.cursorScreenPoint()).toEqual({ x: -1200, y: 340 });
+    expect(() => { os.hooks().moveCursor({ x: "left" }); }).toThrow();
+  });
+
+  test("the test can pin which window is in front, whatever the OS focus is", () => {
+    const os = new RecordingOs();
+    const focused = { isFocused: () => true };
+    const behind = { isFocused: () => false };
+    expect([os.isFocused(focused), os.isFocused(behind)]).toEqual([true, false]);
+    os.hooks().pinFocus("focused");
+    expect(os.isFocused(behind)).toBe(true);
+    os.hooks().pinFocus("unfocused");
+    expect(os.isFocused(focused)).toBe(false);
+    os.hooks().pinFocus("real");
+    expect(os.isFocused(focused)).toBe(true);
+    expect(() => { os.hooks().pinFocus("maybe"); }).toThrow();
+  });
+
   test("an unregistered shortcut is gone", () => {
     const os = new RecordingOs();
     os.registerShortcut("Ctrl+Alt+A", () => undefined);

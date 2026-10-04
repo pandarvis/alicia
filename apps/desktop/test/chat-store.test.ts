@@ -313,6 +313,34 @@ describe("ChatStore", () => {
     expect(history).toHaveBeenCalledTimes(2);
   });
 
+  test("a conversation asked from outside (notification) while Alicia answers here opens once the turn ends", async () => {
+    const history = vi.fn(() => Promise.resolve([msg("00000000-0000-4000-8000-0000000000a1", "Avant")]));
+    const { store, sent } = setup([], { history });
+    store.openWhenIdle(CONV_B);
+    await vi.waitFor(() => { expect(store.activeId).toBe(CONV_B); });
+    store.startNew();
+    store.send("Question");
+    store.openWhenIdle(CONV);
+    expect(store.activeId).toBeNull();
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV_B });
+    store.handle({ type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
+    await vi.waitFor(() => { expect(store.activeId).toBe(CONV); });
+    expect(history).toHaveBeenLastCalledWith(CONV);
+  });
+
+  test("another window's answer ending in the open conversation never ends this window's own pending turn", async () => {
+    const { store, sent } = setup();
+    await store.open(CONV);
+    // This window asks in CONV while the Holo's turn in CONV is finishing: the Holo's `done` lands first.
+    store.send("Et maintenant ?");
+    store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
+    expect(store.busy).toBe(true);
+    // Then the brain refuses this window's message (the conversation was still locked): it is said.
+    store.handle({ type: "error", requestId: sent[0]?.requestId ?? "", code: "busy", message: "Alicia répond déjà dans cette conversation." });
+    expect(store.busy).toBe(false);
+    expect(store.notice).toBe("Alicia répond déjà dans cette conversation.");
+  });
+
   test("a new conversation started while another window's answer streams never shows that answer", () => {
     const { store, sent } = setup();
     store.send("Nouvelle question");

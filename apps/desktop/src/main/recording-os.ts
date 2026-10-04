@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { NotificationRequest, OsIntegration, TrayHandle } from "./os-integration.ts";
+import { Point } from "../shared/holo.ts";
 import { TrayAction, type TrayItem } from "./tray-menu.ts";
 
 /** Where the end-to-end test finds the recorder (`globalThis[TEST_HOOKS_KEY]`, read through app.evaluate). */
@@ -24,7 +25,14 @@ export interface TestHooks {
   trayAction(id: string): void;
   /** A left click on the tray icon. */
   trayClick(): void;
+  /** Puts the mouse pointer somewhere on the desktop ({ x, y }, screen DIP). */
+  moveCursor(point: unknown): void;
+  /** Which windows count as in front: "focused" (all), "unfocused" (none), or "real" (the OS focus). */
+  pinFocus(mode: unknown): void;
 }
+
+const FocusMode = z.enum(["focused", "unfocused", "real"]);
+type FocusMode = z.infer<typeof FocusMode>;
 
 interface RecordedTray {
   items: readonly TrayItem[];
@@ -59,6 +67,8 @@ export class RecordingOs implements OsIntegration {
   /** What the app wrote during this run (null: nothing). */
   #loginItem: boolean | null = null;
   #tray: RecordedTray | null = null;
+  #cursor: Point = { x: 0, y: 0 };
+  #focus: FocusMode = "real";
 
   constructor(options: RecordingOsOptions = {}) {
     this.#loginItemFile = options.loginItemFile;
@@ -100,6 +110,15 @@ export class RecordingOs implements OsIntegration {
     };
   }
 
+  cursorScreenPoint(): Point {
+    return this.#cursor;
+  }
+
+  isFocused(window: { isFocused(): boolean }): boolean {
+    if (this.#focus === "real") return window.isFocused();
+    return this.#focus === "focused";
+  }
+
   dispose(): void {
     this.#shortcuts.clear();
     this.#tray = null;
@@ -138,6 +157,12 @@ export class RecordingOs implements OsIntegration {
       },
       trayClick: () => {
         this.#requireTray().onClick();
+      },
+      moveCursor: (point) => {
+        this.#cursor = Point.parse(point);
+      },
+      pinFocus: (mode) => {
+        this.#focus = FocusMode.parse(mode);
       },
     };
   }

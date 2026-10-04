@@ -256,14 +256,21 @@ describe("BrainHub", () => {
   });
 
   test("connecting again replaces the previous connection without passing through offline", () => {
-    const { hub, sockets, statuses, finished, connectReady } = setup();
+    const { hub, sockets, statuses, connectReady } = setup();
     connectReady();
-    hub.send(message(), "main");
     hub.connect({ serverUrl: "https://alicia.ts.net", token: "u".repeat(43) });
     expect(sockets[0]?.closedWith).toBe(1000);
     expect(sockets[1]?.url).toBe("wss://alicia.ts.net/ws");
     expect(statuses).toEqual(["connecting", "ready", "connecting"]);
-    expect(finished).toEqual([]);
+  });
+
+  test("connecting again with turns pending reports them lost (Alicia's mood must not stay busy)", () => {
+    const { hub, finished, pendingAfter, connectReady } = setup();
+    connectReady();
+    hub.send(message(), "main");
+    hub.connect({ serverUrl: "https://alicia.ts.net", token: "u".repeat(43) });
+    expect(finished).toEqual([{ origin: "main", outcome: "failed", conversationId: undefined, message: LOST }]);
+    expect(pendingAfter).toEqual([0]);
   });
 
   test("a throwing consumer neither loses turn tracking nor stops the hub", () => {

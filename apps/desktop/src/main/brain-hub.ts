@@ -59,8 +59,12 @@ export class BrainHub {
     return this.#status;
   }
 
-  /** Connects to the paired brain; a previous connection is replaced without passing through "offline". */
+  /**
+   * Connects to the paired brain; a previous connection is replaced without passing through "offline". Turns
+   * still pending on it will never end: they are reported lost.
+   */
   connect(session: { serverUrl: string; token: string }): void {
+    const lost = this.#lostTurns(CONNECTION_LOST);
     this.#teardown();
     const connection: ChatConnection = new ChatConnection({
       url: webSocketUrl(session.serverUrl),
@@ -76,6 +80,7 @@ export class BrainHub {
     });
     this.#connection = connection;
     connection.start();
+    for (const turn of lost) this.#report(turn, 0);
   }
 
   /** Signed out: the connection closes and pending turns are forgotten (no notification). */
@@ -195,16 +200,20 @@ export class BrainHub {
     this.#status = status;
     const lost: FinishedTurn[] = [];
     if (status === "offline" || status === "rejected") {
-      const message = status === "rejected" ? DEVICE_REFUSED : CONNECTION_LOST;
-      for (const turn of this.#turns.values()) {
-        lost.push({ origin: turn.origin, outcome: "failed", conversationId: turn.conversationId, message });
-      }
+      lost.push(...this.#lostTurns(status === "rejected" ? DEVICE_REFUSED : CONNECTION_LOST));
       this.#turns.clear();
     }
     this.#safely("onStatus", () => {
       this.#ports.onStatus(status);
     });
     for (const turn of lost) this.#report(turn, 0);
+  }
+
+  /** The pending turns, as failed with `message` (the caller forgets them). */
+  #lostTurns(message: string): FinishedTurn[] {
+    return [...this.#turns.values()].map((turn) => ({
+      origin: turn.origin, outcome: "failed", conversationId: turn.conversationId, message,
+    }));
   }
 
   #safely(port: string, run: () => void): void {

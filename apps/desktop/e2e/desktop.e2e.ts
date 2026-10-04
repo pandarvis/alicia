@@ -118,6 +118,8 @@ test("an answer arriving while the window is hidden becomes a notification that 
     return GREETING_EVENTS;
   });
   const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  // The person looks at the window, whatever the OS focus of the test machine.
+  await callHook(app, "pinFocus", "focused");
   await pair(page, brain);
 
   // Window visible: no notification.
@@ -160,9 +162,20 @@ test("Holo: follows Alicia's mood, opens a mini-chat, hides from the tray, and k
   });
   const userData = tempDir("alicia-e2e-profile-");
   const { app, page } = await launch(userData);
+  // The main window is in front, whatever the OS focus of the test machine: its own answer is no notification.
+  await callHook(app, "pinFocus", "focused");
   await pair(page, brain);
 
   const holo = await surfacePage(app, "holo");
+  /** The mascot's top-left corner on the desktop. */
+  const mascotOnScreen = async (): Promise<{ x: number; y: number }> => {
+    const bounds = await windowBounds(app, "holo");
+    const box = await holo.getByTestId("holo-mascot").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.left, y: rect.top };
+    });
+    return { x: bounds.x + Math.round(box.x), y: bounds.y + Math.round(box.y) };
+  };
   await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
   const mood = (): Promise<string | null> => holo.getByTestId("holo-mascot").getByTestId("mascot").getAttribute("data-mood");
   await expect.poll(mood, POLL).toBe("idle");
@@ -174,10 +187,12 @@ test("Holo: follows Alicia's mood, opens a mini-chat, hides from the tray, and k
   await expect.poll(mood, POLL).toBe("success");
   await expect.poll(mood, POLL).toBe("idle");
 
-  // A click opens the mini-chat, which talks to the same Alicia.
+  // A click opens the mini-chat, which talks to the same Alicia; the mascot does not move.
+  const restingPlace = await mascotOnScreen();
   await holo.getByTestId("holo-mascot").click();
   await holo.getByTestId("holo-chat").waitFor();
   expect((await windowBounds(app, "holo")).width).toBeGreaterThan(400);
+  expect(await mascotOnScreen()).toEqual(restingPlace);
   await expect.poll(() => holo.getByTestId("holo-input").isEnabled(), POLL).toBe(true);
   await holo.getByTestId("holo-input").fill("Et toi ?");
   await holo.getByTestId("holo-input").press("Enter");
@@ -185,17 +200,31 @@ test("Holo: follows Alicia's mood, opens a mini-chat, hides from the tray, and k
   // Its answer reached the open mini-chat: no notification, and the main window never showed it.
   expect((await recorded(app)).notifications).toEqual([]);
   expect(await page.getByTestId("message-user").allTextContents()).toEqual(["Salut"]);
+
+  // Dragged, open, to the far left of the screen: the mini-chat moves to the mascot's right.
+  await expect.poll(() => holo.locator(".panel.left").count(), POLL).toBe(1);
+  await callHook(app, "moveCursor", { x: 0, y: 0 });
+  await holo.evaluate(() => window.alicia.holo.dragStart());
+  await callHook(app, "moveCursor", { x: -20_000, y: 0 });
+  await holo.evaluate(() => window.alicia.holo.dragMove());
+  await holo.evaluate(() => window.alicia.holo.dragEnd());
+  await expect.poll(() => holo.locator(".panel.right").count(), POLL).toBe(1);
+
   await holo.getByTestId("holo-chat-close").click();
   await holo.getByTestId("holo-chat").waitFor({ state: "detached" });
   await expect.poll(async () => (await windowBounds(app, "holo")).width, POLL).toBe(136);
 
-  // Moved by hand (the drag itself is unit-tested), hidden and shown again from the tray.
-  await holo.evaluate(async () => {
-    await window.alicia.holo.dragStart();
-    await window.alicia.holo.dragTo({ dx: -300, dy: -200 });
-    await window.alicia.holo.dragEnd();
-  });
+  // Moved by hand, following the pointer the main process sees (the click-or-drag gesture is unit-tested).
+  const before = await windowBounds(app, "holo");
+  await callHook(app, "moveCursor", { x: 500, y: 500 });
+  await holo.evaluate(() => window.alicia.holo.dragStart());
+  await callHook(app, "moveCursor", { x: 800, y: 300 });
+  await holo.evaluate(() => window.alicia.holo.dragMove());
+  await holo.evaluate(() => window.alicia.holo.dragEnd());
   const moved = await windowBounds(app, "holo");
+  expect(moved).toMatchObject({ x: before.x + 300, y: before.y - 200 });
+
+  // Hidden and shown again from the tray.
   await callHook(app, "trayAction", "toggle-holo");
   await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(false);
   await callHook(app, "trayAction", "toggle-holo");

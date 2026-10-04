@@ -57,6 +57,9 @@ const bridge: AliciaBridge = {
     send: (message) => call(z.boolean(), INVOKE.brainSend, message),
     onEvent: (listener) => subscribe(PUSH.brainEvent, ServerEvent, listener),
     onStatus: (listener) => subscribe(PUSH.brainStatus, ConnectionStatus, listener),
+    onConversationsChanged: (listener) => subscribe(PUSH.conversationsChanged, z.undefined(), () => {
+      listener();
+    }),
   },
   presence: {
     current: () => call(MascotState, INVOKE.presenceGet),
@@ -82,9 +85,10 @@ const bridge: AliciaBridge = {
   },
   holo: {
     dragStart: () => call(z.undefined(), INVOKE.holoDragStart),
-    dragTo: (delta) => call(z.undefined(), INVOKE.holoDragTo, delta),
+    dragMove: () => call(z.undefined(), INVOKE.holoDragMove),
     dragEnd: () => call(z.undefined(), INVOKE.holoDragEnd),
     setExpanded: (expanded) => call(HoloView, INVOKE.holoSetExpanded, expanded),
+    onView: (listener) => subscribe(PUSH.holoView, HoloView, listener),
   },
   settings: {
     get: () => call(SettingsSnapshot, INVOKE.settingsGet),

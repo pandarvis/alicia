@@ -26,21 +26,32 @@
 
   let session = $state<StoredSession | null>(null);
   let mood = $state<MascotState>("idle");
-  let view = $state<HoloView>({ expanded: false, panelSide: "left", mascot: { x: 0, y: 0 } });
+  let view = $state<HoloView>({
+    expanded: false, panelSide: "left", mascot: { edgeX: "right", x: 0, edgeY: "bottom", y: 0 },
+  });
+  /** Each size request gets a number: only the reply to the latest one is applied (open and close may cross). */
+  let viewRequest = 0;
+  let mascotButton = $state<HTMLButtonElement | null>(null);
   let shown = $state(false);
   let chatOpen = $state(false);
   let chat = $state<MiniChat | null>(null);
   const token = $derived(session?.token ?? null);
 
+  /** A lost IPC call (window closing, main process busy) is logged, never an unhandled rejection. */
+  function logFailure(error: unknown): void {
+    console.error("Holo: call to the main process failed", error);
+  }
+
   const drag = new DragTracker({
     start: () => {
-      void window.alicia.holo.dragStart();
+      window.alicia.holo.dragStart().catch(logFailure);
     },
-    move: (delta) => {
-      void window.alicia.holo.dragTo(delta);
+    // The main process follows the pointer itself (right across screens of different scales).
+    move: () => {
+      window.alicia.holo.dragMove().catch(logFailure);
     },
     end: () => {
-      void window.alicia.holo.dragEnd();
+      window.alicia.holo.dragEnd().catch(logFailure);
     },
     click: () => {
       void toggleChat();
@@ -61,10 +72,12 @@
       window.alicia.surface.onHideRequest(() => {
         void hide();
       }),
+      // Dragged across the screen, or a screen changed: the main process says how to lay out now.
+      window.alicia.holo.onView((next) => {
+        view = next;
+      }),
     ];
-    void window.alicia.holo.setExpanded(false).then((next) => {
-      view = next;
-    });
+    void requestView(false);
     // The window only exists to be shown: play the entrance now.
     shown = true;
     return () => {
@@ -86,19 +99,38 @@
     };
   });
 
+  /** Asks the main process to grow or shrink the window; true when this is still the latest request. */
+  async function requestView(expanded: boolean): Promise<boolean> {
+    const request = ++viewRequest;
+    try {
+      const next = await window.alicia.holo.setExpanded(expanded);
+      if (request !== viewRequest) return false;
+      view = next;
+      return true;
+    } catch (error) {
+      logFailure(error);
+      return false;
+    }
+  }
+
   /** Opening: the window grows first, then the panel slides in. Closing: the panel slides out, then the window shrinks. */
   async function toggleChat(): Promise<void> {
     if (chatOpen) {
-      chatOpen = false;
+      closeChat();
       return;
     }
-    view = await window.alicia.holo.setExpanded(true);
-    chatOpen = true;
+    if (await requestView(true)) chatOpen = true;
+  }
+
+  /** The keyboard focus goes back to the mascot, where the mini-chat was opened from. */
+  function closeChat(): void {
+    chatOpen = false;
+    mascotButton?.focus();
   }
 
   async function collapse(): Promise<void> {
     if (chatOpen) return;
-    view = await window.alicia.holo.setExpanded(false);
+    await requestView(false);
   }
 
   /** Read through a call: `shown` changes while `hide` waits for the exit animation. */
@@ -147,7 +179,7 @@
       onoutroend={() => void collapse()}
     >
       {#if chat}
-        <HoloChat {chat} onClose={() => { chatOpen = false; }} />
+        <HoloChat {chat} onClose={closeChat} />
       {:else}
         <p class="unpaired">Appaire d'abord Alicia depuis l'app.</p>
       {/if}
@@ -155,8 +187,11 @@
   {/if}
   <button
     class="mascot"
-    style:left="{view.mascot.x}px"
-    style:top="{view.mascot.y}px"
+    bind:this={mascotButton}
+    style:left={view.mascot.edgeX === "left" ? `${view.mascot.x}px` : undefined}
+    style:right={view.mascot.edgeX === "right" ? `${view.mascot.x}px` : undefined}
+    style:top={view.mascot.edgeY === "top" ? `${view.mascot.y}px` : undefined}
+    style:bottom={view.mascot.edgeY === "bottom" ? `${view.mascot.y}px` : undefined}
     title={MOOD_LABEL[mood]}
     aria-label={chatOpen ? "Fermer la discussion" : "Discuter avec Alicia"}
     aria-expanded={chatOpen}

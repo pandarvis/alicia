@@ -2,7 +2,7 @@
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Plus from "@lucide/svelte/icons/plus";
   import X from "@lucide/svelte/icons/x";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { fade } from "svelte/transition";
   import type { MiniChat } from "../lib/mini-chat.svelte.ts";
   import { motion, scrollBehavior } from "../lib/motion.ts";
@@ -25,6 +25,16 @@
     input?.focus();
   });
 
+  // Back online (the field was disabled meanwhile): the cursor returns to it, unless the person is elsewhere.
+  let wasReady = untrack(() => ready);
+  $effect(() => {
+    const back = ready && !wasReady;
+    wasReady = ready;
+    if (!back || input === null) return;
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body) input.focus();
+  });
+
   $effect(() => {
     if (list === null || tail === seenTail) return;
     seenTail = tail;
@@ -39,10 +49,14 @@
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       submit();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
     }
+  }
+
+  /** Escape closes the mini-chat from anywhere in the Holo (field, buttons, mascot). */
+  function handleSectionKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    onClose();
   }
 
   function openInApp(): void {
@@ -51,6 +65,8 @@
     else void window.alicia.app.openConversation(id);
   }
 </script>
+
+<svelte:window onkeydown={handleSectionKeydown} />
 
 <section class="chat" aria-label="Discussion avec Alicia" data-testid="holo-chat">
   <header>

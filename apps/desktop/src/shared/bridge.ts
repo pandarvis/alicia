@@ -1,7 +1,7 @@
 import type { SendMessage, ServerEvent } from "@alicia/protocol";
 import type { ConnectionStatus } from "./chat-connection.ts";
 import type { DiscoveredBrain } from "./discovery.ts";
-import type { DragDelta, HoloView } from "./holo.ts";
+import type { HoloView } from "./holo.ts";
 import type { MascotState } from "./mascot.ts";
 import type { SaveSessionResult, StoredSession } from "./session.ts";
 import type { SettingsPatch, SettingsSnapshot, SettingsUpdateResult } from "./settings.ts";
@@ -15,6 +15,8 @@ export interface BrainBridge {
   send(message: SendMessage): Promise<boolean>;
   onEvent(listener: (event: ServerEvent) => void): Unsubscribe;
   onStatus(listener: (status: ConnectionStatus) => void): Unsubscribe;
+  /** A turn failed after its conversation was created: the conversation lists may have changed. */
+  onConversationsChanged(listener: () => void): Unsubscribe;
 }
 
 /** Alicia's mood for the whole PC. */
@@ -46,12 +48,14 @@ export interface SurfaceBridge {
 
 export interface HoloBridge {
   dragStart(): Promise<void>;
-  /** Offset from where the drag started, in screen pixels. */
-  dragTo(delta: DragDelta): Promise<void>;
+  /** The pointer moved: the main process moves the Holo with the pointer it sees on the desktop. */
+  dragMove(): Promise<void>;
   /** Ends the drag; the new place is remembered. */
   dragEnd(): Promise<void>;
   /** Grows or shrinks the window around the mascot; answers how to lay the page out. */
   setExpanded(expanded: boolean): Promise<HoloView>;
+  /** The layout changed without the page asking (dragged across the screen, a screen changed). */
+  onView(listener: (view: HoloView) => void): Unsubscribe;
 }
 
 /** The app's settings, owned by the main process (Réglages screen). */
@@ -106,7 +110,7 @@ export const INVOKE = {
   openConversation: "app:open-conversation",
   hideSelf: "window:hide-self",
   holoDragStart: "holo:drag-start",
-  holoDragTo: "holo:drag-to",
+  holoDragMove: "holo:drag-move",
   holoDragEnd: "holo:drag-end",
   holoSetExpanded: "holo:set-expanded",
   settingsGet: "settings:get",
@@ -125,6 +129,8 @@ export const PUSH = {
   openConversation: "push:open-conversation",
   shown: "push:shown",
   hideRequest: "push:hide-request",
+  holoView: "push:holo-view",
+  conversationsChanged: "push:conversations-changed",
   settings: "push:settings",
   discovery: "push:discovery",
 } as const;

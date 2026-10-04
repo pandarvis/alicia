@@ -3,7 +3,6 @@ import { SendMessage } from "@alicia/protocol";
 import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { z } from "zod";
 import { INVOKE } from "../shared/bridge.ts";
-import { DragDelta } from "../shared/holo.ts";
 import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
 import { SettingsPatch, type SettingsUpdateResult } from "../shared/settings.ts";
 import type { Surface } from "../shared/surface.ts";
@@ -80,9 +79,9 @@ export function registerIpc(deps: IpcDependencies): void {
     holoOnly(sender);
     deps.windows.holoDragStart();
   });
-  handle(INVOKE.holoDragTo, DragDelta, (delta, sender) => {
+  handle(INVOKE.holoDragMove, NONE, (_none, sender) => {
     holoOnly(sender);
-    deps.windows.holoDragTo(delta);
+    deps.windows.holoDragMove();
   });
   handle(INVOKE.holoDragEnd, NONE, (_none, sender) => {
     holoOnly(sender);

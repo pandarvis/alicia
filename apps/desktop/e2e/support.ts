@@ -167,10 +167,15 @@ export async function closeWindow(app: ElectronApplication, surface: Surface): P
   }, surface);
 }
 
-export type HookName = "state" | "occupy" | "triggerShortcut" | "clickNotification" | "trayAction" | "trayClick";
+export type HookName =
+  | "state" | "occupy" | "triggerShortcut" | "clickNotification" | "trayAction" | "trayClick" | "moveCursor" | "pinFocus";
 
 /** Calls one of RecordingOs's test hooks in the main process. */
-export function callHook(app: ElectronApplication, name: HookName, argument?: number | string): Promise<unknown> {
+export function callHook(
+  app: ElectronApplication,
+  name: HookName,
+  argument?: number | string | { x: number; y: number },
+): Promise<unknown> {
   return app.evaluate((_electron, [key, hook, arg]) => {
     const hooks: unknown = Reflect.get(globalThis, key);
     if (typeof hooks !== "object" || hooks === null) throw new Error("No test hooks: is ALICIA_OS_INTEGRATION=off?");

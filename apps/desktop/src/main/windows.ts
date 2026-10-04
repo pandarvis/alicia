@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, screen, shell, type WebContents, type WebPreferences } from "electron";
 import { PUSH } from "../shared/bridge.ts";
-import type { DragDelta, HoloView, Point } from "../shared/holo.ts";
+import type { HoloView, Point } from "../shared/holo.ts";
 import type { Surface } from "../shared/surface.ts";
 import {
   clampAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type Rect, SPOTLIGHT_SIZE,
@@ -24,6 +24,10 @@ export interface WindowManagerOptions {
   onHoloDismissed(): void;
   /** Windows is logging off or shutting down: the process ends without before-quit nor will-quit. */
   onSessionEnd(): void;
+  /** Where the mouse pointer is on the desktop (screen DIP). */
+  cursor(): Point;
+  /** Whether a window has the keyboard focus (in front of the person). */
+  isFocused(window: BrowserWindow): boolean;
 }
 
 /** Only web links leave the app; anything else (file:, custom schemes) is refused. */
@@ -78,11 +82,22 @@ export class WindowManager {
   #anchor: Point | null = null;
   #expanded = false;
   #dragOrigin: Point | null = null;
+  /** Where the pointer was when the drag started. */
+  #dragCursor: Point | null = null;
+  /** The last view the Holo page was given (JSON), to push it again only when it changes. */
+  #holoView: string | null = null;
   /** Windows asked to fade out, with their fallback timer. */
   readonly #hiding = new Map<BrowserWindow, ReturnType<typeof setTimeout>>();
 
   constructor(options: WindowManagerOptions) {
     this.#options = options;
+    // A screen plugged, unplugged or rescaled: the Holo is laid out again (and stays on a screen that exists).
+    const relayout = (): void => {
+      if (isAlive(this.#holo)) this.#layoutHolo();
+    };
+    screen.on("display-added", relayout);
+    screen.on("display-removed", relayout);
+    screen.on("display-metrics-changed", relayout);
   }
 
   createMain(options: { show: boolean }): void {
@@ -183,7 +198,7 @@ export class WindowManager {
     }
     this.#cancelHide(window);
     const { areas, primary } = workAreas();
-    window.setBounds(spotlightBounds(nearestWorkArea(screen.getCursorScreenPoint(), areas, primary)));
+    window.setBounds(spotlightBounds(nearestWorkArea(this.#options.cursor(), areas, primary)));
     window.show();
     window.focus();
     this.#sendWhenLoaded(window, PUSH.shown);
@@ -215,14 +230,21 @@ export class WindowManager {
     this.#sendWhenLoaded(window, PUSH.shown);
   }
 
+  /**
+   * The drag follows the pointer as the main process sees it on the desktop: the page only says that it moved.
+   * Its own screen coordinates would be off when the Holo crosses screens with different scales.
+   */
   holoDragStart(): void {
     this.#dragOrigin = this.#holoAnchor();
+    this.#dragCursor = this.#options.cursor();
   }
 
-  holoDragTo(delta: DragDelta): void {
+  holoDragMove(): void {
     const origin = this.#dragOrigin;
-    if (origin === null) return;
-    const target = { x: Math.round(origin.x + delta.dx), y: Math.round(origin.y + delta.dy) };
+    const start = this.#dragCursor;
+    if (origin === null || start === null) return;
+    const cursor = this.#options.cursor();
+    const target = { x: Math.round(origin.x + cursor.x - start.x), y: Math.round(origin.y + cursor.y - start.y) };
     const { areas, primary } = workAreas();
     this.#anchor = clampAnchor(target, nearestWorkArea(target, areas, primary));
     this.#layoutHolo();
@@ -232,15 +254,16 @@ export class WindowManager {
   holoDragEnd(): Point | null {
     if (this.#dragOrigin === null) return null;
     this.#dragOrigin = null;
+    this.#dragCursor = null;
     return this.#holoAnchor();
   }
 
   setHoloExpanded(expanded: boolean): HoloView {
     this.#expanded = expanded;
-    const layout = this.#layoutHolo();
+    const view = this.#layoutHolo();
     const holo = this.#holo;
     if (expanded && isAlive(holo)) holo.focus();
-    return { expanded, panelSide: layout.panelSide, mascot: layout.mascot };
+    return view;
   }
 
   /**
@@ -266,7 +289,7 @@ export class WindowManager {
   /** Shown, not minimized and in front: an answer arriving behind another app would go unseen. */
   #mainVisible(): boolean {
     const window = this.#main;
-    return isAlive(window) && window.isVisible() && !window.isMinimized() && window.isFocused();
+    return isAlive(window) && window.isVisible() && !window.isMinimized() && this.#options.isFocused(window);
   }
 
   /** The Holo's place, brought back onto a screen that still exists. */
@@ -275,14 +298,25 @@ export class WindowManager {
     return holoAnchor(this.#anchor, areas, primary);
   }
 
-  #layoutHolo(): HoloLayout {
+  /** Places the Holo window; the page is told whenever its layout changes (side flip, screen edge…). */
+  #layoutHolo(): HoloView {
     const anchor = this.#holoAnchor();
     const { areas, primary } = workAreas();
-    const layout = holoLayout(anchor, this.#expanded, nearestWorkArea(anchor, areas, primary));
+    const layout: HoloLayout = holoLayout(anchor, this.#expanded, nearestWorkArea(anchor, areas, primary));
+    const view: HoloView = { expanded: this.#expanded, panelSide: layout.panelSide, mascot: layout.mascot };
     const holo = this.#holo;
-    // Explicit size, every time: moving to a screen with another scale must not resize the window.
-    if (isAlive(holo)) holo.setBounds(layout.bounds);
-    return layout;
+    if (isAlive(holo)) {
+      // Collapsed, the Holo never takes the focus (a drag must not steal it); open, the mini-chat needs it.
+      holo.setFocusable(this.#expanded);
+      // Explicit size, every time: moving to a screen with another scale must not resize the window.
+      holo.setBounds(layout.bounds);
+      const json = JSON.stringify(view);
+      if (json !== this.#holoView) {
+        this.#holoView = json;
+        holo.webContents.send(PUSH.holoView, view);
+      }
+    }
+    return view;
   }
 
   #ensureHolo(): BrowserWindow {
@@ -291,6 +325,7 @@ export class WindowManager {
     const window = new BrowserWindow({
       ...HOLO_SIZE,
       show: false,
+      focusable: false,
       frame: false,
       transparent: true,
       backgroundColor: "#00000000",
@@ -304,6 +339,8 @@ export class WindowManager {
       webPreferences: secureWebPreferences(),
     });
     window.setAlwaysOnTop(true, "floating");
+    // A new page has been told nothing yet.
+    this.#holoView = null;
     window.on("close", (event) => {
       if (this.#quitting) return;
       event.preventDefault();
