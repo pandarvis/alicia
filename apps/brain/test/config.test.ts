@@ -37,6 +37,10 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["*"]\n`)).toThrow(/Origine invalide/);
     expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["ftp://alicia.lan"]\n`)).toThrow(/Origine invalide/);
   });
+  test("allowedOrigins: the message explains the exact form (lowercase, no default port)", () => {
+    expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["https://Alicia.lan"]\n`)).toThrow(/en minuscules/);
+    expect(() => parseConfig(`${MINIMAL_YAML}allowedOrigins: ["https://alicia.lan:443"]\n`)).toThrow(/sans port par défaut/);
+  });
 });
 
 describe("readAuthentication", () => {

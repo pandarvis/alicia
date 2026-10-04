@@ -12,7 +12,7 @@ import type { ConversationRepository } from "../conversations/repository.ts";
 import type { PairingService } from "../identity/pairing.ts";
 import type { DrainOptions } from "./backpressure.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
-import { FailureLimiter } from "./failure-limiter.ts";
+import { addressKey, FailureLimiter } from "./failure-limiter.ts";
 import { sendError } from "./http-errors.ts";
 import { registerMemoryRoutes } from "./memory-routes.ts";
 import { attachWs } from "./ws.ts";
@@ -75,6 +75,15 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     // Never the Authorization header in the log; bodies and messages are not written there.
     logger: deps.logging === true ? { redact: ["req.headers.authorization"] } : false,
     bodyLimit: 1_048_576,
+    // Errors raised by the router itself (undecodable URL, parameter too long…) skip the error handler:
+    // same typed shape here. Node's own `clientError` answers (malformed HTTP, headers too large → 431)
+    // happen before Fastify and stay raw.
+    frameworkErrors: (error, request, reply) => {
+      const status = clientStatus(error);
+      request.log.warn({ code: error.code, status }, "request rejected by the router");
+      // The reply is thenable; this hook expects nothing back.
+      void (status === undefined ? sendError(reply, 500, "internal") : sendError(reply, status, "invalid_request"));
+    },
   });
 
   // No error leaks to the client: 4xx → invalid_request, everything else → internal (details in the log).
@@ -101,6 +110,9 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
   // Browser pages may only call the brain from the Alicia app or a configured origin. Checked here for
   // every request, the WebSocket upgrade included (browsers do not apply CORS to WebSockets), and before
   // CORS so a foreign preflight stops with a 403. Auth still relies on the device token.
+  // Limit: "Origin: null" can be forged by any page (sandboxed iframe, data: URL), so it lets such a page
+  // through; what protects the brain then is the device token and the pairing limits. Longer term, the
+  // packaged renderer should load from a privileged app:// scheme so "null" can be refused.
   app.addHook("onRequest", (request, reply, done) => {
     if (originAllowed(request.headers.origin)) {
       done();
@@ -135,14 +147,17 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
   });
 
   app.post("/pairing", (request, reply) => {
-    if (pairingFailures.blocked(request.ip)) return sendError(reply, 429, "too_many_attempts");
+    // An IPv6 host controls a whole /64: its addresses share one key (see addressKey).
+    const address = addressKey(request.ip);
+    if (pairingFailures.blocked(address)) return sendError(reply, 429, "too_many_attempts");
     const body = PairingRequest.safeParse(request.body);
     if (!body.success) return sendError(reply, 400, "invalid_request");
     const result = deps.pairing.redeem(body.data.code, body.data.deviceName);
     if ("error" in result) {
-      if (result.error === "invalid_code") pairingFailures.fail(request.ip);
+      if (result.error === "invalid_code") pairingFailures.fail(address);
       return sendError(reply, result.error === "too_many_attempts" ? 429 : 401, result.error);
     }
+    pairingFailures.succeed(address);
     return result;
   });
 
@@ -189,8 +204,14 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
 
   registerMemoryRoutes(app, { memory: deps.chat.memory, repository: deps.repository, personOf });
 
-  app.get("/ws", { websocket: true }, (socket) => {
-    attachWs(socket, deps, locks);
+  app.route({
+    method: "GET",
+    url: "/ws",
+    // A plain GET (no upgrade) gets the typed 404 like any other unknown resource.
+    handler: (_request, reply) => sendError(reply, 404, "not_found"),
+    wsHandler: (socket) => {
+      attachWs(socket, deps, locks);
+    },
   });
 
   return app;

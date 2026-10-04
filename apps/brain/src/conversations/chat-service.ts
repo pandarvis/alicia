@@ -89,7 +89,15 @@ export async function* handleSend(
     conversation = deps.repository.create(person.id, titleFrom(message.text));
   }
   const conversationId = conversation.id;
-  yield { type: "conversation", requestId: message.requestId, conversationId };
+  let announced = false;
+  try {
+    yield { type: "conversation", requestId: message.requestId, conversationId };
+    announced = true;
+  } finally {
+    // The consumer stopped right at this first event (backpressure, connection gone): a conversation
+    // created for this turn is still empty, so it is dropped rather than left in the list.
+    if (!announced && message.conversationId === undefined) deps.repository.delete(conversationId, person.id);
+  }
 
   const history = deps.repository.lastMessages(conversationId, RESUME_MESSAGE_COUNT);
   deps.repository.addMessage(conversationId, "user", message.text);

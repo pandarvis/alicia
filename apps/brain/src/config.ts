@@ -29,7 +29,10 @@ export const ConfigSchema = z.object({
     .default(DEFAULT_MODELS),
   /** Web pages allowed to call the brain besides the desktop app (the future PWA). None by default. */
   allowedOrigins: z
-    .array(z.string().refine(isOrigin, { message: "Origine invalide : écrire schéma://hôte[:port], sans chemin ni barre finale." }))
+    .array(z.string().refine(isOrigin, {
+      message:
+        "Origine invalide : écrire schéma://hôte[:port] en minuscules, sans port par défaut, sans chemin ni barre finale.",
+    }))
     .default([]),
 });
 export type Config = z.infer<typeof ConfigSchema>;

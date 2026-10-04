@@ -87,7 +87,7 @@ function connect(url: string) {
 
 /** Opens a socket with an Origin header: "open" when accepted, otherwise the HTTP status of the refused upgrade. */
 function tryOrigin(url: string, origin: string): Promise<number | "open"> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, { origin });
     ws.once("open", () => {
       resolve("open");
@@ -97,7 +97,10 @@ function tryOrigin(url: string, origin: string): Promise<number | "open"> {
       resolve(response.statusCode ?? 0);
       request.destroy();
     });
-    ws.on("error", () => undefined);
+    // A failure before any HTTP answer (refused connection…) settles at once instead of timing out.
+    ws.on("error", (error) => {
+      reject(error);
+    });
   });
 }
 
@@ -135,7 +138,7 @@ describe("WebSocket", () => {
 
   test("an app that does not drain its buffer: the turn stops and the connection closes with 1013", async () => {
     // A negative high-water mark makes every send look congested; a zero timeout gives up at once.
-    const { url, token } = await start({
+    const { url, token, repository } = await start({
       drain: { highWaterBytes: -1, timeoutMs: 0, pollMs: 1, wait: () => Promise.resolve() },
     });
     const c = connect(url);
@@ -145,6 +148,8 @@ describe("WebSocket", () => {
     c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Salut" }));
     expect(await c.closed).toBe(1013);
     expect(c.received.some((e) => e.type === "done")).toBe(false);
+    // Stopped at its very first event, the new conversation was still empty: it is not left in the list.
+    expect(repository.list("kevin")).toEqual([]);
   });
 
   test("authentication then a full conversation", async () => {

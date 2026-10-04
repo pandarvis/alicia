@@ -263,6 +263,28 @@ describe("handleSend", () => {
     expect(db.select().from(turnLog).all()).toHaveLength(1);
   });
 
+  test("the consumer stops at the very first event of a new conversation: the empty conversation is dropped", async () => {
+    const { deps, repository, engine } = createContext(SIMPLE_REPLY);
+    const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Salut" };
+    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal)) {
+      if (e.type === "conversation") break;
+    }
+    expect(repository.list("kevin")).toEqual([]);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("the consumer stops at the first event of an existing conversation: the conversation stays", async () => {
+    const { deps, repository } = createContext(SIMPLE_REPLY);
+    const firsts = await send(deps, KEVIN, { text: "Un" });
+    const id = firsts[0]?.type === "conversation" ? firsts[0].conversationId : "";
+    const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Deux", conversationId: id };
+    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal)) {
+      if (e.type === "conversation") break;
+    }
+    expect(repository.list("kevin").map((c) => c.id)).toEqual([id]);
+    expect(repository.messages(id)).toHaveLength(2);
+  });
+
   test("session lost on an existing conversation: the context is re-injected", async () => {
     const { deps, repository, engine } = createContext(SIMPLE_REPLY);
     const firsts = await send(deps, KEVIN, { text: "Un" });

@@ -194,6 +194,23 @@ describe("HTTP server", () => {
     for (const a of answers) expect(HttpErrorBody.parse(a.json()).error.message).not.toBe("");
   });
 
+  test("errors raised by Fastify's router keep the typed shape", async () => {
+    const { app } = await createContext();
+    const badUrl = await app.inject({ method: "GET", url: "/memories/%E0%A4%A" });
+    expect(badUrl.statusCode).toBe(400);
+    expect(badUrl.json()).toEqual(errorBody("invalid_request"));
+    const longParam = await app.inject({ method: "GET", url: `/conversations/${"x".repeat(200)}/messages` });
+    expect(longParam.statusCode).toBe(414);
+    expect(longParam.json()).toEqual(errorBody("invalid_request"));
+  });
+
+  test("a plain GET on /ws (no upgrade) gets the typed 404", async () => {
+    const { app } = await createContext();
+    const res = await app.inject({ method: "GET", url: "/ws" });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual(errorBody("not_found"));
+  });
+
   test("POST /pairing: an address that keeps failing is blocked, the others are not", async () => {
     const ctx = await createContext();
     const attempt = (remoteAddress: string, code = "000000") =>
@@ -213,6 +230,29 @@ describe("HTTP server", () => {
     // After 15 minutes, the first address may try again.
     ctx.time.advance(15 * 60_000);
     expect((await attempt("10.0.0.1", ctx.pairing.generateCode("kevin"))).statusCode).toBe(200);
+  });
+
+  test("POST /pairing: a successful pairing clears the address's failures", async () => {
+    const ctx = await createContext();
+    const attempt = (code = "000000") =>
+      ctx.app.inject({ method: "POST", url: "/pairing", remoteAddress: "10.0.0.1", payload: { code, deviceName: "PC" } });
+    for (let i = 0; i < 4; i++) expect((await attempt()).statusCode).toBe(401);
+    ctx.time.advance(61_000); // past the global one-minute limit
+    expect((await attempt(ctx.pairing.generateCode("kevin"))).statusCode).toBe(200);
+    ctx.time.advance(61_000);
+    for (let i = 0; i < 4; i++) expect((await attempt()).statusCode).toBe(401);
+    // 8 failures within 15 minutes, but only 4 since the success.
+    expect((await attempt(ctx.pairing.generateCode("kevin"))).statusCode).toBe(200);
+  });
+
+  test("POST /pairing: IPv6 addresses of the same /64 share their limit", async () => {
+    const ctx = await createContext();
+    const attempt = (remoteAddress: string, code = "000000") =>
+      ctx.app.inject({ method: "POST", url: "/pairing", remoteAddress, payload: { code, deviceName: "PC" } });
+    for (let i = 0; i < 5; i++) expect((await attempt(`2001:db8::${i + 1}`)).statusCode).toBe(401);
+    ctx.time.advance(61_000);
+    expect((await attempt("2001:db8::99", ctx.pairing.generateCode("kevin"))).statusCode).toBe(429);
+    expect((await attempt("2001:db8:0:1::1", ctx.pairing.generateCode("kevin"))).statusCode).toBe(200);
   });
 });
 

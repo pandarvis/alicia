@@ -2,6 +2,7 @@ import {
   ConversationSummary,
   HistoryMessage,
   HttpErrorBody,
+  MemoryRefusalReason,
   type MemoryCreate,
   type MemoryKind,
   type MemoryPatch,
@@ -63,15 +64,26 @@ const FAILURE_BY_STATUS: Readonly<Record<number, PairingFailure>> = {
 
 type BrainError = HttpErrorBody["error"];
 
-/** The brain's typed error, or undefined when the body is not one (older brain, proxy page, empty body…). */
-async function readError(response: Response): Promise<BrainError | undefined> {
+/** The body as JSON, or undefined when it is empty or not JSON. */
+async function readJson(response: Response): Promise<unknown> {
   try {
-    const parsed = HttpErrorBody.safeParse(await response.json());
-    return parsed.success ? parsed.data.error : undefined;
+    return await response.json();
   } catch {
     return undefined;
   }
 }
+
+/**
+ * The brain's typed error, or undefined for any other body: the flat shape of an older brain, a proxy
+ * page, an empty or non-JSON body. Never throws; callers then fall back on the status.
+ */
+async function readError(response: Response): Promise<BrainError | undefined> {
+  const parsed = HttpErrorBody.safeParse(await readJson(response));
+  return parsed.success ? parsed.data.error : undefined;
+}
+
+/** The flat refusal of an older brain: { "error": "refused", "reason": "secret" }. */
+const FlatRefusal = z.object({ reason: MemoryRefusalReason });
 
 /** The typed code when it is a pairing failure, otherwise the status. */
 function pairingFailure(error: BrainError | undefined, status: number): PairingFailure {
@@ -185,8 +197,10 @@ export class BrainApi {
   /** Reads the answer of a create or update: the memory, or the reason the brain did not write it. */
   async #writeResult(response: Response, path: string): Promise<MemoryWriteResult> {
     if (response.ok) return { ok: true, memory: MemorySummary.parse(await response.json()) };
-    const error = await readError(response);
-    if (error === undefined) throw statusError(response.status, path);
+    const body = await readJson(response);
+    const typed = HttpErrorBody.safeParse(body);
+    if (!typed.success) return untypedWriteResult(response.status, body, path);
+    const error = typed.data.error;
     switch (error.code) {
       case "duplicate":
         return { ok: false, reason: "duplicate" };
@@ -216,6 +230,25 @@ export class BrainApi {
     });
     if (response.status === 401) throw new UnauthorizedError();
     return response;
+  }
+}
+
+/** A write answered without the typed error body (older brain, proxy): the status decides. */
+function untypedWriteResult(status: number, body: unknown, path: string): MemoryWriteResult {
+  switch (status) {
+    case 409:
+      return { ok: false, reason: "duplicate" };
+    case 404:
+      return { ok: false, reason: "not_found" };
+    case 400:
+      return { ok: false, reason: "invalid" };
+    case 422: {
+      const refusal = FlatRefusal.safeParse(body);
+      if (refusal.success) return { ok: false, reason: refusal.data.reason };
+      throw statusError(status, path);
+    }
+    default:
+      throw statusError(status, path);
   }
 }
 

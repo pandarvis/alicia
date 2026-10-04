@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { FailureLimiter } from "../src/server/failure-limiter.ts";
+import { addressKey, FailureLimiter } from "../src/server/failure-limiter.ts";
 import { createTestClock } from "./helpers.ts";
 
 function setup(maxKeys = 100) {
@@ -31,5 +31,47 @@ describe("FailureLimiter", () => {
     limiter.fail("b");
     limiter.fail("c");
     expect(limiter.blocked("a")).toBe(false);
+  });
+
+  test("a new failure makes a key the most recent: the other one is dropped, its own count is kept", () => {
+    const { limiter } = setup(2);
+    limiter.fail("a");
+    limiter.fail("a");
+    limiter.fail("b");
+    limiter.fail("b");
+    limiter.fail("a"); // "a" is now the most recent key, with 3 failures
+    limiter.fail("c"); // over the limit of 2 keys: "b" goes
+    expect(limiter.blocked("a")).toBe(true);
+    limiter.fail("b");
+    expect(limiter.blocked("b")).toBe(false);
+    limiter.fail("b");
+    expect(limiter.blocked("b")).toBe(false);
+  });
+
+  test("a success clears the key's failures", () => {
+    const { limiter } = setup();
+    limiter.fail("10.0.0.1");
+    limiter.fail("10.0.0.1");
+    limiter.succeed("10.0.0.1");
+    limiter.fail("10.0.0.1");
+    limiter.fail("10.0.0.1");
+    expect(limiter.blocked("10.0.0.1")).toBe(false);
+  });
+});
+
+describe("addressKey", () => {
+  test.each([
+    ["2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"],
+    ["2001:db8:1:2:ffff::1", "2001:db8:1:2::/64"],
+    ["2001:0DB8:0001:0002::1", "2001:db8:1:2::/64"],
+    ["2001:db8:1:3::1", "2001:db8:1:3::/64"],
+    ["2001:db8::1", "2001:db8:0:0::/64"],
+    ["::1", "0:0:0:0::/64"],
+    ["fe80::1%eth0", "fe80:0:0:0::/64"],
+  ])("IPv6 %s → its /64 prefix %s", (ip, key) => {
+    expect(addressKey(ip)).toBe(key);
+  });
+  test.each(["10.0.0.1", "::ffff:10.0.0.1", "not an address"])("%s is kept as is", (ip) => {
+    expect(addressKey(ip)).toBe(ip);
   });
 });

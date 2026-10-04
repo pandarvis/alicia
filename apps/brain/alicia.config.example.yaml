@@ -13,5 +13,5 @@ models:
   opus: claude-opus-5-5
 
 # Pages web autorisées à appeler le cerveau en plus de l'app de bureau (future PWA).
-# Origines exactes, sans chemin ni barre finale, ex. "https://alicia.mon-tailnet.ts.net".
+# Origines exactes, en minuscules, sans port par défaut, sans chemin ni barre finale, ex. "https://alicia.mon-tailnet.ts.net".
 allowedOrigins: []

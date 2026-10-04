@@ -1,4 +1,34 @@
+import { isIPv6 } from "node:net";
 import type { Clock } from "../clock.ts";
+
+const IPV4_MAPPED = /^::ffff:\d+\.\d+\.\d+\.\d+$/i;
+
+/** The 16-bit groups of one side of "::" (a dotted IPv4 tail counts as two groups). */
+function groupsOf(part: string): string[] {
+  if (part === "") return [];
+  return part.split(":").flatMap((group) => (group.includes(".") ? ["0", "0"] : [group]));
+}
+
+/**
+ * The key under which an address's failures are counted. An IPv6 host usually controls a whole /64
+ * (it can pick any address in it at will): IPv6 addresses are keyed by their /64 prefix.
+ * IPv4 and IPv4-mapped addresses are kept as they are.
+ */
+export function addressKey(ip: string): string {
+  if (!isIPv6(ip) || IPV4_MAPPED.test(ip)) return ip;
+  const address = ip.split("%")[0] ?? ip;
+  const halves = address.split("::");
+  const head = groupsOf(halves[0] ?? "");
+  const tail = groupsOf(halves[1] ?? "");
+  const groups =
+    halves.length === 2
+      ? [...head, ...Array.from({ length: 8 - head.length - tail.length }, () => "0"), ...tail]
+      : head;
+  return `${groups
+    .slice(0, 4)
+    .map((group) => Number.parseInt(group, 16).toString(16))
+    .join(":")}::/64`;
+}
 
 export interface FailureLimiterOptions {
   clock: Clock;
@@ -22,6 +52,11 @@ export class FailureLimiter {
 
   blocked(key: string): boolean {
     return this.#recent(key).length >= this.#options.maxFailures;
+  }
+
+  /** A success clears the key: someone who finally got it right starts again from zero. */
+  succeed(key: string): void {
+    this.#failures.delete(key);
   }
 
   fail(key: string): void {

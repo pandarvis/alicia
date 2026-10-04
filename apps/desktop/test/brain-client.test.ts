@@ -234,9 +234,26 @@ describe("BrainApi", () => {
     test("createMemory: an unexpected typed error throws with its status and code", async () => {
       await expect(api(409, brainError("busy")).createMemory(input)).rejects.toThrow(/409 \(busy\)/);
     });
-    // Old flat shape on purpose (added after the replacement above): an untyped body is never guessed.
-    test("createMemory: a 409 without a typed body throws instead of guessing", async () => {
-      await expect(api(409, { error: "duplicate" }).createMemory(input)).rejects.toThrow(/409/);
+    // Old flat shape on purpose (an older brain, or a proxy page): the status decides.
+    test.each([
+      [409, { error: "duplicate" }, "duplicate"],
+      [404, { error: "not_found" }, "not_found"],
+      [400, { error: "invalid_request" }, "invalid"],
+      [422, { error: "refused", reason: "secret" }, "secret"],
+      [422, { error: "refused", reason: "empty" }, "empty"],
+      [409, "<html>Conflict</html>", "duplicate"],
+    ] as const)("createMemory: untyped body, HTTP %i %j → %s", async (status, body, reason) => {
+      expect(await api(status, body).createMemory(input)).toEqual({ ok: false, reason });
+    });
+    test("createMemory: an untyped 422 without a known reason, or another status, throws", async () => {
+      await expect(api(422, { error: "refused", reason: "weird" }).createMemory(input)).rejects.toThrow(/422/);
+      await expect(api(422, { error: "refused" }).createMemory(input)).rejects.toThrow(/422/);
+      await expect(api(503, { error: "boom" }).createMemory(input)).rejects.toThrow(/503/);
+    });
+    test("updateMemory: untyped 404 → not_found", async () => {
+      expect(await api(404, { error: "not_found" }).updateMemory(MEMORY_ID, { text: "x" })).toEqual({
+        ok: false, reason: "not_found",
+      });
     });
 
     test("updateMemory patches by id and returns the updated memory", async () => {
