@@ -25,11 +25,13 @@
    * Scrolling, like the ChatGPT/Claude apps:
    * - a message the user sends is brought to the top of the area (a spacer below the last exchange makes room);
    * - the answer then fills the space under it without moving the view, and once it outgrows the view,
-   *   the view follows its end, unless the user scrolled by hand since sending;
+   *   the view follows its end, unless the user scrolled by hand since sending (scrolling back down to the end resumes);
    * - opening a conversation shows its end at once.
    */
   /** Space (px) left above the sent message once it is brought to the top. */
   const TOP_GAP = 12;
+  /** Distance (px) from the end under which a manual scroll down resumes following. */
+  const RESUME_DISTANCE = 24;
   const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
   let spacer = $state<HTMLDivElement | null>(null);
@@ -101,6 +103,12 @@
     if (SCROLL_KEYS.has(event.key)) stopFollowing(event.target);
   }
 
+  /** Scrolling back down to the end while Alicia answers resumes following (ChatGPT style). */
+  function handleScroll(): void {
+    if (follow || !store.busy || list === null) return;
+    if (list.scrollHeight - list.scrollTop - list.clientHeight < RESUME_DISTANCE) follow = true;
+  }
+
   function handlePointerdown(event: PointerEvent): void {
     // Only a press on the scrollbar itself (right of the content box) counts as scrolling.
     if (list !== null && event.target === list && event.offsetX >= list.clientWidth) follow = false;
@@ -126,7 +134,7 @@
       </div>
     </div>
   {:else}
-    <div class="messages" bind:this={list} bind:clientHeight={viewportHeight} data-testid="messages" in:fade={{ duration: motion(200) }}>
+    <div class="messages" bind:this={list} bind:clientHeight={viewportHeight} onscroll={handleScroll} data-testid="messages" in:fade={{ duration: motion(200) }}>
       {#each store.messages as message (message.id)}
         <div class="row {message.role}" data-message-id={message.id} in:fly={{ y: 8, duration: motion(180) }}>
           {#if message.role === "assistant"}
