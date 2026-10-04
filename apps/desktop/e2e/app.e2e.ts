@@ -7,7 +7,7 @@ import { _electron as electron, type Page } from "playwright";
 import { afterEach, expect, test } from "vitest";
 import { type Application, buildApplication } from "../../brain/src/application.ts";
 import { parseConfig } from "../../brain/src/config.ts";
-import { FakeEngine } from "../../brain/src/engine/fake-engine.ts";
+import { callTool, FakeEngine, type Scenario } from "../../brain/src/engine/fake-engine.ts";
 import { FakeEmbedder } from "../../brain/src/memory/fake-embedder.ts";
 
 const MAIN = fileURLToPath(new URL("../out/main/index.js", import.meta.url));
@@ -46,20 +46,22 @@ interface Brain {
   restart: () => Promise<void>;
 }
 
-/** A real brain on a free local port, with a fake engine that answers instantly. */
-async function startBrain(): Promise<Brain> {
+const GREETING: Scenario = () => [
+  { type: "session", sessionId: "s1" },
+  { type: "text", text: "Bonjour Kévin, " },
+  { type: "text", text: "je suis là !" },
+  { type: "done", inputTokens: 1, outputTokens: 2 },
+];
+
+/** A real brain on a free local port, with a fake engine that answers instantly (by default, a greeting). */
+async function startBrain(scenario: Scenario = GREETING): Promise<Brain> {
   const dataDir = tempDir("alicia-e2e-brain-");
   const config = parseConfig(`
 dataDir: ${JSON.stringify(dataDir)}
 people: [{ id: kevin, name: Kévin }]
 engine: { mode: subscription }
 `);
-  const engine = new FakeEngine(() => [
-    { type: "session", sessionId: "s1" },
-    { type: "text", text: "Bonjour Kévin, " },
-    { type: "text", text: "je suis là !" },
-    { type: "done", inputTokens: 1, outputTokens: 2 },
-  ]);
+  const engine = new FakeEngine(scenario);
   const first = await buildApplication(config, engine, { embedder: new FakeEmbedder() });
   await first.server.listen({ port: 0, host: "127.0.0.1" });
   const port = (first.server.server.address() as AddressInfo).port;
@@ -215,4 +217,119 @@ test("a revoked device goes back to pairing with an explanation", async () => {
   await send(page, "Tu m'entends ?");
   await page.getByTestId("pairing-code").waitFor();
   await page.getByTestId("pairing-notice").filter({ hasText: "déconnecté" }).waitFor();
+});
+
+/** Alicia remembers « Kévin adore les lasagnes » when asked to, like the model would with its tool. */
+const REMEMBERS_LASAGNES: Scenario = async (request) => {
+  if (request.prompt.includes("lasagnes")) {
+    await callTool(request, "memory_remember", { text: "Kévin adore les lasagnes", kind: "preference", scope: "personal" });
+  }
+  return [
+    { type: "session", sessionId: "s1" },
+    { type: "text", text: "C'est noté !" },
+    { type: "done", inputTokens: 1, outputTokens: 1 },
+  ];
+};
+
+const ASKED = "Retiens que j'adore les lasagnes";
+
+/** Opens the Souvenirs screen and waits for its list. */
+async function openMemories(page: Page): Promise<void> {
+  await page.getByTestId("nav-memories").click();
+  await page.getByTestId("memory-view").waitFor();
+  await expect.poll(() => page.getByTestId("titlebar-title").textContent(), POLL).toBe("Souvenirs");
+}
+
+test("Souvenirs: a memory Alicia kept is corrected, pinned, forgotten, restored, and found by the test bench", async () => {
+  const brain = await startBrain(REMEMBERS_LASAGNES);
+  const page = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await send(page, ASKED);
+  await answered(page, 1);
+
+  await openMemories(page);
+  const card = page.getByTestId("memory-card").filter({ hasText: "lasagnes" });
+  await card.click();
+  await expect
+    .poll(() => page.getByTestId("memory-provenance").textContent(), POLL)
+    .toContain(`Retenu par Alicia pendant “${ASKED}”`);
+
+  // Correct the text.
+  await expect.poll(() => page.getByTestId("memory-save").isDisabled(), POLL).toBe(true);
+  await page.getByTestId("memory-text").fill("Kévin adore les lasagnes de mamie");
+  await page.getByTestId("memory-save").click();
+  await card.filter({ hasText: "Kévin adore les lasagnes de mamie" }).waitFor();
+  await expect.poll(() => page.getByTestId("memory-save").isDisabled(), POLL).toBe(true);
+
+  // Pin it.
+  await page.getByTestId("memory-pin").click();
+  await page.getByTestId("memory-save").click();
+  await card.filter({ hasText: "📌" }).waitFor();
+  expect(brain.app.memory.list("kevin", {}).map((m) => [m.text, m.pinned])).toEqual([["Kévin adore les lasagnes de mamie", true]]);
+
+  // Test bench: what Alicia would find, and why (before forgetting it).
+  await page.getByTestId("memory-search").fill("lasagnes");
+  await page.getByTestId("memory-bench-run").click();
+  const firstHit = page.getByTestId("memory-bench-hit").first();
+  await firstHit.filter({ hasText: "Kévin adore les lasagnes de mamie" }).waitFor();
+  await expect.poll(() => firstHit.getByTestId("memory-bench-reasons").textContent(), POLL).toContain("mots en commun");
+  // The bench does not count as a recall.
+  expect(brain.app.memory.list("kevin", {})[0]?.recallCount).toBe(0);
+  await page.getByTestId("memory-bench-close").click();
+  await page.getByTestId("memory-bench").waitFor({ state: "detached" });
+  await page.getByTestId("memory-search").fill("");
+
+  // Forget it, find it in the trash, restore it.
+  await page.getByTestId("memory-forget").click();
+  await page.getByTestId("memory-forget-yes").click();
+  await expect.poll(() => page.getByTestId("memory-card").count(), POLL).toBe(0);
+  await page.getByTestId("memory-tab-trash").click();
+  await page.getByTestId("memory-card").filter({ hasText: "oublié le" }).waitFor();
+  await page.getByTestId("memory-restore").click();
+  await page.getByTestId("memory-empty").filter({ hasText: "La corbeille est vide." }).waitFor();
+  await page.getByTestId("memory-tab-all").click();
+  await card.filter({ hasText: "Kévin adore les lasagnes de mamie" }).waitFor();
+});
+
+test("Souvenirs: a memory added by hand, then a conversation deleted from the menu keeps its memories", async () => {
+  const brain = await startBrain(REMEMBERS_LASAGNES);
+  const page = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await send(page, ASKED);
+  await answered(page, 1);
+
+  // Added by hand, for the whole family.
+  await openMemories(page);
+  await page.getByTestId("memory-new").click();
+  await page.getByTestId("memory-text").fill("Le chat s'appelle Moka");
+  await page.getByTestId("memory-scope-common").click();
+  await page.getByTestId("memory-save").click();
+  await expect.poll(() => page.getByTestId("memory-provenance").textContent(), POLL).toContain("Ajouté à la main");
+  await page.getByTestId("memory-tab-common").click();
+  await page.getByTestId("memory-card").filter({ hasText: "Le chat s'appelle Moka" }).waitFor();
+  await expect.poll(() => page.getByTestId("memory-card").count(), POLL).toBe(1);
+
+  // Delete the conversation from the menu (back in the chat, where it is open).
+  await page.getByTestId("conversation-list").getByRole("button", { name: ASKED, exact: true }).click();
+  await page.getByTestId("message-user").filter({ hasText: ASKED }).waitFor();
+  const row = page.getByTestId("conversation-list").locator("li").filter({ hasText: ASKED });
+  const trash = row.getByTestId("delete-conversation");
+  await row.hover();
+  // The 🗑 fades in on hover; activated from the keyboard, so a slow paint of the hover cannot misplace a click.
+  await page.waitForTimeout(300);
+  await trash.focus();
+  await trash.press("Enter");
+  await page.getByTestId("delete-conversation-yes").click();
+  await page.getByTestId("chat-welcome").waitFor();
+  await expect.poll(() => row.count(), POLL).toBe(0);
+  await expect.poll(() => page.getByTestId("titlebar-title").textContent(), POLL).toBe("Nouvelle conversation");
+
+  // The memory stays, its origin now a deleted conversation.
+  await openMemories(page);
+  // The screen kept its tab (Famille): the memory is personal.
+  await page.getByTestId("memory-tab-all").click();
+  await page.getByTestId("memory-card").filter({ hasText: "lasagnes" }).click();
+  await expect
+    .poll(() => page.getByTestId("memory-provenance").textContent(), POLL)
+    .toContain("Retenu pendant une conversation supprimée");
 });
