@@ -1,0 +1,183 @@
+﻿{
+    "character":  "Alicia",
+    "version":  2,
+    "style":  "papier découpé kawaii",
+    "eyes":  "Yeux haricot brun foncé et petite pastille crème en papier mat",
+    "tool":  "image_gen built-in",
+    "created":  "2026-10-04",
+    "canvas":  {
+                   "width":  2048,
+                   "height":  2048
+               },
+    "anchor":  {
+                   "x":  1024,
+                   "y":  1900,
+                   "description":  "Centre des pieds, bord inférieur opaque des semelles"
+               },
+    "bodyHeight":  1700,
+    "sourceNote":  "Sources natives conservées dans sources/. Exports rééchantillonnés sur un canevas commun de 2048 × 2048 px ; voir les dimensions natives par état.",
+    "states":  [
+                   {
+                       "name":  "neutre",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-e5bb02b6-9956-4554-9127-027f87e50fa4.png",
+                       "prompt":  "Use case: style-transfer. Production edit of the supplied Alicia paper mascot sprite.\nReference 1: the exact existing sprite to edit. Preserve its full-body neutral pose, complete silhouette, head proportions, twin ponytails, fringe, headband, black bow, pink cheeks, smile, coral dress, cream apron, stockings, shoes, all paper textures, shadows, canvas size and positions.\nReference 2: approved eye comparison board. Transfer ONLY the eye design from the MIDDLE column \"2 · Yeux haricot\". Do not transfer the other columns, composition or background.\nChange ONLY the two eyes: shorter, plump rounded bean-shaped dark chocolate-brown cut-paper eyes with a slight concavity at the inner edge; one tiny matte cream cut-paper circular highlight near upper-left of each eye, about 15% of eye width. Same symmetrical eye size and eye-center positions as original. Subtle warm expression, simple eyes, no white sclera and no eyelashes. Preserve original eyebrows and mouth; preserve every other part of the character.\nPaper material: flat matte layers with paper fibers; cream highlight is a tiny pasted paper dot with no glass gloss. Do not make eyes huge. Keep the approved friendly kawaii warmth.\nOutput ONE full-body character on a TRUE TRANSPARENT background with alpha, including the gaps between limbs and ponytails. No ground shadow, no background, no studio backdrop, no label, no text, no border, no watermark. All pixels outside the character should be transparent, with clean antialiased edges, no stray floating flecks. Preserve original canvas and foot registration.",
+                       "reusedFromV1":  false,
+                       "file":  "neutre.png",
+                       "nativeSource":  "sources/neutre.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  39.686131386861234,
+                                            "translateX":  39.830291970802932,
+                                            "footCenter":  1023.5,
+                                            "centralHeadTop":  201,
+                                            "scale":  1.551094890510949,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "veille",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-02c82996-6cc5-4ff6-abae-6971eed166be.png",
+                       "prompt":  "Pose à yeux fermés réutilisée depuis v1.",
+                       "reusedFromV1":  true,
+                       "file":  "veille.png",
+                       "nativeSource":  "sources/veille.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  47.593001841620662,
+                                            "translateX":  41.725598526703493,
+                                            "footCenter":  1024.5,
+                                            "centralHeadTop":  202,
+                                            "scale":  1.565377532228361,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "ecoute",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-61aa6208-0360-4bb6-9968-e8986246d12d.png",
+                       "prompt":  "Use case: style-transfer. Edit an existing transparent Alicia kawaii layered-cut-paper mascot sprite.\nReference 1 is the exact state sprite to edit: LOCK its entire pose, arm gestures, eyebrows, mouth, facial outline, body and head proportions, hair silhouette, blonde ponytails, fringe, black bow and headband, clothing, pink cheeks, complete paper texture, scale, canvas and planted shoes.\nReference 2 is the updated NEUTRAL Alicia with approved eyes: use it ONLY as the eye-design reference.\nChange ONLY the two eyes in reference 1 to the same approved eyes from reference 2: plump short dark chocolate-brown bean/rounded oval paper shapes, a subtle inward curve, ONE tiny matte cream round paper dot near upper-left of each eye. Keep original eye-center positions and expressive eyebrow and mouth shapes from reference 1. No white sclera, no eyelashes, no glassy highlights, no large anime eyes. Preserve every other pixel region and keep exactly the same gesture as reference 1.\nOne full-body character, high quality matte cardstock layers and fine fibers. True transparent alpha background, including all gaps between limbs and hair. No cast ground shadow, no label, no border, no additional props, no text, no watermark, clean cutout edges without stray pixels. Preserve original framing and foot location.\nSTATE: ecoute. Keep the raised hand beside her ear, opposite arm relaxed, small closed smile, curious eyebrow.",
+                       "reusedFromV1":  false,
+                       "file":  "ecoute.png",
+                       "nativeSource":  "sources/ecoute.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  41.382862351868653,
+                                            "translateX":  40.727438468550531,
+                                            "footCenter":  1024,
+                                            "centralHeadTop":  201,
+                                            "scale":  1.5496809480401095,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "reflexion",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-d53aa331-6930-450a-81ca-9945b3871a43.png",
+                       "prompt":  "Use case: style-transfer. Edit an existing transparent Alicia kawaii layered-cut-paper mascot sprite.\nReference 1 is the exact state sprite to edit: LOCK its entire pose, arm gestures, eyebrows, mouth, facial outline, body and head proportions, hair silhouette, blonde ponytails, fringe, black bow and headband, clothing, pink cheeks, complete paper texture, scale, canvas and planted shoes.\nReference 2 is the updated NEUTRAL Alicia with approved eyes: use it ONLY as the eye-design reference.\nChange ONLY the two eyes in reference 1 to the same approved eyes from reference 2: plump short dark chocolate-brown bean/rounded oval paper shapes, a subtle inward curve, ONE tiny matte cream round paper dot near upper-left of each eye. Keep original eye-center positions and expressive eyebrow and mouth shapes from reference 1. No white sclera, no eyelashes, no glassy highlights, no large anime eyes. Preserve every other pixel region and keep exactly the same gesture as reference 1.\nOne full-body character, high quality matte cardstock layers and fine fibers. True transparent alpha background, including all gaps between limbs and hair. No cast ground shadow, no label, no border, no additional props, no text, no watermark, clean cutout edges without stray pixels. Preserve original framing and foot location.\nSTATE: reflexion. Keep the little hand touching her chin, opposite arm down, small thoughtful mouth and thinking eyebrows. Replace the existing white sclera eyes entirely with the approved dark bean eyes and tiny cream dots, making eye shapes subtly glance upward without introducing white sclera. All gesture, wardrobe and silhouette stay exactly as reference 1.",
+                       "reusedFromV1":  false,
+                       "file":  "reflexion.png",
+                       "nativeSource":  "sources/reflexion.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  46.170193192272336,
+                                            "translateX":  41.629254829806882,
+                                            "footCenter":  1024,
+                                            "centralHeadTop":  201,
+                                            "scale":  1.5639374425022998,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "parle",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-3643f934-6aab-4087-b29c-6c5c4d06d70d.png",
+                       "prompt":  "Use case: style-transfer. Edit an existing transparent Alicia kawaii layered-cut-paper mascot sprite.\nReference 1 is the exact state sprite to edit: LOCK its entire pose, arm gestures, eyebrows, mouth, facial outline, body and head proportions, hair silhouette, blonde ponytails, fringe, black bow and headband, clothing, pink cheeks, complete paper texture, scale, canvas and planted shoes.\nReference 2 is the updated NEUTRAL Alicia with approved eyes: use it ONLY as the eye-design reference.\nChange ONLY the two eyes in reference 1 to the same approved eyes from reference 2: plump short dark chocolate-brown bean/rounded oval paper shapes, a subtle inward curve, ONE tiny matte cream round paper dot near upper-left of each eye. Keep original eye-center positions and expressive eyebrow and mouth shapes from reference 1. No white sclera, no eyelashes, no glassy highlights, no large anime eyes. Preserve every other pixel region and keep exactly the same gesture as reference 1.\nOne full-body character, high quality matte cardstock layers and fine fibers. True transparent alpha background, including all gaps between limbs and hair. No cast ground shadow, no label, no border, no additional props, no text, no watermark, clean cutout edges without stray pixels. Preserve original framing and foot location.\nSTATE: parle. Preserve the original friendly open speaking mouth, engaged eyebrows, one arm extended with palm upward and other arm down. Only update eyes to match reference 2\u0027s short dark bean shapes and tiny matte cream dots.",
+                       "reusedFromV1":  false,
+                       "file":  "parle.png",
+                       "nativeSource":  "sources/parle.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  49.4375,
+                                            "translateX":  43.53125,
+                                            "footCenter":  1024,
+                                            "centralHeadTop":  201,
+                                            "scale":  1.5625,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "victoire",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-4d262c43-d2bc-41a9-abcb-2ecfedf0773b.png",
+                       "prompt":  "Pose à yeux fermés réutilisée depuis v1.",
+                       "reusedFromV1":  true,
+                       "file":  "victoire.png",
+                       "nativeSource":  "sources/victoire.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  47.7341306347746,
+                                            "translateX":  41.84728610855575,
+                                            "footCenter":  1024,
+                                            "centralHeadTop":  201,
+                                            "scale":  1.5639374425022998,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "alerte",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-64efee0e-a651-4463-9381-e8513fd05c1f.png",
+                       "prompt":  "Use case: style-transfer. Edit an existing transparent Alicia kawaii layered-cut-paper mascot sprite.\nReference 1 is the exact state sprite to edit: LOCK its entire pose, arm gestures, eyebrows, mouth, facial outline, body and head proportions, hair silhouette, blonde ponytails, fringe, black bow and headband, clothing, pink cheeks, complete paper texture, scale, canvas and planted shoes.\nReference 2 is the updated NEUTRAL Alicia with approved eyes: use it ONLY as the eye-design reference.\nChange ONLY the two eyes in reference 1 to the same approved eyes from reference 2: plump short dark chocolate-brown bean/rounded oval paper shapes, a subtle inward curve, ONE tiny matte cream round paper dot near upper-left of each eye. Keep original eye-center positions and expressive eyebrow and mouth shapes from reference 1. No white sclera, no eyelashes, no glassy highlights, no large anime eyes. Preserve every other pixel region and keep exactly the same gesture as reference 1.\nOne full-body character, high quality matte cardstock layers and fine fibers. True transparent alpha background, including all gaps between limbs and hair. No cast ground shadow, no label, no border, no additional props, no text, no watermark, clean cutout edges without stray pixels. Preserve original framing and foot location.\nSTATE: alerte. Preserve the raised open palm beside her shoulder, other arm down, slightly worried eyebrows and small round O mouth. Keep eyes attentive, gently rounded bean shape, same small cream dots as reference 2. Only update eyes, no other changes.",
+                       "reusedFromV1":  false,
+                       "file":  "alerte.png",
+                       "nativeSource":  "sources/alerte.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  40.889196675900394,
+                                            "translateX":  38.219759926131132,
+                                            "footCenter":  1024,
+                                            "centralHeadTop":  202,
+                                            "scale":  1.5697137580794089,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "bug",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-ecf84142-3391-4ce2-b5db-5e1bef125018.png",
+                       "prompt":  "Use case: style-transfer. Edit an existing transparent Alicia kawaii layered-cut-paper mascot sprite.\nReference 1 is the exact state sprite to edit: LOCK its entire pose, arm gestures, eyebrows, mouth, facial outline, body and head proportions, hair silhouette, blonde ponytails, fringe, black bow and headband, clothing, pink cheeks, complete paper texture, scale, canvas and planted shoes.\nReference 2 is the updated NEUTRAL Alicia with approved eyes: use it ONLY as the eye-design reference.\nChange ONLY the two eyes in reference 1 to the same approved eyes from reference 2: plump short dark chocolate-brown bean/rounded oval paper shapes, a subtle inward curve, ONE tiny matte cream round paper dot near upper-left of each eye. Keep original eye-center positions and expressive eyebrow and mouth shapes from reference 1. No white sclera, no eyelashes, no glassy highlights, no large anime eyes. Preserve every other pixel region and keep exactly the same gesture as reference 1.\nOne full-body character, high quality matte cardstock layers and fine fibers. True transparent alpha background, including all gaps between limbs and hair. No cast ground shadow, no label, no border, no additional props, no text, no watermark, clean cutout edges without stray pixels. Preserve original framing and foot location.\nSTATE: bug. Preserve both raised forearms and upward palms in the original puzzled shrug, sympathetic tilted eyebrows and tiny uncertain wavy mouth. Only update both eyes to the same friendly short bean shapes and single cream paper dots as reference 2. No new objects or symbols.",
+                       "reusedFromV1":  false,
+                       "file":  "bug.png",
+                       "nativeSource":  "sources/bug.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  46.027624309392195,
+                                            "translateX":  41.725598526703493,
+                                            "footCenter":  1024.5,
+                                            "centralHeadTop":  201,
+                                            "scale":  1.565377532228361,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   },
+                   {
+                       "name":  "idee",
+                       "source":  "C:\\Users\\gilge\\.codex\\generated_images\\01a106cb-846a-7992-9bfd-6eda50b98ea7\\exec-24579e6d-6f94-4a6b-bcbb-073c47fbb348.png",
+                       "prompt":  "Use case: style-transfer. Edit an existing transparent Alicia kawaii layered-cut-paper mascot sprite.\nReference 1 is the exact state sprite to edit: LOCK its entire pose, arm gestures, eyebrows, mouth, facial outline, body and head proportions, hair silhouette, blonde ponytails, fringe, black bow and headband, clothing, pink cheeks, complete paper texture, scale, canvas and planted shoes.\nReference 2 is the updated NEUTRAL Alicia with approved eyes: use it ONLY as the eye-design reference.\nChange ONLY the two eyes in reference 1 to the same approved eyes from reference 2: plump short dark chocolate-brown bean/rounded oval paper shapes, a subtle inward curve, ONE tiny matte cream round paper dot near upper-left of each eye. Keep original eye-center positions and expressive eyebrow and mouth shapes from reference 1. No white sclera, no eyelashes, no glassy highlights, no large anime eyes. Preserve every other pixel region and keep exactly the same gesture as reference 1.\nOne full-body character, high quality matte cardstock layers and fine fibers. True transparent alpha background, including all gaps between limbs and hair. No cast ground shadow, no label, no border, no additional props, no text, no watermark, clean cutout edges without stray pixels. Preserve original framing and foot location.\nSTATE: idee. Preserve the original raised index finger beside her cheek, other arm relaxed, bright open smile, lifted eyebrow, and the existing small amber paper lightbulb above the viewer-left ponytail. The bulb is part of reference 1 and must remain exactly where it is. Only update the two eyes to match reference 2\u0027s short brown bean shapes and single matte cream dots.",
+                       "reusedFromV1":  false,
+                       "file":  "idee.png",
+                       "nativeSource":  "sources/idee.png",
+                       "nativeWidth":  1254,
+                       "nativeHeight":  1254,
+                       "registration":  {
+                                            "translateY":  42.184331797235018,
+                                            "translateX":  40.820276497695772,
+                                            "footCenter":  1024,
+                                            "centralHeadTop":  202,
+                                            "scale":  1.566820276497696,
+                                            "opaqueFootBaseline":  1900
+                                        }
+                   }
+               ]
+}

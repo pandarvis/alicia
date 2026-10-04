@@ -1,0 +1,92 @@
+﻿[
+    {
+        "State":  "neutre",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1023.5,
+        "Passed":  true
+    },
+    {
+        "State":  "veille",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024.5,
+        "Passed":  true
+    },
+    {
+        "State":  "ecoute",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024,
+        "Passed":  true
+    },
+    {
+        "State":  "reflexion",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024,
+        "Passed":  true
+    },
+    {
+        "State":  "parle",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024,
+        "Passed":  true
+    },
+    {
+        "State":  "victoire",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024,
+        "Passed":  true
+    },
+    {
+        "State":  "alerte",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024,
+        "Passed":  true
+    },
+    {
+        "State":  "bug",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024.5,
+        "Passed":  true
+    },
+    {
+        "State":  "idee",
+        "Width":  2048,
+        "Height":  2048,
+        "TransparentCorners":  true,
+        "Uncropped":  true,
+        "FootBaseline":  1900,
+        "FootCenter":  1024,
+        "Passed":  true
+    }
+]

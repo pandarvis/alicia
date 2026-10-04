@@ -6,14 +6,34 @@ Elle discute, pilote la maison (chauffage, volets, chauffe-eau, énergie solaire
 et les courses, et propose des idées d'elle-même. Son caractère : **espiègle, démonstrative,
 complice**, jamais servile.
 
-## Mascotte actuelle (à refaire)
-Le dossier `references/` contient les 13 poses de la mascotte actuelle : une figurine chibi façon
+## Références d'origine
+Le dossier `references/` contient les 13 poses de l'ancienne mascotte : une figurine chibi façon
 « Alice au pays des merveilles » (couettes blondes, nœud noir, robe rouge et tablier blanc, rendu
 vinyle mat sur fond studio gris). Poses : `neutre`, `trois-quart`, `profil`, `assis`, `ecoute`,
 `reflexion`, `veille`, `alerte`, `bug`, `colere`, `victoire`, `chante`, `violon`.
 
-La direction de la nouvelle version reste ouverte (style, silhouette, matière). Les références
-servent de point de départ, pas de contrainte.
+## Direction validée — 4 octobre 2026
+La version **papier découpé kawaii v2, avec yeux haricot**, est retenue pour Alicia.
+Elle conserve les couettes blondes, le nœud noir, la robe rouge corail et le tablier crème,
+avec une grande tête arrondie, des joues rosées et des mimiques espiègles. Le rendu est mat,
+en couches de papier légèrement texturées avec de fines ombres entre les couches.
+Les yeux ouverts sont brun foncé avec une petite pastille crème en papier ; les états veille
+et victoire conservent leurs yeux fermés.
+
+Les **neuf images validées** se trouvent dans [`papier-decoupe/v2/`](papier-decoupe/v2/) :
+`neutre.png`, `veille.png`, `ecoute.png`, `reflexion.png`, `parle.png`, `victoire.png`,
+`alerte.png`, `bug.png` et `idee.png`.
+
+- [Pack des images validées](papier-decoupe/poses-v2.zip).
+- [Aperçu à 128 px sur fond nuit et crème](papier-decoupe/v2/apercu-128px.png).
+- [Prompts, sources et paramètres d'export](papier-decoupe/v2/manifest.json).
+- [Vérification des exports](papier-decoupe/v2/verification.json).
+
+Les PNG ont un vrai fond transparent et un canevas commun de **2 048 × 2 048 px**.
+Le bord inférieur opaque des semelles est à **y = 1 900 px** ; le centre des pieds est
+à **x = 1 024 px**, avec une tolérance de 0,5 px. Les sources natives de 1 254 × 1 254 px
+sont conservées dans `papier-decoupe/v2/sources/` ; les exports ont été rééchantillonnés.
+Pour l'intégration et les prochaines déclinaisons, prendre cette v2 comme référence.
 
 ## Où elle vivra
 1. **Mascotte détachée sur le bureau** (façon client ChatGPT/Codex) : flotte au-dessus des
