@@ -1,7 +1,9 @@
 import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocole";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import { journal } from "../src/base/schema.ts";
 import { DepotConversations } from "../src/conversations/depot.ts";
 import { traiterEnvoi } from "../src/conversations/service-chat.ts";
+import type { Moteur } from "../src/moteur/moteur.ts";
 import { FauxMoteur, type Scenario } from "../src/moteur/faux-moteur.ts";
 import { creerBaseTest, creerHorlogeTest, ELODIE, KEVIN } from "./aides.ts";
 
@@ -19,7 +21,7 @@ function creerContexte(...scenarios: Scenario[]) {
   const temps = creerHorlogeTest();
   const depot = new DepotConversations(base, temps.horloge);
   const moteur = new FauxMoteur(...scenarios);
-  return { depot, moteur, deps: { depot, moteur, horloge: temps.horloge, fuseau: "Europe/Paris" } };
+  return { base, depot, moteur, deps: { depot, moteur, horloge: temps.horloge, fuseau: "Europe/Paris" } };
 }
 
 async function envoyer(
@@ -128,5 +130,98 @@ describe("traiterEnvoi", () => {
     ]);
     const types = (await envoyer(deps, KEVIN, { texte: "Météo ?" })).map((e) => e.type);
     expect(types).toEqual(["conversation", "appel_outil", "resultat_outil", "morceau_texte", "fin"]);
+  });
+
+  test("annulation : pas de relance, session conservée, pas de « fin », journal « annulé »", async () => {
+    const faux = new FauxMoteur(REPONSE_SIMPLE, () => [{ type: "erreur", code: "moteur", message: "interrompu" }]);
+    // Un moteur qui ignore le signal, comme le fait un processus qui meurt en cours d'annulation.
+    const moteur: Moteur = { executer: (requete) => faux.executer(requete) };
+    const base = creerBaseTest();
+    const depot = new DepotConversations(base, creerHorlogeTest().horloge);
+    const deps = { depot, moteur, horloge: creerHorlogeTest().horloge, fuseau: "Europe/Paris" };
+    const premiers = await envoyer(deps, KEVIN, { texte: "Un" });
+    const id = premiers[0]?.type === "conversation" ? premiers[0].conversationId : "";
+
+    const annule = new AbortController();
+    annule.abort();
+    const sortie: EvenementServeur[] = [];
+    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Deux", conversationId: id };
+    for await (const e of traiterEnvoi(deps, KEVIN, complet, annule.signal)) sortie.push(e);
+
+    expect(faux.requetes).toHaveLength(2);
+    expect(depot.obtenir(id, "kevin")?.sessionId).toBe("s1");
+    expect(sortie.some((e) => e.type === "fin" || e.type === "erreur")).toBe(false);
+    expect(base.select().from(journal).all().map((j) => j.erreur)).toEqual([null, "annulé"]);
+  });
+
+  test("annulation d'un tour qui réussit côté moteur : pas de « fin »", async () => {
+    const faux = new FauxMoteur(REPONSE_SIMPLE);
+    const moteur: Moteur = { executer: (requete) => faux.executer(requete) };
+    const temps = creerHorlogeTest();
+    const depot = new DepotConversations(creerBaseTest(), temps.horloge);
+    const annule = new AbortController();
+    annule.abort();
+    const sortie: EvenementServeur[] = [];
+    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Un" };
+    for await (const e of traiterEnvoi({ depot, moteur, horloge: temps.horloge, fuseau: "Europe/Paris" }, KEVIN, complet, annule.signal)) {
+      sortie.push(e);
+    }
+    expect(sortie.some((e) => e.type === "fin")).toBe(false);
+  });
+
+  test("pas de relance après un appel d'outil", async () => {
+    const { deps, moteur } = creerContexte(
+      REPONSE_SIMPLE,
+      () => [
+        { type: "appel_outil", idAppel: "t1", outil: "meteo" },
+        { type: "erreur", code: "moteur", message: "plantage" },
+      ],
+      REPONSE_SIMPLE,
+    );
+    const premiers = await envoyer(deps, KEVIN, { texte: "Un" });
+    const id = premiers[0]?.type === "conversation" ? premiers[0].conversationId : "";
+    const evenements = await envoyer(deps, KEVIN, { texte: "Deux", conversationId: id });
+    expect(moteur.requetes).toHaveLength(2);
+    expect(evenements.at(-1)).toMatchObject({ type: "erreur", code: "moteur", message: "plantage" });
+  });
+
+  test("une panne du dépôt n'est pas une erreur du moteur : elle remonte, sans relance", async () => {
+    const { deps, depot, moteur } = creerContexte(REPONSE_SIMPLE, REPONSE_SIMPLE);
+    vi.spyOn(depot, "definirSession").mockImplementation(() => {
+      throw new Error("disque plein");
+    });
+    const sortie: EvenementServeur[] = [];
+    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Un" };
+    await expect(async () => {
+      for await (const e of traiterEnvoi(deps, KEVIN, complet, new AbortController().signal)) sortie.push(e);
+    }).rejects.toThrow("disque plein");
+    expect(sortie.some((e) => e.type === "erreur")).toBe(false);
+    expect(moteur.requetes).toHaveLength(1);
+  });
+
+  test("le consommateur s'arrête tôt : le texte partiel et le journal sont quand même enregistrés", async () => {
+    const { deps, depot, base } = creerContexte(REPONSE_SIMPLE);
+    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Salut" };
+    let id = "";
+    for await (const e of traiterEnvoi(deps, KEVIN, complet, new AbortController().signal)) {
+      if (e.type === "conversation") id = e.conversationId;
+      if (e.type === "morceau_texte") break;
+    }
+    expect(depot.messages(id).map((m) => [m.role, m.texte])).toEqual([
+      ["utilisateur", "Salut"],
+      ["alicia", "Il fait "],
+    ]);
+    expect(base.select().from(journal).all()).toHaveLength(1);
+  });
+
+  test("session perdue sur une conversation existante : le contexte est réinjecté", async () => {
+    const { deps, depot, moteur } = creerContexte(REPONSE_SIMPLE);
+    const premiers = await envoyer(deps, KEVIN, { texte: "Un" });
+    const id = premiers[0]?.type === "conversation" ? premiers[0].conversationId : "";
+    depot.definirSession(id, null);
+    await envoyer(deps, KEVIN, { texte: "Deux", conversationId: id });
+    expect(moteur.requetes[1]?.sessionId).toBeUndefined();
+    expect(moteur.requetes[1]?.prompt).toContain("Utilisateur : Un");
+    expect(moteur.requetes[1]?.prompt).toContain("Alicia : Il fait 19 °C.");
   });
 });
