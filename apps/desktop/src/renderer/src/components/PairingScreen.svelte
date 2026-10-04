@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
+  import { motion } from "../lib/motion.ts";
   import type { SaveSessionResult, StoredSession } from "../../../shared/session.ts";
   import { pair, type PairingFailure } from "../lib/brain-client.ts";
   import Mascot from "./Mascot.svelte";
@@ -68,7 +69,7 @@
   }
 </script>
 
-<div class="screen" in:fade={{ duration: 200 }}>
+<div class="screen" in:fade={{ duration: motion(200) }}>
   <div class="drag"></div>
   <form class="card" onsubmit={submit} aria-describedby="pairing-error-live">
     <Mascot mood={error === null ? "listening" : "alert"} size={160} />
@@ -80,7 +81,7 @@
     <label>Nom de cet appareil<input bind:value={deviceName} maxlength="60" data-testid="pairing-device" /></label>
     <!-- Always in the DOM so screen readers reliably announce each new error; the visible copy below fades. -->
     <p id="pairing-error-live" class="sr-only" aria-live="assertive">{error ?? ""}</p>
-    {#if error}<p class="error" aria-hidden="true" data-testid="pairing-error" transition:fade={{ duration: 150 }}>{error}</p>{/if}
+    {#if error}<p class="error" aria-hidden="true" data-testid="pairing-error" transition:fade={{ duration: motion(150) }}>{error}</p>{/if}
     <button type="submit" disabled={pending || code.length !== 6} data-testid="pairing-submit">
       {pending ? "Connexion…" : "Appairer"}
     </button>

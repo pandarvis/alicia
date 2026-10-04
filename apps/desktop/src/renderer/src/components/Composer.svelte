@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { ConnectionStatus } from "../lib/chat-connection.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
 
@@ -6,6 +7,17 @@
   let text = $state("");
   const ready = $derived(status === "ready");
   const canSend = $derived(ready && !store.busy && !store.loading && text.trim() !== "");
+  let textarea = $state<HTMLTextAreaElement | null>(null);
+  let previousStatus = untrack(() => status);
+
+  // Back online after a drop: give the focus back to the composer, unless the user is elsewhere.
+  $effect(() => {
+    const reconnected = previousStatus === "offline" && status === "ready";
+    previousStatus = status;
+    if (!reconnected || textarea === null || !document.hasFocus()) return;
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body || focused === textarea) textarea.focus();
+  });
 
   function submit(): void {
     if (store.send(text)) text = "";
@@ -31,6 +43,7 @@
 <form class="composer" onsubmit={handleSubmit}>
   <textarea
     bind:value={text}
+    bind:this={textarea}
     onkeydown={handleKeydown}
     rows="1"
     placeholder={ready ? "Demande à Alicia…" : "Connexion à Alicia…"}

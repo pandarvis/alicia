@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fade, fly } from "svelte/transition";
+  import { motion, scrollBehavior } from "../lib/motion.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
   import Mascot from "./Mascot.svelte";
 
@@ -20,26 +21,102 @@
   const lastAssistantId = $derived(store.messages.findLast((m) => m.role === "assistant")?.id);
   const waiting = $derived(store.busy && store.messages.at(-1)?.role === "user");
 
-  /** Changes whenever a message is added or streams more text. */
-  const progress = $derived(`${store.messages.length}:${store.messages.at(-1)?.text.length ?? 0}`);
-  let followedProgress = "";
+  /*
+   * Scrolling, like the ChatGPT/Claude apps:
+   * - a message the user sends is brought to the top of the area (a spacer below the last exchange makes room);
+   * - the answer then fills the space under it without moving the view, and once it outgrows the view,
+   *   the view follows its end, unless the user scrolled by hand since sending;
+   * - opening a conversation shows its end at once.
+   */
+  /** Space (px) left above the sent message once it is brought to the top. */
+  const TOP_GAP = 12;
+  const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
-  // Follow the conversation as text streams in.
+  let spacer = $state<HTMLDivElement | null>(null);
+  let viewportHeight = $state(0);
+  /** The user message of the last exchange sent from here: the spacer keeps room below it. */
+  let pinnedId: string | null = null;
+  /** True from a send until the user scrolls by hand: the view follows the streamed answer. */
+  let follow = false;
+  let seenList: HTMLDivElement | null = null;
+  let seenUserId: string | undefined;
+  let seenLayout = "";
+
+  /** Sizes the spacer so the pinned message can reach the top; returns its height. */
+  function layoutSpacer(area: HTMLDivElement, filler: HTMLDivElement): number {
+    const row = pinnedId === null ? null : area.querySelector<HTMLElement>(`[data-message-id="${pinnedId}"]`);
+    let height = 0;
+    if (row !== null) {
+      const paddingBottom = parseFloat(getComputedStyle(area).paddingBottom);
+      height = Math.max(0, area.clientHeight - paddingBottom - TOP_GAP - (filler.offsetTop - row.offsetTop));
+    }
+    // Set directly (not through state) so the scroll below sees the new height right away.
+    filler.style.height = `${height}px`;
+    return height;
+  }
+
   $effect(() => {
-    if (list === null || progress === followedProgress) return;
-    followedProgress = progress;
-    list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+    if (list === null || spacer === null) return;
+    const last = store.messages.at(-1);
+    const layout = `${store.messages.length}:${last?.text.length ?? 0}:${waiting}:${store.activity ?? ""}:${viewportHeight}`;
+    const fresh = list !== seenList;
+    if (!fresh && layout === seenLayout) return;
+    seenList = list;
+    seenLayout = layout;
+
+    const lastUserId = store.messages.findLast((m) => m.role === "user")?.id;
+    const sent = lastUserId !== seenUserId && store.busy && last?.role === "user";
+    seenUserId = lastUserId;
+    if (sent) {
+      pinnedId = last.id;
+      follow = true;
+    } else if (fresh) {
+      pinnedId = null;
+      follow = false;
+    }
+
+    const room = layoutSpacer(list, spacer);
+    if (sent) {
+      const row = list.querySelector<HTMLElement>(`[data-message-id="${last.id}"]`);
+      if (row !== null) list.scrollTo({ top: row.offsetTop - TOP_GAP, behavior: scrollBehavior() });
+    } else if (fresh) {
+      list.scrollTo({ top: list.scrollHeight, behavior: "auto" });
+    } else if (follow && room === 0) {
+      // The answer outgrew the view: keep its end visible (never scroll back up).
+      const end = list.scrollHeight - list.clientHeight;
+      if (end > list.scrollTop + 1) list.scrollTo({ top: end, behavior: "auto" });
+    }
   });
+
+  /** Wheel, keyboard or scrollbar: the user takes over the scroll until the next send. */
+  function stopFollowing(target: EventTarget | null): void {
+    if (list !== null && target instanceof Node && list.contains(target)) follow = false;
+  }
+
+  function handleWheel(event: WheelEvent): void {
+    stopFollowing(event.target);
+  }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    if (SCROLL_KEYS.has(event.key)) stopFollowing(event.target);
+  }
+
+  function handlePointerdown(event: PointerEvent): void {
+    // Only a press on the scrollbar itself (right of the content box) counts as scrolling.
+    if (list !== null && event.target === list && event.offsetX >= list.clientWidth) follow = false;
+  }
 </script>
+
+<svelte:window onwheel={handleWheel} onkeydown={handleKeydown} onpointerdown={handlePointerdown} />
 
 <section class="chat">
   {#if store.messages.length === 0 && store.loading}
-    <div class="center" in:fade={{ duration: 200 }} data-testid="chat-loading">
+    <div class="center" in:fade={{ duration: motion(200) }} data-testid="chat-loading">
       <Mascot mood="thinking" size={120} />
       <p class="loading">Chargement…</p>
     </div>
   {:else if store.messages.length === 0}
-    <div class="center" in:fade={{ duration: 200 }} data-testid="chat-welcome">
+    <div class="center" in:fade={{ duration: motion(200) }} data-testid="chat-welcome">
       <Mascot mood={store.mascot} size={180} />
       <h1>{greeting()} {personName}, on fait quoi ?</h1>
       <div class="suggestions">
@@ -49,14 +126,14 @@
       </div>
     </div>
   {:else}
-    <div class="messages" bind:this={list} data-testid="messages" in:fade={{ duration: 200 }}>
+    <div class="messages" bind:this={list} bind:clientHeight={viewportHeight} data-testid="messages" in:fade={{ duration: motion(200) }}>
       {#each store.messages as message (message.id)}
-        <div class="row {message.role}" in:fly={{ y: 8, duration: 180 }}>
+        <div class="row {message.role}" data-message-id={message.id} in:fly={{ y: 8, duration: motion(180) }}>
           {#if message.role === "assistant"}
             <div class="avatar">
               <!-- Only one mascot at a time: it moves to the typing row while Alicia thinks about the next answer. -->
               {#if message.id === lastAssistantId && !waiting}
-                <div transition:fade={{ duration: 150 }}><Mascot mood={store.mascot} size={44} /></div>
+                <div transition:fade={{ duration: motion(150) }}><Mascot mood={store.mascot} size={44} /></div>
               {/if}
             </div>
           {/if}
@@ -66,16 +143,17 @@
         </div>
       {/each}
       {#if waiting}
-        <div class="row assistant" in:fade={{ duration: 150 }}>
+        <div class="row assistant" in:fade={{ duration: motion(150) }}>
           <div class="avatar"><Mascot mood={store.mascot} size={44} /></div>
           <div class="bubble typing" role="status" aria-label="Alicia réfléchit"><span></span><span></span><span></span></div>
         </div>
       {/if}
-      {#if store.activity}<p class="activity" transition:fade={{ duration: 150 }}>{store.activity}</p>{/if}
+      {#if store.activity}<p class="activity" transition:fade={{ duration: motion(150) }}>{store.activity}</p>{/if}
+      <div class="spacer" bind:this={spacer} aria-hidden="true"></div>
     </div>
   {/if}
   {#if store.notice}
-    <p class="notice" role="status" data-testid="notice" transition:fade={{ duration: 150 }}>{store.notice}</p>
+    <p class="notice" role="status" data-testid="notice" transition:fade={{ duration: motion(150) }}>{store.notice}</p>
   {/if}
 </section>
 
@@ -91,7 +169,7 @@
   }
   .suggestions button:hover:not(:disabled) { border-color: var(--sage); color: var(--cream); }
   .suggestions button:disabled { opacity: 0.6; cursor: default; }
-  .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 20px max(24px, calc((100% - 760px) / 2)); display: flex; flex-direction: column; gap: 10px; }
+  .messages { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 12px max(24px, calc((100% - 760px) / 2)) 20px; display: flex; flex-direction: column; gap: 10px; }
   .row { display: flex; gap: 8px; align-items: flex-end; }
   .row.user { justify-content: flex-end; }
   .avatar { width: 44px; flex: none; }
@@ -103,6 +181,8 @@
   .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--cream-muted); animation: bounce 1.2s ease-in-out infinite; }
   .typing span:nth-child(2) { animation-delay: 0.15s; }
   .typing span:nth-child(3) { animation-delay: 0.3s; }
+  /* flex: none, or the empty spacer would shrink to nothing in the column. */
+  .spacer { flex: none; }
   .activity { margin: 0 0 0 52px; font-size: 13px; color: var(--muted); font-style: italic; }
   .notice { margin: 0 auto 8px; padding: 6px 12px; border-radius: 8px; background: var(--night-deep); color: var(--amber); font-size: 14px; }
   @keyframes blink { 50% { opacity: 0; } }

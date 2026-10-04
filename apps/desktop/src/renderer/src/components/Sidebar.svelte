@@ -1,7 +1,8 @@
 <script lang="ts">
   import { cubicOut } from "svelte/easing";
-  import type { TransitionConfig } from "svelte/transition";
+  import { fade, type TransitionConfig } from "svelte/transition";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
+  import { motion } from "../lib/motion.ts";
 
   let { store, personName, onSignOut }: {
     store: ChatStore;
@@ -9,11 +10,18 @@
     onSignOut: () => void;
   } = $props();
 
+  const uid = $props.id();
+  let confirming = $state(false);
+  let signOutButton = $state<HTMLButtonElement | null>(null);
+  let cancelButton = $state<HTMLButtonElement | null>(null);
+  /** Set when the question is dismissed, so the focus goes back to "Déconnecter". */
+  let returnFocus = false;
+
   /** Opens and closes by width, so the chat area beside it glides instead of jumping. */
   function reveal(node: Element): TransitionConfig {
     const width = node.getBoundingClientRect().width;
     return {
-      duration: 200,
+      duration: motion(200),
       easing: cubicOut,
       css: (t) => `width: ${t * width}px; opacity: ${t}`,
     };
@@ -23,9 +31,34 @@
     store.startNew();
   }
 
-  function signOut(): void {
-    if (window.confirm(`Déconnecter cet appareil d'Alicia ? Il faudra l'appairer à nouveau.`)) onSignOut();
+  function askSignOut(): void {
+    confirming = true;
   }
+
+  function cancelSignOut(): void {
+    returnFocus = true;
+    confirming = false;
+  }
+
+  function confirmSignOut(): void {
+    onSignOut();
+  }
+
+  function handleConfirmKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    cancelSignOut();
+  }
+
+  // The safe answer gets the focus when the question shows up; "Déconnecter" gets it back afterwards.
+  $effect(() => {
+    if (confirming) {
+      cancelButton?.focus();
+    } else if (returnFocus && signOutButton !== null) {
+      returnFocus = false;
+      signOutButton.focus();
+    }
+  });
 </script>
 
 <nav class="sidebar" transition:reveal>
@@ -50,8 +83,21 @@
       {/each}
     </ul>
     <footer>
-      <span>{personName}</span>
-      <button class="link" onclick={signOut}>Déconnecter</button>
+      {#if confirming}
+        <div class="confirm" role="group" aria-labelledby="{uid}-question" aria-describedby="{uid}-hint" data-testid="sign-out-confirm" in:fade={{ duration: motion(150) }}>
+          <p id="{uid}-question" class="question">Déconnecter cet appareil ?</p>
+          <p id="{uid}-hint" class="hint">Il faudra l'appairer à nouveau.</p>
+          <div class="actions">
+            <button class="yes" onclick={confirmSignOut} onkeydown={handleConfirmKeydown} data-testid="sign-out-yes">Oui</button>
+            <button class="no" bind:this={cancelButton} onclick={cancelSignOut} onkeydown={handleConfirmKeydown} data-testid="sign-out-cancel">Annuler</button>
+          </div>
+        </div>
+      {:else}
+        <div class="who" in:fade={{ duration: motion(150) }}>
+          <span>{personName}</span>
+          <button class="link" bind:this={signOutButton} onclick={askSignOut} data-testid="sign-out">Déconnecter</button>
+        </div>
+      {/if}
     </footer>
   </div>
 </nav>
@@ -75,8 +121,18 @@
   li button:hover:not(:disabled) { background: var(--surface); }
   li button.active { background: var(--surface); color: var(--cream); font-weight: 700; }
   .empty { padding: 7px 10px; color: var(--muted); font-size: 13px; }
-  footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px 0; font-size: 13px; color: var(--cream-muted); }
-  footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer { padding: 8px 10px 0; font-size: 13px; color: var(--cream-muted); }
+  .who { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .link { color: var(--muted); font-size: 12px; padding: 2px 4px; flex: none; }
   .link:hover { color: var(--amber); }
+  .confirm { display: flex; flex-direction: column; gap: 2px; }
+  .question { margin: 0; color: var(--cream); font-weight: 700; }
+  .hint { margin: 0; color: var(--muted); font-size: 12px; }
+  .actions { display: flex; gap: 6px; margin-top: 6px; }
+  .actions button { padding: 4px 12px; font-size: 13px; }
+  .yes { background: var(--surface-raised); color: var(--amber); font-weight: 700; }
+  .yes:hover { background: var(--surface); }
+  .no { color: var(--cream-muted); }
+  .no:hover { background: var(--surface); }
 </style>

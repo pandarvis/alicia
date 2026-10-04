@@ -26,8 +26,10 @@
   const api = new BrainApi(fetch, initialSession);
   let status = $state<ConnectionStatus>("connecting");
   let sidebarOpen = $state(true);
-  /** Set once the connection dropped, so the next `ready` resynchronizes what was missed. */
-  let wasOffline = false;
+  /** Set once the connection dropped, until it is ready again (resync, and the label stays "offline" during retries). */
+  let wasOffline = $state(false);
+  /** What the user sees: retries after a drop still read as offline, not as a fresh "connecting". */
+  const shownStatus = $derived<ConnectionStatus>(status === "connecting" && wasOffline ? "offline" : status);
 
   /** A refused device token means the device was revoked: back to pairing. */
   async function guarded<T>(call: () => Promise<T>): Promise<T> {
@@ -95,14 +97,14 @@
 </script>
 
 <div class="app">
-  <TitleBar {title} personName={session.person.name} {status} onToggleSidebar={toggleSidebar} />
+  <TitleBar {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar} />
   <div class="body">
     {#if sidebarOpen}
       <Sidebar {store} personName={session.person.name} onSignOut={signOut} />
     {/if}
     <main>
       <ChatView {store} personName={session.person.name} />
-      <Composer {store} {status} />
+      <Composer {store} status={shownStatus} />
     </main>
   </div>
 </div>

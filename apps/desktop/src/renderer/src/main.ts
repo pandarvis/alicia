@@ -1,3 +1,5 @@
+// Must stay the first import: it configures Zod before any schema is created.
+import "./zod-config.ts";
 import { mount } from "svelte";
 import App from "./App.svelte";
 import "./app.css";

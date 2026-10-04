@@ -1,11 +1,13 @@
 <script lang="ts">
   import { fade } from "svelte/transition";
+  import { motion } from "../lib/motion.ts";
   import type { ConnectionStatus } from "../lib/chat-connection.ts";
 
-  let { title, personName, status, onToggleSidebar }: {
+  let { title, personName, status, sidebarOpen, onToggleSidebar }: {
     title: string;
     personName: string;
     status: ConnectionStatus;
+    sidebarOpen: boolean;
     onToggleSidebar: () => void;
   } = $props();
 
@@ -18,7 +20,7 @@
 </script>
 
 <header class="titlebar">
-  <button class="icon" onclick={onToggleSidebar} title="Afficher ou masquer le menu" aria-label="Menu">☰</button>
+  <button class="icon" onclick={onToggleSidebar} title="Afficher ou masquer le menu" aria-label="Menu" aria-expanded={sidebarOpen}>☰</button>
   <div class="segment" role="tablist">
     <button class="on" role="tab" aria-selected="true">💬 Chat</button>
     <button role="tab" aria-selected="false" disabled title="Bientôt">🏠 Maison</button>
@@ -26,7 +28,7 @@
   <span class="title" data-testid="titlebar-title">{title}</span>
   <span class="person">{personName}</span>
   {#if STATUS_LABEL[status] !== ""}
-    <span class="status" data-testid="connection-status" transition:fade={{ duration: 150 }}>{STATUS_LABEL[status]}</span>
+    <span class="status" data-testid="connection-status" transition:fade={{ duration: motion(150) }}>{STATUS_LABEL[status]}</span>
   {/if}
   <span class="spacer"></span>
 </header>
