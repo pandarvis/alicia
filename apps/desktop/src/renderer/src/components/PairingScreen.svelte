@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { motion } from "../lib/motion.ts";
+  import type { DiscoveredBrain } from "../../../shared/discovery.ts";
   import type { SaveSessionResult, StoredSession } from "../../../shared/session.ts";
   import { pair, type PairingFailure } from "../lib/brain-client.ts";
   import Mascot from "./Mascot.svelte";
@@ -27,6 +28,12 @@
   let error = $state<string | null>(null);
   let pending = $state(false);
   let codeInput = $state<HTMLInputElement | null>(null);
+  /** How long the screen says it is searching before pointing to the manual address. */
+  const SEARCH_MS = 6000;
+  let brains = $state<DiscoveredBrain[]>([]);
+  let searching = $state(true);
+  /** Once the person typed or chose an address, a brain found later no longer replaces it. */
+  let addressTouched = false;
 
   onMount(() => {
     // Address and device name are prefilled: the code is the only thing left to type.
@@ -34,7 +41,31 @@
     void window.alicia.deviceName().then((name) => {
       if (deviceName === "") deviceName = name;
     });
+    const off = window.alicia.discovery.onChange(showBrains);
+    void window.alicia.discovery.start().then(showBrains, () => undefined);
+    const timer = setTimeout(() => {
+      searching = false;
+    }, SEARCH_MS);
+    return () => {
+      off();
+      clearTimeout(timer);
+      void window.alicia.discovery.stop().catch(() => undefined);
+    };
   });
+
+  function showBrains(list: DiscoveredBrain[]): void {
+    brains = list;
+    if (list.length > 0) searching = false;
+    const [only] = list;
+    // A single brain at home: its address is filled in for the person.
+    if (!addressTouched && list.length === 1 && only !== undefined) serverUrl = only.url;
+  }
+
+  function choose(brain: DiscoveredBrain): void {
+    serverUrl = brain.url;
+    addressTouched = true;
+    codeInput?.focus();
+  }
 
   /** Pairs with the brain and stores the session; returns an error message, or null once paired. */
   async function pairAndSave(): Promise<string | null> {
@@ -76,7 +107,31 @@
     <h1>Bonjour, je suis Alicia</h1>
     <p class="lead">Pour faire connaissance, demande un code d'appairage au cerveau (commande <code>pair</code>).</p>
     {#if notice}<p class="notice" data-testid="pairing-notice">{notice}</p>{/if}
-    <label>Adresse d'Alicia<input bind:value={serverUrl} data-testid="pairing-server" autocomplete="off" spellcheck="false" /></label>
+    <!-- The three states share one cell and cross-fade in place. -->
+    <div class="found" aria-live="polite">
+      {#if brains.length > 0}
+        <div class="state" transition:fade={{ duration: motion(150) }}>
+          <p class="found-label">Trouvée sur le réseau</p>
+          <ul>
+            {#each brains as brain (brain.name)}
+              <li transition:fade={{ duration: motion(150) }}>
+                <button type="button" class="brain" class:selected={serverUrl === brain.url} onclick={() => { choose(brain); }} data-testid="discovered-brain">
+                  <span class="brain-name">{brain.name}</span>
+                  <span class="brain-url">{brain.url}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {:else if searching}
+        <p class="state found-label" data-testid="discovery-searching" transition:fade={{ duration: motion(150) }}>Recherche d'Alicia sur le réseau…</p>
+      {:else}
+        <p class="state found-label" data-testid="discovery-none" transition:fade={{ duration: motion(150) }}>
+          Pas trouvée sur le réseau : saisis son adresse ci-dessous (avec Tailscale, par exemple http://mac-mini:8780).
+        </p>
+      {/if}
+    </div>
+    <label>Adresse d'Alicia<input bind:value={serverUrl} oninput={() => { addressTouched = true; }} data-testid="pairing-server" autocomplete="off" spellcheck="false" /></label>
     <label>Code à 6 chiffres<input bind:this={codeInput} value={code} oninput={onCodeInput} inputmode="numeric" data-testid="pairing-code" autocomplete="off" /></label>
     <label>Nom de cet appareil<input bind:value={deviceName} maxlength="60" data-testid="pairing-device" /></label>
     <!-- Always in the DOM so screen readers reliably announce each new error; the visible copy below fades. -->
@@ -116,4 +171,16 @@
     overflow: hidden; clip-path: inset(50%); white-space: nowrap;
   }
   .notice { margin: 0; color: var(--amber); font-size: 14px; text-align: center; }
+  .found { width: 100%; display: grid; }
+  .state { grid-area: 1 / 1; display: flex; flex-direction: column; gap: 6px; }
+  .found-label { margin: 0; font-size: 13px; color: var(--cream-muted); }
+  .found ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .brain {
+    margin-top: 0; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 8px 11px; border: 1px solid transparent; background: var(--surface); color: var(--cream);
+    font-weight: 400; text-align: left; transition: border-color var(--duration) ease;
+  }
+  .brain.selected, .brain:hover { border-color: var(--sage); }
+  .brain-name { font-weight: 700; }
+  .brain-url { font-size: 12px; color: var(--muted); }
 </style>

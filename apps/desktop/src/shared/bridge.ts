@@ -1,5 +1,6 @@
 import type { SendMessage, ServerEvent } from "@alicia/protocol";
 import type { ConnectionStatus } from "./chat-connection.ts";
+import type { DiscoveredBrain } from "./discovery.ts";
 import type { DragDelta, HoloView } from "./holo.ts";
 import type { MascotState } from "./mascot.ts";
 import type { SaveSessionResult, StoredSession } from "./session.ts";
@@ -61,6 +62,14 @@ export interface SettingsBridge {
   onChange(listener: (snapshot: SettingsSnapshot) => void): Unsubscribe;
 }
 
+/** Brains found on the local network (mDNS), for the pairing screen of the main window only. */
+export interface DiscoveryBridge {
+  /** Starts looking for brains on the local network; answers those already found. */
+  start(): Promise<DiscoveredBrain[]>;
+  stop(): Promise<void>;
+  onChange(listener: (brains: DiscoveredBrain[]) => void): Unsubscribe;
+}
+
 /** API exposed to every page as `window.alicia` by the preload script. */
 export interface AliciaBridge {
   getSession(): Promise<StoredSession | null>;
@@ -78,6 +87,7 @@ export interface AliciaBridge {
   surface: SurfaceBridge;
   holo: HoloBridge;
   settings: SettingsBridge;
+  discovery: DiscoveryBridge;
 }
 
 /** Page → main process (ipcRenderer.invoke); every handler checks the sender and validates the payload. */
@@ -101,6 +111,8 @@ export const INVOKE = {
   holoSetExpanded: "holo:set-expanded",
   settingsGet: "settings:get",
   settingsUpdate: "settings:update",
+  discoveryStart: "discovery:start",
+  discoveryStop: "discovery:stop",
 } as const;
 
 /** Main process → pages (webContents.send); the preload validates every payload. */
@@ -114,4 +126,5 @@ export const PUSH = {
   shown: "push:shown",
   hideRequest: "push:hide-request",
   settings: "push:settings",
+  discovery: "push:discovery",
 } as const;

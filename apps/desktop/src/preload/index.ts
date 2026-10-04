@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { z } from "zod";
 import { type AliciaBridge, INVOKE, PUSH } from "../shared/bridge.ts";
 import { ConnectionStatus } from "../shared/chat-connection.ts";
+import { DiscoveredBrain } from "../shared/discovery.ts";
 import { HoloView } from "../shared/holo.ts";
 import { MascotState } from "../shared/mascot.ts";
 import { SaveSessionResult, StoredSession } from "../shared/session.ts";
@@ -89,6 +90,11 @@ const bridge: AliciaBridge = {
     get: () => call(SettingsSnapshot, INVOKE.settingsGet),
     update: (patch) => call(SettingsUpdateResult, INVOKE.settingsUpdate, patch),
     onChange: (listener) => subscribe(PUSH.settings, SettingsSnapshot, listener),
+  },
+  discovery: {
+    start: () => call(z.array(DiscoveredBrain), INVOKE.discoveryStart),
+    stop: () => call(z.undefined(), INVOKE.discoveryStop),
+    onChange: (listener) => subscribe(PUSH.discovery, z.array(DiscoveredBrain), listener),
   },
 };
 

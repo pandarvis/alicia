@@ -296,3 +296,24 @@ test("Réglages: shortcut, launch at startup and Holo are kept after a restart; 
   await second.page.getByTestId("sign-out-yes").click();
   await second.page.getByTestId("pairing-code").waitFor();
 });
+
+test("first launch: the brain found on the network fills the address", async () => {
+  const brain = await startBrain();
+  const found = JSON.stringify([{ name: "Alicia sur test", url: brain.url, version: "0.1.0" }]);
+  const { page } = await launch(tempDir("alicia-e2e-profile-"), { ALICIA_TEST_BRAINS: found });
+  await page.getByTestId("discovered-brain").filter({ hasText: "Alicia sur test" }).waitFor();
+  await expect.poll(() => page.getByTestId("pairing-server").inputValue(), POLL).toBe(brain.url);
+  await page.getByTestId("pairing-code").fill(brain.app.pairing.generateCode("kevin"));
+  await page.getByTestId("pairing-submit").click();
+  await page.getByTestId("chat-welcome").waitFor();
+});
+
+test("nothing found on the network: the manual address stays, with a hint for Tailscale", async () => {
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await page.getByTestId("discovery-searching").waitFor();
+  await page.getByTestId("discovery-none").filter({ hasText: "Tailscale" }).waitFor();
+  expect(await page.getByTestId("pairing-server").inputValue()).toBe("http://127.0.0.1:8780");
+  // Only the pairing screen (main window) may search the network.
+  const bar = await surfacePage(app, "spotlight");
+  await expect(bar.evaluate(() => window.alicia.discovery.start())).rejects.toThrow();
+});

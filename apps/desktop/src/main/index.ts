@@ -2,11 +2,14 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, type IpcMainInvokeEvent, safeStorage, session } from "electron";
+import { z } from "zod";
 import { PUSH } from "../shared/bridge.ts";
 import { openWebSocket } from "../shared/chat-connection.ts";
+import { DiscoveredBrain } from "../shared/discovery.ts";
 import { type SaveSessionResult, StoredSession } from "../shared/session.ts";
 import type { SettingsPatch } from "../shared/settings.ts";
 import { BrainHub } from "./brain-hub.ts";
+import { type BrainBrowser, BrainDiscovery, bonjourBrowser, staticBrowser } from "./discovery.ts";
 import { electronOs } from "./electron-os.ts";
 import { eventRecipients, mayReadSession } from "./event-routing.ts";
 import { registerIpc } from "./ipc.ts";
@@ -39,6 +42,13 @@ if (!app.isPackaged && userDataOverride !== undefined) app.setPath("userData", u
  * notification-area icon, Windows notifications, mDNS. A recorder stands in, exposed as globalThis.__aliciaTest.
  */
 const osIntegrationOff = !app.isPackaged && process.env["ALICIA_OS_INTEGRATION"] === "off";
+/** Real mDNS; in tests, the brains listed in ALICIA_TEST_BRAINS (JSON, validated) and nothing from the network. */
+function brainBrowser(): BrainBrowser {
+  if (!osIntegrationOff) return bonjourBrowser();
+  const raw = process.env["ALICIA_TEST_BRAINS"];
+  return staticBrowser(raw === undefined ? [] : z.array(DiscoveredBrain).parse(JSON.parse(raw)));
+}
+
 /** Started by Windows at login (login item argument): stay in the notification area. */
 const startHidden = isHiddenLaunch(process.argv);
 
@@ -138,6 +148,10 @@ function start(): void {
       });
     },
   });
+  // Brains on the local network, looked for only while the pairing screen is shown.
+  const discovery = new BrainDiscovery(brainBrowser(), (brains) => {
+    windows.sendTo("main", PUSH.discovery, brains);
+  });
   const settings = new SettingsController(new SettingsStore(join(app.getPath("userData"), "settings.json")), {
     registerShortcut: (accelerator) =>
       os.registerShortcut(accelerator, () => {
@@ -157,8 +171,9 @@ function start(): void {
     },
   });
 
-  /** Lets go of the brain and the OS (shortcut, tray icon); shared by every way of quitting. */
+  /** Lets go of the brain, the network and the OS (shortcut, tray icon); shared by every way of quitting. */
   const quitCleanup = runOnce(() => {
+    discovery.stop();
     hub.disconnect();
     os.dispose();
   });
@@ -251,6 +266,7 @@ function start(): void {
     hub,
     presence,
     settings,
+    discovery,
   });
 
   windows.createMain({ show: !startHidden });

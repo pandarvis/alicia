@@ -108,6 +108,9 @@ importers:
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
+      bonjour-service:
+        specifier: 1.4.4
+        version: 1.4.4
       electron:
         specifier: ^44.5.1
         version: 44.5.1

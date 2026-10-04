@@ -1,0 +1,88 @@
+import { describe, expect, test } from "vitest";
+import { type BrainBrowser, BrainDiscovery, brainFromService, staticBrowser } from "../src/main/discovery.ts";
+import type { DiscoveredBrain } from "../src/shared/discovery.ts";
+
+const PI: DiscoveredBrain = { name: "Alicia sur pi5", url: "http://192.168.1.20:8780", version: "0.1.0" };
+const MAC: DiscoveredBrain = { name: "Alicia sur mac-mini", url: "http://192.168.1.30:8780", version: null };
+
+describe("brainFromService", () => {
+  test("uses the IPv4 address the answer came from", () => {
+    expect(brainFromService({
+      name: "Alicia sur pi5", port: 8780, referer: { address: "192.168.1.20", family: "IPv4" },
+      addresses: ["fe80::1", "192.168.1.21"], txt: { version: "0.1.0" },
+    })).toEqual(PI);
+  });
+
+  test("otherwise the first usable IPv4 listed (not IPv6, not link-local)", () => {
+    expect(brainFromService({
+      name: "Alicia sur mac-mini", port: 8780, referer: { address: "fe80::2", family: "IPv6" },
+      addresses: ["fe80::2", "169.254.3.4", "192.168.1.30"],
+    })).toEqual(MAC);
+  });
+
+  test("nothing usable is ignored; a strange TXT record is not trusted", () => {
+    expect(brainFromService({ name: "Alicia", port: 8780, addresses: ["fe80::2"] })).toBeNull();
+    expect(brainFromService({ name: "Alicia", port: 0, addresses: ["10.0.0.5"] })).toBeNull();
+    expect(brainFromService({ name: "", port: 8780, addresses: ["10.0.0.5"] })).toBeNull();
+    expect(brainFromService({ name: "Alicia", port: 8780, addresses: ["10.0.0.5"], txt: { version: 42 } })?.version).toBeNull();
+  });
+});
+
+function controllableBrowser() {
+  let up: (brain: DiscoveredBrain) => void = () => undefined;
+  let down: (name: string) => void = () => undefined;
+  let starts = 0;
+  let stops = 0;
+  const browser: BrainBrowser = {
+    start: (onUp, onDown) => {
+      starts++;
+      up = onUp;
+      down = onDown;
+      return () => { stops++; };
+    },
+  };
+  return {
+    browser,
+    up: (brain: DiscoveredBrain) => { up(brain); },
+    down: (name: string) => { down(name); },
+    counts: () => [starts, stops],
+  };
+}
+
+describe("BrainDiscovery", () => {
+  test("lists the brains found by name, without duplicates, and forgets those gone", () => {
+    const lists: string[][] = [];
+    const network = controllableBrowser();
+    const discovery = new BrainDiscovery(network.browser, (brains) => { lists.push(brains.map((brain) => brain.name)); });
+    discovery.start();
+    network.up(PI);
+    network.up(MAC);
+    network.up(PI);
+    network.down("Alicia sur pi5");
+    expect(lists).toEqual([
+      ["Alicia sur pi5"],
+      ["Alicia sur mac-mini", "Alicia sur pi5"],
+      ["Alicia sur mac-mini", "Alicia sur pi5"],
+      ["Alicia sur mac-mini"],
+    ]);
+    expect(discovery.brains).toEqual([MAC]);
+  });
+
+  test("start is idempotent, stop stops looking, a new search starts empty", () => {
+    const network = controllableBrowser();
+    const discovery = new BrainDiscovery(network.browser, () => undefined);
+    discovery.start();
+    discovery.start();
+    network.up(PI);
+    discovery.stop();
+    expect(network.counts()).toEqual([1, 1]);
+    discovery.start();
+    expect(discovery.brains).toEqual([]);
+  });
+
+  test("the test browser announces its list at once", () => {
+    const lists: DiscoveredBrain[][] = [];
+    new BrainDiscovery(staticBrowser([PI]), (brains) => { lists.push(brains); }).start();
+    expect(lists).toEqual([[PI]]);
+  });
+});

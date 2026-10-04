@@ -8,6 +8,7 @@ import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
 import { SettingsPatch, type SettingsUpdateResult } from "../shared/settings.ts";
 import type { Surface } from "../shared/surface.ts";
 import type { BrainHub } from "./brain-hub.ts";
+import type { BrainDiscovery } from "./discovery.ts";
 import { mayReadSession } from "./event-routing.ts";
 import type { Presence } from "./presence.ts";
 import type { SettingsController } from "./settings-controller.ts";
@@ -21,6 +22,7 @@ export interface IpcDependencies {
   hub: BrainHub;
   presence: Presence;
   settings: SettingsController;
+  discovery: BrainDiscovery;
 }
 
 const NONE = z.undefined();
@@ -62,6 +64,10 @@ export function registerIpc(deps: IpcDependencies): void {
   });
   handle(INVOKE.appVersion, NONE, () => app.getVersion());
 
+  function mainOnly(sender: WebContents): void {
+    if (surfaceOf(sender) !== "main") throw new Error("Main window only");
+  }
+
   /** The Holo's own calls are refused from any other window. */
   function holoOnly(sender: WebContents): void {
     if (surfaceOf(sender) !== "holo") throw new Error("Holo only");
@@ -93,6 +99,16 @@ export function registerIpc(deps: IpcDependencies): void {
     const patch = SettingsPatch.safeParse(raw);
     if (!patch.success) return { ok: false, reason: "invalid", snapshot: deps.settings.snapshot };
     return deps.settings.update(patch.data);
+  });
+  // Only the pairing screen (main window) looks for brains on the network.
+  handle(INVOKE.discoveryStart, NONE, (_none, sender) => {
+    mainOnly(sender);
+    deps.discovery.start();
+    return deps.discovery.brains;
+  });
+  handle(INVOKE.discoveryStop, NONE, (_none, sender) => {
+    mainOnly(sender);
+    deps.discovery.stop();
   });
   handle(INVOKE.showMain, NONE, () => {
     deps.windows.showMain();
