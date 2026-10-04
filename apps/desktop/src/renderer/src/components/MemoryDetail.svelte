@@ -93,7 +93,7 @@
   }
 
   /** Arrow keys move the choice between Moi and Famille (one tab stop for the group). */
-  function handleScopeKeydown(event: KeyboardEvent): void {
+  function handleScopeKeydown(event: KeyboardEvent & { currentTarget: HTMLElement }): void {
     if (screen.draft === null) return;
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (step === 0) return;
@@ -102,7 +102,8 @@
     const scope = SCOPES[(index + step + SCOPES.length) % SCOPES.length];
     if (scope === undefined) return;
     setScope(scope);
-    document.getElementById(`${uid}-scope-${scope}`)?.focus();
+    // Looked up next to the key pressed: while the sheet fades between memories, two of them exist.
+    event.currentTarget.parentElement?.querySelector<HTMLElement>(`[data-testid="memory-scope-${scope}"]`)?.focus();
   }
 
   async function confirmForget(): Promise<void> {
@@ -112,6 +113,7 @@
     const next = id === null ? null : nextAfter(id);
     await screen.forget();
     if (id !== null && !screen.items.some((m) => m.id === id)) await focusMemory(next);
+    else returnFocus = true;
     forgetting = false;
     askingOn = null;
   }
@@ -146,7 +148,6 @@
                 <button
                   type="button"
                   role="radio"
-                  id="{uid}-scope-{scope}"
                   tabindex={draft.scope === scope ? 0 : -1}
                   onkeydown={handleScopeKeydown}
                   class:on={draft.scope === scope}
@@ -182,11 +183,13 @@
                   {origin.text} <button
                     type="button"
                     class="link"
-                    onclick={() => { onOpenConversation(conversation.id); }}
-                    disabled={conversationBusy}
+                    onclick={() => { if (!conversationBusy) onOpenConversation(conversation.id); }}
+                    aria-disabled={conversationBusy}
+                    aria-describedby={conversationBusy ? `${uid}-provenance-wait` : undefined}
                     title={conversationBusy ? "Disponible après la réponse d'Alicia" : conversation.title}
                     data-testid="memory-provenance-link"
                   >“{conversation.title}”</button>
+                  {#if conversationBusy}<span id="{uid}-provenance-wait" class="visually-hidden">Disponible après la réponse d'Alicia</span>{/if}
                 {:else}
                   {origin.text}
                 {/if}
@@ -280,8 +283,16 @@
     display: inline-block; max-width: 100%; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     padding: 0; border-radius: 4px; color: var(--sage); text-decoration: underline; text-underline-offset: 2px; font-size: inherit;
   }
-  .link:hover:not(:disabled) { color: var(--cream); }
-  .link:disabled { cursor: not-allowed; }
+  .link:hover:not([aria-disabled="true"]) { color: var(--cream); }
+  .link[aria-disabled="true"] { cursor: default; opacity: 0.45; }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
   .error { margin: 0; padding: 6px 10px; border-radius: 8px; background: var(--surface); color: var(--amber); font-size: 13px; }
   .actions { display: flex; gap: 8px; align-items: center; min-height: 34px; }
   .save { background: var(--sage); color: var(--night); font-weight: 700; padding: 7px 14px; }

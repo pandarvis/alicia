@@ -55,6 +55,7 @@
   }
 
   function askDelete(conversationId: string): void {
+    refusal = null;
     deletingId = conversationId;
   }
 
@@ -64,7 +65,7 @@
     deletingId = null;
     if (id === null) return;
     requestAnimationFrame(() => {
-      list?.querySelector<HTMLButtonElement>(`button[data-conversation-id="${id}"]`)?.focus();
+      list?.querySelector<HTMLButtonElement>(`button[data-conversation-id="${CSS.escape(id)}"]`)?.focus();
     });
   }
 
@@ -181,13 +182,14 @@
                 disabled={store.busy}
                 title="Supprimer"
                 aria-label="Supprimer la conversation « {conversation.title} »"
+                aria-describedby={refusal?.id === conversation.id ? `${uid}-refusal` : undefined}
                 data-conversation-id={conversation.id}
                 data-testid="delete-conversation"
               >🗑</button>
             {/if}
           </div>
           {#if refusal?.id === conversation.id}
-            <p class="refusal" role="status" data-testid="delete-conversation-refusal" transition:slide={{ duration: motion(150) }}>{refusal.text}</p>
+            <p id="{uid}-refusal" class="refusal" role="status" data-testid="delete-conversation-refusal" transition:slide={{ duration: motion(150) }}>{refusal.text}</p>
           {/if}
         </li>
       {:else}

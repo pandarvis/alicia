@@ -377,7 +377,7 @@ describe("ChatStore", () => {
       expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
     });
 
-    test("busy: kept, with a notice", async () => {
+    test("busy: kept, without a chat notice", async () => {
       const { store, setConversations } = setup([msg("a", "Salut")], {
         deleteConversation: () => Promise.resolve("busy"),
       });
@@ -387,7 +387,7 @@ describe("ChatStore", () => {
       expect(await store.removeConversation(CONV)).toBe("busy");
       expect(store.conversations.map((c) => c.id)).toEqual([CONV, CONV_B]);
       expect(store.activeId).toBe(CONV);
-      expect(store.notice).toBe("Alicia répond dans cette conversation : réessaie après sa réponse.");
+      expect(store.notice).toBeNull();
     });
 
     test("a refresh that started before the deletion does not bring it back", async () => {
@@ -405,7 +405,7 @@ describe("ChatStore", () => {
       expect(store.conversations.map((c) => c.id)).toEqual([CONV_B]);
     });
 
-    test("brain unreachable: kept, with a notice", async () => {
+    test("brain unreachable: kept, without a chat notice", async () => {
       const { store, setConversations } = setup([], {
         deleteConversation: () => Promise.reject(new Error("offline")),
       });
@@ -413,7 +413,7 @@ describe("ChatStore", () => {
       await store.refreshConversations();
       expect(await store.removeConversation(CONV)).toBe("failed");
       expect(store.conversations).toHaveLength(2);
-      expect(store.notice).toBe("Impossible de supprimer cette conversation pour l'instant.");
+      expect(store.notice).toBeNull();
     });
   });
 });

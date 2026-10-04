@@ -307,7 +307,10 @@ export class MemoryScreen {
     }
   }
 
-  /** Back to the list; a hit selected from the bench that is not in it is let go. */
+  /**
+   * Back to the list; a hit selected from the bench that is not in it is let go. Its unsaved edits go with it,
+   * as when another memory is chosen: without the bench, the sheet would have nothing left to save against.
+   */
   closeBench(): void {
     this.#benchToken++;
     this.bench = null;

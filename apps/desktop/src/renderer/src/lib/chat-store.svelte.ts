@@ -87,20 +87,17 @@ export class ChatStore {
 
   /**
    * Deletes a conversation for good. Gone (or already gone): it leaves the list and, if it was open,
-   * the welcome shows again. Refused while Alicia answers in it, or when the brain cannot be reached: kept, with a notice.
+   * the welcome shows again. Refused while Alicia answers in it, or when the brain cannot be reached: kept
+   * (the menu row says why, so the chat notice is left alone).
    */
   async removeConversation(conversationId: string): Promise<"deleted" | "not_found" | "busy" | "failed"> {
     let result: "deleted" | "not_found" | "busy";
     try {
       result = await this.#ports.deleteConversation(conversationId);
     } catch {
-      this.notice = "Impossible de supprimer cette conversation pour l'instant.";
       return "failed";
     }
-    if (result === "busy") {
-      this.notice = "Alicia répond dans cette conversation : réessaie après sa réponse.";
-      return result;
-    }
+    if (result === "busy") return result;
     // A list fetched before the deletion would bring it back.
     this.#refreshToken++;
     this.conversations = this.conversations.filter((c) => c.id !== conversationId);
