@@ -5,6 +5,7 @@ import type { ConversationLocks } from "./conversation-locks.ts";
 import type { ServerDependencies } from "./server.ts";
 
 const DEFAULT_AUTH_TIMEOUT_MS = 5000;
+const DEFAULT_HEARTBEAT_MS = 30_000;
 const CLOSE_UNAUTHENTICATED = 4401;
 const CLOSE_INTERNAL_ERROR = 1011;
 
@@ -38,6 +39,26 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
   const timer = setTimeout(() => {
     if (session === undefined) reject("Authentification attendue.");
   }, deps.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS);
+
+  // Heartbeat. Each period, a protocol ping; a socket that left the previous one unanswered is dead
+  // (laptop asleep, Wi-Fi gone) and is terminated, which cancels its turns through "close".
+  // Authenticated apps also get a "heartbeat" event: browsers hide protocol pings from pages,
+  // so this is how the app notices a brain that went silent.
+  let alive = true;
+  socket.on("pong", () => {
+    alive = true;
+  });
+  const heartbeat = setInterval(() => {
+    if (socket.readyState !== socket.OPEN) return;
+    if (!alive) {
+      socket.terminate();
+      return;
+    }
+    alive = false;
+    socket.ping();
+    if (session !== undefined) send({ type: "heartbeat" });
+  }, deps.heartbeatMs ?? DEFAULT_HEARTBEAT_MS);
+  heartbeat.unref();
 
   const handle = (data: RawData): void => {
     const message = readMessage(data);
@@ -131,6 +152,7 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
 
   const abortTurns = (): void => {
     clearTimeout(timer);
+    clearInterval(heartbeat);
     for (const turn of turns) turn.abort();
   };
   socket.on("close", abortTurns);

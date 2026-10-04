@@ -95,6 +95,9 @@ describe("server events", () => {
   test.each(events)("accepts the event %j", (e) => {
     expect(ServerEvent.safeParse(e).success).toBe(true);
   });
+  test("heartbeat", () => {
+    expect(ServerEvent.parse({ type: "heartbeat" })).toEqual({ type: "heartbeat" });
+  });
   test("rejects negative tokens", () => {
     expect(
       ServerEvent.safeParse({

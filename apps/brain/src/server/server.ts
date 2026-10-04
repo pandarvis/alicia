@@ -47,6 +47,8 @@ export interface ServerDependencies {
   logging?: boolean;
   /** Web origins allowed besides the app's (config `allowedOrigins`). */
   allowedOrigins?: readonly string[];
+  /** Heartbeat period of the WebSocket (default 30 s; shortened by tests). */
+  heartbeatMs?: number;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();

@@ -24,6 +24,7 @@ interface StartOptions {
   engine?: Engine;
   authTimeoutMs?: number;
   allowedOrigins?: readonly string[];
+  heartbeatMs?: number;
 }
 
 async function start(options: StartOptions = {}) {
@@ -48,6 +49,7 @@ async function start(options: StartOptions = {}) {
       ? {}
       : { authTimeoutMs: options.authTimeoutMs }),
     ...(options.allowedOrigins === undefined ? {} : { allowedOrigins: options.allowedOrigins }),
+    ...(options.heartbeatMs === undefined ? {} : { heartbeatMs: options.heartbeatMs }),
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
@@ -103,6 +105,29 @@ describe("WebSocket", () => {
     expect(await tryOrigin(url, "file://")).toBe("open");
     expect(await tryOrigin(url, "null")).toBe("open");
     expect(await tryOrigin(url, "https://alicia.tailnet.ts.net")).toBe("open");
+  });
+
+  test("heartbeat: a live app gets heartbeat events and stays connected", async () => {
+    const { url, token } = await start({ heartbeatMs: 40 });
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(c.received.filter((e) => e.type === "heartbeat").length).toBeGreaterThanOrEqual(2);
+    expect(c.ws.readyState).toBe(WebSocket.OPEN);
+    c.ws.close();
+  });
+
+  test("heartbeat: a client that stops answering pings is dropped", async () => {
+    const { url, token } = await start({ heartbeatMs: 40 });
+    const ws = new WebSocket(url, { autoPong: false });
+    ws.on("error", () => undefined);
+    const closed = new Promise<number>((resolve) => ws.once("close", (code) => { resolve(code); }));
+    ws.once("open", () => {
+      ws.send(JSON.stringify({ type: "authenticate", token }));
+    });
+    expect(await closed).toBe(1006);
   });
 
   test("authentication then a full conversation", async () => {

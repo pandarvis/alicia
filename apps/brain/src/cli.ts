@@ -171,6 +171,7 @@ async function chat(url: string, code: string | undefined): Promise<void> {
           process.stdout.write(`\n  [outil : ${e.tool}]\n`);
           break;
         case "tool_result":
+        case "heartbeat":
           break;
         case "done":
           process.stdout.write(`\n  (${e.model}, ${e.inputTokens}→${e.outputTokens} tokens, ${e.durationMs} ms)\n`);
