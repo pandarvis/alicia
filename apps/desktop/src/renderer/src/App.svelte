@@ -23,13 +23,20 @@
   }
 
   async function signOut(message: string | null): Promise<void> {
-    await window.alicia.clearSession();
+    try {
+      await window.alicia.clearSession();
+    } catch {
+      // Even if the file can't be removed, this window forgets the session.
+    }
     session = null;
     notice = message;
   }
 
-  function handleSignOut(message: string | null): void {
-    void signOut(message);
+  /** Sign-out bound to one session: a late call from a previous Shell can't wipe a newer pairing. */
+  function signOutHandler(token: string): (message: string | null) => void {
+    return (message) => {
+      if (session?.token === token) void signOut(message);
+    };
   }
 
   function handlePaired(paired: StoredSession): void {
@@ -41,7 +48,7 @@
 {#if loaded}
   {#if session}
     {#key session.token}
-      <Shell {session} onSignOut={handleSignOut} />
+      <Shell {session} onSignOut={signOutHandler(session.token)} />
     {/key}
   {:else}
     <PairingScreen {notice} onPaired={handlePaired} />

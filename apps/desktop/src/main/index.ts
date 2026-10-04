@@ -1,7 +1,7 @@
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, safeStorage, shell } from "electron";
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, safeStorage, session, shell } from "electron";
 import { IPC, type SaveSessionResult, StoredSession } from "../shared/session.ts";
 import { EncryptionUnavailableError, SessionStore } from "./session-store.ts";
 import { isTrustedSenderUrl } from "./trusted-sender.ts";
@@ -100,6 +100,11 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
+  // Deny every browser permission (camera, mic, notifications…) until a feature explicitly needs one.
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  session.defaultSession.setPermissionCheckHandler(() => false);
   registerIpc(
     new SessionStore(join(app.getPath("userData"), "session.bin"), {
       isAvailable: () => safeStorage.isEncryptionAvailable(),
