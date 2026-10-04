@@ -21,6 +21,8 @@ pnpm --filter @alicia/cerveau alicia                     # aide
 pnpm --filter @alicia/cerveau alicia demarrer            # Ctrl+C : arrêt propre
 pnpm --filter @alicia/cerveau alicia appairer kevin
 pnpm --filter @alicia/cerveau alicia discuter --code 123456
+pnpm --filter @alicia/cerveau alicia appareils           # appareils appairés (id, personne, dates)
+pnpm --filter @alicia/cerveau alicia revoquer <id>       # coupe un appareil, même connecté
 pnpm --filter @alicia/cerveau alicia verifier-moteur
 ```
 Les commandes s'exécutent dans `apps/cerveau` : la config y est lue

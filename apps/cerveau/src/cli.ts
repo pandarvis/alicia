@@ -15,13 +15,15 @@ const AIDE = `Usage : pnpm --filter @alicia/cerveau alicia <commande>
   demarrer                       lance le cerveau
   appairer <personne>            affiche un code d'appairage (10 min)
   discuter [--url U] [--code C]  discute dans le terminal (jeton : --code ou ALICIA_JETON)
+  appareils                      liste les appareils appairés
+  revoquer <id>                  révoque un appareil (effet immédiat, même connecté)
   verifier-moteur                un appel réel au SDK (consomme un peu de quota)
 
 La config est lue dans ALICIA_CONFIG (défaut : alicia.config.yaml), les secrets dans l'environnement.`;
 
 const cheminConfig = (): string => resolve(process.env["ALICIA_CONFIG"] ?? "alicia.config.yaml");
 
-/** `appairer` n'a pas besoin du moteur : il ne doit jamais être appelé. */
+/** `appairer`, `appareils` et `revoquer` n'ont pas besoin du moteur : il ne doit jamais être appelé. */
 const MOTEUR_INUTILISE: Moteur = {
   executer: () => {
     throw new Error("Moteur inutilisé par cette commande.");
@@ -61,6 +63,43 @@ async function appairer(personne: string | undefined): Promise<void> {
   const appli = await construireApplication(config, MOTEUR_INUTILISE);
   try {
     console.log(`Code pour ${personne} : ${appli.appairage.genererCode(personne)} (valable 10 minutes)`);
+  } finally {
+    await appli.fermer();
+  }
+}
+
+async function listerAppareils(): Promise<void> {
+  const config = chargerConfig(cheminConfig());
+  const appli = await construireApplication(config, MOTEUR_INUTILISE);
+  try {
+    const liste = appli.appairage.listerAppareils();
+    if (liste.length === 0) {
+      console.log("Aucun appareil appairé.");
+      return;
+    }
+    const date = (ms: number | null): string =>
+      ms === null
+        ? "—"
+        : new Date(ms).toLocaleString("fr-FR", { timeZone: config.fuseau, dateStyle: "short", timeStyle: "short" });
+    const nomDe = (id: string): string => config.personnes.find((p) => p.id === id)?.nom ?? id;
+    const lignes = [
+      ["id", "personne", "nom", "créé le", "vu le", "révoqué"],
+      ...liste.map((a) => [a.id, nomDe(a.personneId), a.nom, date(a.creeLe), date(a.vuLe), date(a.revoqueLe)]),
+    ];
+    const largeurs = lignes[0]?.map((_, i) => Math.max(...lignes.map((l) => (l[i] ?? "").length))) ?? [];
+    for (const l of lignes) console.log(l.map((c, i) => c.padEnd(largeurs[i] ?? 0)).join("  ").trimEnd());
+  } finally {
+    await appli.fermer();
+  }
+}
+
+async function revoquer(id: string | undefined): Promise<void> {
+  if (id === undefined) throw new Error("Précisez l'appareil : revoquer <id> (voir « appareils »)");
+  const config = chargerConfig(cheminConfig());
+  const appli = await construireApplication(config, MOTEUR_INUTILISE);
+  try {
+    if (!appli.appairage.revoquerAppareil(id)) throw new Error(`Aucun appareil actif avec l'id ${id}.`);
+    console.log(`Appareil ${id} révoqué.`);
   } finally {
     await appli.fermer();
   }
@@ -215,6 +254,10 @@ async function principal(): Promise<void> {
       return appairer(argument);
     case "discuter":
       return discuter(values.url, values.code);
+    case "appareils":
+      return listerAppareils();
+    case "revoquer":
+      return revoquer(argument);
     case "verifier-moteur":
       return verifierMoteur();
     case undefined:

@@ -23,7 +23,7 @@ function lire(donnees: RawData): MessageClient | undefined {
 }
 
 export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
-  let personne: Personne | undefined;
+  let session: { appareilId: string; personne: Personne } | undefined;
   const tours = new Set<AbortController>();
 
   const envoyer = (evenement: EvenementServeur): void => {
@@ -35,25 +35,25 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
   };
 
   const minuteur = setTimeout(() => {
-    if (personne === undefined) refuser("Authentification attendue.");
+    if (session === undefined) refuser("Authentification attendue.");
   }, deps.delaiAuthentificationMs ?? DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS);
 
   const traiter = (donnees: RawData): void => {
     const message = lire(donnees);
 
-    if (personne === undefined) {
+    if (session === undefined) {
       if (message?.type !== "authentifier") {
         refuser("Authentification attendue.");
         return;
       }
-      const trouvee = deps.appairage.authentifier(message.jeton);
+      const trouvee = deps.appairage.authentifierAppareil(message.jeton);
       if (trouvee === undefined) {
         refuser("Jeton refusé.");
         return;
       }
-      personne = trouvee;
+      session = trouvee;
       clearTimeout(minuteur);
-      envoyer({ type: "pret", personne: trouvee });
+      envoyer({ type: "pret", personne: trouvee.personne });
       return;
     }
 
@@ -66,6 +66,11 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
       envoyer({ type: "erreur", code: "requete_invalide", message: "Déjà authentifié." });
       return;
     }
+    // Un appareil révoqué pendant la connexion perd la main dès son prochain envoi.
+    if (!deps.appairage.estActif(session.appareilId)) {
+      refuser("Appareil révoqué.");
+      return;
+    }
     if (tours.size > 0) {
       envoyer({
         type: "erreur",
@@ -76,7 +81,7 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
       return;
     }
 
-    const auteur = personne;
+    const auteur = session.personne;
     const tour = new AbortController();
     tours.add(tour);
     void (async () => {

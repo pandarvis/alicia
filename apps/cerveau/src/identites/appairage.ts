@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import type { Personne } from "@alicia/protocole";
-import { eq, lt } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Base } from "../base/ouvrir.ts";
 import { appareils, codesAppairage } from "../base/schema.ts";
 import type { Horloge } from "../horloge.ts";
@@ -18,6 +18,21 @@ export const hacher = (valeur: string): string => createHash("sha256").update(va
 export type ResultatAppairage =
   | { jeton: string; personne: Personne }
   | { erreur: "code_invalide" | "trop_de_tentatives" };
+
+export interface AppareilAuthentifie {
+  appareilId: string;
+  personne: Personne;
+}
+
+/** Un appareil appairé, tel qu'affiché par `alicia appareils` (dates en ms). */
+export interface Appareil {
+  id: string;
+  personneId: string;
+  nom: string;
+  creeLe: number;
+  vuLe: number | null;
+  revoqueLe: number | null;
+}
 
 export class ServiceAppairage {
   readonly #base: Base;
@@ -84,26 +99,69 @@ export class ServiceAppairage {
     return { jeton, personne };
   }
 
-  authentifier(jeton: string): Personne | undefined {
+  /** Authentifie un jeton : rend l'appareil et sa personne, et note la dernière visite. */
+  authentifierAppareil(jeton: string): AppareilAuthentifie | undefined {
     const appareil = this.#base
       .select()
       .from(appareils)
       .where(eq(appareils.jetonHache, hacher(jeton)))
       .get();
     if (appareil === undefined || appareil.revoqueLe !== null) return undefined;
+    const personne = trouverPersonne(this.#base, appareil.personneId);
+    if (personne === undefined) return undefined;
     this.#base
       .update(appareils)
       .set({ vuLe: this.#horloge() })
       .where(eq(appareils.id, appareil.id))
       .run();
-    return trouverPersonne(this.#base, appareil.personneId);
+    return { appareilId: appareil.id, personne };
+  }
+
+  authentifier(jeton: string): Personne | undefined {
+    return this.authentifierAppareil(jeton)?.personne;
+  }
+
+  /** Vrai tant que l'appareil existe et n'a pas été révoqué. */
+  estActif(appareilId: string): boolean {
+    const appareil = this.#base
+      .select({ revoqueLe: appareils.revoqueLe })
+      .from(appareils)
+      .where(eq(appareils.id, appareilId))
+      .get();
+    return appareil !== undefined && appareil.revoqueLe === null;
+  }
+
+  /** Tous les appareils, toutes personnes confondues, du plus récent au plus ancien. */
+  listerAppareils(): Appareil[] {
+    return this.#base
+      .select({
+        id: appareils.id,
+        personneId: appareils.personneId,
+        nom: appareils.nom,
+        creeLe: appareils.creeLe,
+        vuLe: appareils.vuLe,
+        revoqueLe: appareils.revoqueLe,
+      })
+      .from(appareils)
+      .orderBy(desc(appareils.creeLe), desc(sql`rowid`))
+      .all();
+  }
+
+  /** Révoque un appareil par son id. Vrai si un appareil actif vient d'être révoqué. */
+  revoquerAppareil(id: string): boolean {
+    const resultat = this.#base
+      .update(appareils)
+      .set({ revoqueLe: this.#horloge() })
+      .where(and(eq(appareils.id, id), isNull(appareils.revoqueLe)))
+      .run();
+    return resultat.changes === 1;
   }
 
   revoquer(jeton: string): void {
     this.#base
       .update(appareils)
       .set({ revoqueLe: this.#horloge() })
-      .where(eq(appareils.jetonHache, hacher(jeton)))
+      .where(and(eq(appareils.jetonHache, hacher(jeton)), isNull(appareils.revoqueLe)))
       .run();
   }
 }

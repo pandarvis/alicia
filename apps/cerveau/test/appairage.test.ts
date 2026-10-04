@@ -98,3 +98,60 @@ describe("ServiceAppairage", () => {
     expect(service.authentifier(r.jeton)).toBeUndefined();
   });
 });
+
+describe("ServiceAppairage — gestion des appareils", () => {
+  function appairer(service: ServiceAppairage, personneId: string, nom: string): string {
+    const r = service.echanger(service.genererCode(personneId), nom);
+    if ("erreur" in r) throw new Error(r.erreur);
+    return r.jeton;
+  }
+
+  test("liste les appareils de toutes les personnes, du plus récent au plus ancien", () => {
+    const { service, temps } = creerService();
+    const debut = temps.horloge();
+    appairer(service, "kevin", "PC Kévin");
+    temps.avancer(1000);
+    const jetonTablette = appairer(service, "elodie", "Tablette");
+    temps.avancer(1000);
+    service.authentifier(jetonTablette);
+
+    const liste = service.listerAppareils();
+    expect(liste.map((a) => [a.personneId, a.nom])).toEqual([
+      ["elodie", "Tablette"],
+      ["kevin", "PC Kévin"],
+    ]);
+    expect(liste[0]).toMatchObject({ creeLe: debut + 1000, vuLe: debut + 2000, revoqueLe: null });
+    expect(liste[1]).toMatchObject({ creeLe: debut, vuLe: null, revoqueLe: null });
+    expect(liste[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test("authentifierAppareil rend l'appareil et la personne ; estActif suit la révocation par id", () => {
+    const { service, temps } = creerService();
+    const jeton = appairer(service, "kevin", "PC");
+    const auth = service.authentifierAppareil(jeton);
+    expect(auth?.personne).toEqual(KEVIN);
+    const id = auth?.appareilId ?? "";
+    expect(service.listerAppareils()[0]?.id).toBe(id);
+    expect(service.estActif(id)).toBe(true);
+
+    temps.avancer(5000);
+    expect(service.revoquerAppareil(id)).toBe(true);
+    expect(service.estActif(id)).toBe(false);
+    expect(service.authentifierAppareil(jeton)).toBeUndefined();
+    expect(service.authentifier(jeton)).toBeUndefined();
+    expect(service.listerAppareils()[0]?.revoqueLe).toBe(temps.horloge());
+  });
+
+  test("révoquer un appareil inconnu ou déjà révoqué rend false et ne change rien", () => {
+    const { service, temps } = creerService();
+    const jeton = appairer(service, "kevin", "PC");
+    const id = service.authentifierAppareil(jeton)?.appareilId ?? "";
+    expect(service.revoquerAppareil("inconnu")).toBe(false);
+    expect(service.estActif("inconnu")).toBe(false);
+    expect(service.revoquerAppareil(id)).toBe(true);
+    const revoqueLe = service.listerAppareils()[0]?.revoqueLe;
+    temps.avancer(1000);
+    expect(service.revoquerAppareil(id)).toBe(false);
+    expect(service.listerAppareils()[0]?.revoqueLe).toBe(revoqueLe);
+  });
+});

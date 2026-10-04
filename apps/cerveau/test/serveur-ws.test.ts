@@ -241,9 +241,25 @@ describe("WebSocket", () => {
     c.ws.close();
   });
 
+  test("appareil révoqué pendant la connexion : l'envoi suivant est refusé et la connexion fermée 4401", async () => {
+    const { url, jeton, appairage, fauxMoteur } = await demarrer();
+    const c = connecter(url);
+    await c.ouvert;
+    c.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    await c.attendre((e) => e.type === "pret");
+
+    const pc = appairage.listerAppareils().find((a) => a.personneId === "kevin");
+    expect(appairage.revoquerAppareil(pc?.id ?? "")).toBe(true);
+
+    c.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Salut" }));
+    expect(await c.ferme).toBe(4401);
+    expect(c.recus.slice(1)).toEqual([{ type: "erreur", code: "non_authentifie", message: "Appareil révoqué." }]);
+    expect(fauxMoteur.requetes).toHaveLength(0);
+  });
+
   test("une exception synchrone ne fait pas tomber le processus : erreur interne et fermeture 1011", async () => {
     const { url, jeton, appairage } = await demarrer();
-    vi.spyOn(appairage, "authentifier").mockImplementation(() => {
+    vi.spyOn(appairage, "authentifierAppareil").mockImplementation(() => {
       throw new Error("base cassée");
     });
     const c = connecter(url);
