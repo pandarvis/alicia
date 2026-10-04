@@ -13,6 +13,7 @@
   import ChatView from "./ChatView.svelte";
   import Composer from "./Composer.svelte";
   import MemoryView from "./MemoryView.svelte";
+  import SettingsView from "./SettingsView.svelte";
   import Sidebar from "./Sidebar.svelte";
   import TitleBar from "./TitleBar.svelte";
 
@@ -99,7 +100,9 @@
   const title = $derived(
     view === "memories"
       ? "Souvenirs"
-      : (store.conversations.find((c) => c.id === store.activeId)?.title ?? "Nouvelle conversation"),
+      : view === "settings"
+        ? "Réglages"
+        : (store.conversations.find((c) => c.id === store.activeId)?.title ?? "Nouvelle conversation"),
   );
 
   function showView(next: AppView): void {
@@ -139,7 +142,7 @@
   <TitleBar {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar} />
   <div class="body">
     {#if sidebarOpen}
-      <Sidebar {store} personName={session.person.name} {view} onView={showView} onSignOut={signOut} />
+      <Sidebar {store} personName={session.person.name} {view} onView={showView} />
     {/if}
     <main>
       <!-- The chat stays mounted while Souvenirs is shown: its draft and scroll position are kept. -->
@@ -150,6 +153,11 @@
       {#if view === "memories"}
         <div class="pane" transition:fade={{ duration: motion(180) }}>
           <MemoryView screen={memories} conversationBusy={store.busy} onOpenConversation={openConversation} />
+        </div>
+      {/if}
+      {#if view === "settings"}
+        <div class="pane" transition:fade={{ duration: motion(180) }}>
+          <SettingsView {session} {api} status={shownStatus} onSignOut={signOut} />
         </div>
       {/if}
     </main>

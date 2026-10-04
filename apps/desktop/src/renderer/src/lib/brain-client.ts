@@ -1,5 +1,6 @@
 import {
   ConversationSummary,
+  HealthResponse,
   HistoryMessage,
   HttpErrorBody,
   MemoryRefusalReason,
@@ -126,6 +127,11 @@ export class BrainApi {
 
   listConversations(): Promise<ConversationSummary[]> {
     return this.#get("/conversations", z.array(ConversationSummary));
+  }
+
+  /** The brain's version (shown in Réglages). */
+  health(): Promise<HealthResponse> {
+    return this.#get("/health", HealthResponse);
   }
 
   history(conversationId: string): Promise<HistoryMessage[]> {

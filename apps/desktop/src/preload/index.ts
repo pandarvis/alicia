@@ -6,6 +6,7 @@ import { ConnectionStatus } from "../shared/chat-connection.ts";
 import { HoloView } from "../shared/holo.ts";
 import { MascotState } from "../shared/mascot.ts";
 import { SaveSessionResult, StoredSession } from "../shared/session.ts";
+import { SettingsSnapshot, SettingsUpdateResult } from "../shared/settings.ts";
 
 /** Listens to a main-process push; anything that does not match the schema is dropped. */
 function subscribe<T>(channel: string, schema: z.ZodType<T>, listener: (value: T) => void): () => void {
@@ -83,6 +84,11 @@ const bridge: AliciaBridge = {
     dragTo: (delta) => call(z.undefined(), INVOKE.holoDragTo, delta),
     dragEnd: () => call(z.undefined(), INVOKE.holoDragEnd),
     setExpanded: (expanded) => call(HoloView, INVOKE.holoSetExpanded, expanded),
+  },
+  settings: {
+    get: () => call(SettingsSnapshot, INVOKE.settingsGet),
+    update: (patch) => call(SettingsUpdateResult, INVOKE.settingsUpdate, patch),
+    onChange: (listener) => subscribe(PUSH.settings, SettingsSnapshot, listener),
   },
 };
 

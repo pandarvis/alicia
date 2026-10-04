@@ -117,6 +117,12 @@ describe("pair", () => {
 describe("BrainApi", () => {
   const session = { serverUrl: "http://127.0.0.1:8780", token: "t".repeat(43), person: { id: "kevin", name: "Kévin" } };
 
+  test("health: the brain's version, read without side effects", async () => {
+    const { calls, fetchFn } = fakeFetch(200, { ok: true, version: "0.1.0" });
+    expect(await new BrainApi(fetchFn, session).health()).toEqual({ ok: true, version: "0.1.0" });
+    expect(calls[0]?.url).toBe("http://127.0.0.1:8780/health");
+  });
+
   test("lists conversations with the device token", async () => {
     const { calls, fetchFn } = fakeFetch(200, [
       { id: CONVERSATION_ID, title: "Volets", updatedAt: "2026-10-04T13:30:00.000Z" },

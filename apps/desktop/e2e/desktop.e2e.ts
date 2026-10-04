@@ -255,3 +255,44 @@ test("Spotlight: Escape closes the bar without sending, and it opens again empty
   await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
   await expect.poll(() => bar.getByTestId("spotlight-input").inputValue(), POLL).toBe("");
 });
+
+test("Réglages: shortcut, launch at startup and Holo are kept after a restart; sign out lives here", async () => {
+  const brain = await startBrain();
+  const userData = tempDir("alicia-e2e-profile-");
+  const first = await launch(userData);
+  await pair(first.page, brain);
+  await first.page.getByTestId("nav-settings").click();
+  await first.page.getByTestId("settings-view").waitFor();
+  await expect.poll(() => first.page.getByTestId("titlebar-title").textContent(), POLL).toBe("Réglages");
+  await expect.poll(() => first.page.getByTestId("settings-server").textContent(), POLL).toBe(brain.url);
+  await expect.poll(() => first.page.getByTestId("settings-shortcut").textContent(), POLL).toBe("Ctrl+Alt+A");
+
+  // A new shortcut, typed on the keyboard.
+  await first.page.getByTestId("settings-shortcut-change").click();
+  await first.page.getByTestId("settings-shortcut-capture").waitFor();
+  await first.page.keyboard.press("Control+Shift+K");
+  await expect.poll(() => first.page.getByTestId("settings-shortcut").textContent(), POLL).toBe("Ctrl+Shift+K");
+  expect((await recorded(first.app)).shortcuts).toEqual(["Ctrl+Shift+K"]);
+
+  await first.page.getByTestId("settings-startup").click();
+  await expect.poll(() => first.page.getByTestId("settings-startup").getAttribute("aria-checked"), POLL).toBe("true");
+  expect((await recorded(first.app)).loginItem).toBe(true);
+
+  await expect.poll(() => windowVisible(first.app, "holo"), POLL).toBe(true);
+  await first.page.getByTestId("settings-holo").click();
+  await expect.poll(() => windowVisible(first.app, "holo"), POLL).toBe(false);
+  await first.app.close();
+
+  const second = await launch(userData);
+  await second.page.getByTestId("nav-settings").click();
+  await expect.poll(() => second.page.getByTestId("settings-shortcut").textContent(), POLL).toBe("Ctrl+Shift+K");
+  expect(await second.page.getByTestId("settings-startup").getAttribute("aria-checked")).toBe("true");
+  expect(await second.page.getByTestId("settings-holo").getAttribute("aria-checked")).toBe("false");
+  expect((await recorded(second.app)).shortcuts).toEqual(["Ctrl+Shift+K"]);
+  expect(await windowVisible(second.app, "holo")).toBe(false);
+
+  // Signing out is in Réglages now.
+  await second.page.getByTestId("sign-out").click();
+  await second.page.getByTestId("sign-out-yes").click();
+  await second.page.getByTestId("pairing-code").waitFor();
+});

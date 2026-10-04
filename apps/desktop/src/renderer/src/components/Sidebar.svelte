@@ -1,6 +1,7 @@
 <script lang="ts">
   import Brain from "@lucide/svelte/icons/brain";
   import Plus from "@lucide/svelte/icons/plus";
+  import SettingsIcon from "@lucide/svelte/icons/settings";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { cubicOut } from "svelte/easing";
@@ -9,20 +10,14 @@
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
   import { motion } from "../lib/motion.ts";
 
-  let { store, personName, view, onView, onSignOut }: {
+  let { store, personName, view, onView }: {
     store: ChatStore;
     personName: string;
     view: AppView;
     onView: (view: AppView) => void;
-    onSignOut: () => void;
   } = $props();
 
   const uid = $props.id();
-  let confirming = $state(false);
-  let signOutButton = $state<HTMLButtonElement | null>(null);
-  let cancelButton = $state<HTMLButtonElement | null>(null);
-  /** Set when the question is dismissed, so the focus goes back to "Déconnecter". */
-  let returnFocus = false;
 
   /** The conversation whose deletion is being asked, and whether the brain is deleting it. */
   let deletingId = $state<string | null>(null);
@@ -109,35 +104,6 @@
   $effect(() => {
     if (deletingId !== null) keepButton?.focus();
   });
-
-  function askSignOut(): void {
-    confirming = true;
-  }
-
-  function cancelSignOut(): void {
-    returnFocus = true;
-    confirming = false;
-  }
-
-  function confirmSignOut(): void {
-    onSignOut();
-  }
-
-  function handleConfirmKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    cancelSignOut();
-  }
-
-  // The safe answer gets the focus when the question shows up; "Déconnecter" gets it back afterwards.
-  $effect(() => {
-    if (confirming) {
-      cancelButton?.focus();
-    } else if (returnFocus && signOutButton !== null) {
-      returnFocus = false;
-      signOutButton.focus();
-    }
-  });
 </script>
 
 <nav class="sidebar" transition:reveal>
@@ -157,6 +123,13 @@
         onclick={() => { onView("memories"); }}
         data-testid="nav-memories"
       ><Brain size={16} aria-hidden="true" />Souvenirs</button>
+      <button
+        class="view"
+        class:active={view === "settings"}
+        aria-current={view === "settings" ? "page" : undefined}
+        onclick={() => { onView("settings"); }}
+        data-testid="nav-settings"
+      ><SettingsIcon size={16} aria-hidden="true" />Réglages</button>
     </div>
     <button class="new" bind:this={newButton} onclick={startNew} disabled={store.busy} data-testid="new-conversation">
       <Plus size={16} aria-hidden="true" />Nouvelle conversation
@@ -201,21 +174,7 @@
       {/each}
     </ul>
     <footer>
-      {#if confirming}
-        <div class="confirm" role="group" aria-labelledby="{uid}-question" aria-describedby="{uid}-hint" data-testid="sign-out-confirm" in:fade={{ duration: motion(150) }}>
-          <p id="{uid}-question" class="question">Déconnecter cet appareil ?</p>
-          <p id="{uid}-hint" class="hint">Il faudra l'appairer à nouveau.</p>
-          <div class="actions">
-            <button class="yes" onclick={confirmSignOut} onkeydown={handleConfirmKeydown} data-testid="sign-out-yes">Oui</button>
-            <button class="no" bind:this={cancelButton} onclick={cancelSignOut} onkeydown={handleConfirmKeydown} data-testid="sign-out-cancel">Annuler</button>
-          </div>
-        </div>
-      {:else}
-        <div class="who" in:fade={{ duration: motion(150) }}>
-          <span>{personName}</span>
-          <button class="link" bind:this={signOutButton} onclick={askSignOut} data-testid="sign-out">Déconnecter</button>
-        </div>
-      {/if}
+      <span class="who" title={personName}>{personName}</span>
     </footer>
   </div>
 </nav>
@@ -260,18 +219,9 @@
   .ask button { padding: 3px 10px; }
   .empty { padding: 7px 10px; color: var(--muted); font-size: 13px; }
   footer { padding: 8px 10px 0; font-size: 13px; color: var(--cream-muted); }
-  .who { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .link { color: var(--muted); font-size: 12px; padding: 2px 4px; flex: none; }
-  .link:hover { color: var(--amber); }
-  .confirm { display: flex; flex-direction: column; gap: 2px; }
-  .confirm .question { margin: 0; color: var(--cream); font-weight: 700; }
-  .hint { margin: 0; color: var(--muted); font-size: 12px; }
-  .actions { display: flex; gap: 6px; margin-top: 6px; }
-  .actions button { padding: 4px 12px; font-size: 13px; }
+  .who { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .yes { background: var(--surface-raised); color: var(--amber); font-weight: 700; }
   .no { color: var(--cream-muted); }
-  .actions .yes:hover, .actions .no:hover { background: var(--surface); }
   /* In a row, the background is already --surface. */
   .ask .yes:hover:not(:disabled) { background: var(--night-deep); }
   .ask .no:hover:not(:disabled) { background: var(--surface-raised); }

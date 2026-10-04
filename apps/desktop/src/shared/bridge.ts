@@ -3,6 +3,7 @@ import type { ConnectionStatus } from "./chat-connection.ts";
 import type { DragDelta, HoloView } from "./holo.ts";
 import type { MascotState } from "./mascot.ts";
 import type { SaveSessionResult, StoredSession } from "./session.ts";
+import type { SettingsPatch, SettingsSnapshot, SettingsUpdateResult } from "./settings.ts";
 
 export type Unsubscribe = () => void;
 
@@ -52,6 +53,14 @@ export interface HoloBridge {
   setExpanded(expanded: boolean): Promise<HoloView>;
 }
 
+/** The app's settings, owned by the main process (Réglages screen). */
+export interface SettingsBridge {
+  get(): Promise<SettingsSnapshot>;
+  update(patch: SettingsPatch): Promise<SettingsUpdateResult>;
+  /** Changed from another place (tray menu, Holo closed with Alt+F4…). */
+  onChange(listener: (snapshot: SettingsSnapshot) => void): Unsubscribe;
+}
+
 /** API exposed to every page as `window.alicia` by the preload script. */
 export interface AliciaBridge {
   getSession(): Promise<StoredSession | null>;
@@ -68,6 +77,7 @@ export interface AliciaBridge {
   app: AppBridge;
   surface: SurfaceBridge;
   holo: HoloBridge;
+  settings: SettingsBridge;
 }
 
 /** Page → main process (ipcRenderer.invoke); every handler checks the sender and validates the payload. */
@@ -89,6 +99,8 @@ export const INVOKE = {
   holoDragTo: "holo:drag-to",
   holoDragEnd: "holo:drag-end",
   holoSetExpanded: "holo:set-expanded",
+  settingsGet: "settings:get",
+  settingsUpdate: "settings:update",
 } as const;
 
 /** Main process → pages (webContents.send); the preload validates every payload. */
@@ -101,4 +113,5 @@ export const PUSH = {
   openConversation: "push:open-conversation",
   shown: "push:shown",
   hideRequest: "push:hide-request",
+  settings: "push:settings",
 } as const;

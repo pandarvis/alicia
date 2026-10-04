@@ -72,7 +72,10 @@ function start(): void {
   });
   session.defaultSession.setPermissionCheckHandler(() => false);
 
-  const recording = osIntegrationOff ? new RecordingOs() : null;
+  // The test profile keeps the recorded login item between runs, as Windows would.
+  const recording = osIntegrationOff
+    ? new RecordingOs({ loginItemFile: join(app.getPath("userData"), "test-login-item.json") })
+    : null;
   if (recording !== null) Reflect.set(globalThis, TEST_HOOKS_KEY, recording.hooks());
   const os: OsIntegration = recording ?? electronOs({ trayIcon: ICON_ICO, notificationIcon: ICON_PNG });
 
@@ -147,7 +150,8 @@ function start(): void {
       os.setLoginItem(openAtLogin);
     },
     isLoginItemEnabled: () => os.isLoginItemEnabled(),
-    onChange: () => {
+    onChange: (snapshot) => {
+      windows.broadcast(PUSH.settings, snapshot);
       applyHolo();
       refreshTray();
     },

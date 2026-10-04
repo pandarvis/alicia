@@ -5,6 +5,7 @@ import { z } from "zod";
 import { INVOKE } from "../shared/bridge.ts";
 import { DragDelta } from "../shared/holo.ts";
 import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
+import { SettingsPatch, type SettingsUpdateResult } from "../shared/settings.ts";
 import type { Surface } from "../shared/surface.ts";
 import type { BrainHub } from "./brain-hub.ts";
 import { mayReadSession } from "./event-routing.ts";
@@ -85,6 +86,13 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.holoSetExpanded, z.boolean(), (expanded, sender) => {
     holoOnly(sender);
     return deps.windows.setHoloExpanded(expanded);
+  });
+  handle(INVOKE.settingsGet, NONE, () => deps.settings.snapshot);
+  // An invalid patch is answered as such (the page shows why), not thrown.
+  handle(INVOKE.settingsUpdate, z.unknown(), (raw): SettingsUpdateResult => {
+    const patch = SettingsPatch.safeParse(raw);
+    if (!patch.success) return { ok: false, reason: "invalid", snapshot: deps.settings.snapshot };
+    return deps.settings.update(patch.data);
   });
   handle(INVOKE.showMain, NONE, () => {
     deps.windows.showMain();

@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { NotificationRequest, OsIntegration, TrayHandle } from "./os-integration.ts";
 import { TrayAction, type TrayItem } from "./tray-menu.ts";
@@ -31,13 +32,38 @@ interface RecordedTray {
   onClick: () => void;
 }
 
+export interface RecordingOsOptions {
+  /** Where the login item is kept between runs (in the test profile), as Windows keeps it in the registry. */
+  loginItemFile?: string;
+}
+
+/** The login item kept by an earlier run; none when the file is missing or unreadable. */
+function readLoginItem(file: string | undefined): boolean {
+  if (file === undefined) return false;
+  try {
+    const parsed = z.boolean().safeParse(JSON.parse(readFileSync(file, "utf8")));
+    return parsed.success && parsed.data;
+  } catch {
+    return false;
+  }
+}
+
 /** Stand-in for the OS in tests: nothing leaves the app, everything is recorded and can be triggered. */
 export class RecordingOs implements OsIntegration {
   readonly #shortcuts = new Map<string, () => void>();
   readonly #occupied = new Set<string>();
   readonly #notifications: NotificationRequest[] = [];
+  readonly #loginItemFile: string | undefined;
+  /** What "Windows" holds (kept in the file between runs). */
+  #loginItemEnabled: boolean;
+  /** What the app wrote during this run (null: nothing). */
   #loginItem: boolean | null = null;
   #tray: RecordedTray | null = null;
+
+  constructor(options: RecordingOsOptions = {}) {
+    this.#loginItemFile = options.loginItemFile;
+    this.#loginItemEnabled = readLoginItem(options.loginItemFile);
+  }
 
   registerShortcut(accelerator: string, run: () => void): boolean {
     if (this.#occupied.has(accelerator)) return false;
@@ -51,11 +77,13 @@ export class RecordingOs implements OsIntegration {
 
   setLoginItem(openAtLogin: boolean): void {
     this.#loginItem = openAtLogin;
+    this.#loginItemEnabled = openAtLogin;
+    if (this.#loginItemFile !== undefined) writeFileSync(this.#loginItemFile, JSON.stringify(openAtLogin));
   }
 
   /** Like a fresh Windows profile: no login item until the app writes one. */
   isLoginItemEnabled(): boolean {
-    return this.#loginItem ?? false;
+    return this.#loginItemEnabled;
   }
 
   notify(request: NotificationRequest): void {

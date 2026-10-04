@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { RecordedState, RecordingOs } from "../src/main/recording-os.ts";
 import { trayMenuItems } from "../src/main/tray-menu.ts";
@@ -58,6 +61,19 @@ describe("RecordingOs", () => {
     expect(os.isLoginItemEnabled()).toBe(true);
     os.setLoginItem(false);
     expect(os.isLoginItemEnabled()).toBe(false);
+  });
+
+  test("with a file, the login item outlives a restart, like Windows's; only this run's writes are recorded", () => {
+    const dir = mkdtempSync(join(tmpdir(), "alicia-recording-os-"));
+    try {
+      const loginItemFile = join(dir, "login-item.json");
+      new RecordingOs({ loginItemFile }).setLoginItem(true);
+      const restarted = new RecordingOs({ loginItemFile });
+      expect(restarted.isLoginItemEnabled()).toBe(true);
+      expect(restarted.hooks().state().loginItem).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("an unregistered shortcut is gone", () => {
