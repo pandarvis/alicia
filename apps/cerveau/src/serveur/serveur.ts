@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { DepotConversations } from "../conversations/depot.ts";
 import type { DependancesChat } from "../conversations/service-chat.ts";
 import type { ServiceAppairage } from "../identites/appairage.ts";
+import { VerrouConversations } from "./verrou-conversations.ts";
 import { brancherWs } from "./ws.ts";
 
 export interface DependancesServeur {
@@ -93,8 +94,10 @@ export async function creerServeur(deps: DependancesServeur): Promise<FastifyIns
     return liste;
   });
 
+  // Partagé par toutes les connexions : un seul tour à la fois par conversation.
+  const verrou = new VerrouConversations();
   app.get("/ws", { websocket: true }, (socket) => {
-    brancherWs(socket, deps);
+    brancherWs(socket, deps, verrou);
   });
 
   return app;

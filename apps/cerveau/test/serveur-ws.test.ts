@@ -51,7 +51,9 @@ async function demarrer(options: OptionsDemarrage = {}) {
   if ("erreur" in r) throw new Error(r.erreur);
   const jetonElodie = appairage.echanger(appairage.genererCode("elodie"), "Tablette");
   if ("erreur" in jetonElodie) throw new Error(jetonElodie.erreur);
-  return { url: `ws://127.0.0.1:${port}/ws`, jeton: r.jeton, jetonElodie: jetonElodie.jeton, appairage, fauxMoteur };
+  return {
+    url: `ws://127.0.0.1:${port}/ws`, jeton: r.jeton, jetonElodie: jetonElodie.jeton, appairage, depot, fauxMoteur,
+  };
 }
 
 /** Ouvre une connexion et accumule les événements reçus (validés par le protocole). */
@@ -255,6 +257,152 @@ describe("WebSocket", () => {
     expect(await c.ferme).toBe(4401);
     expect(c.recus.slice(1)).toEqual([{ type: "erreur", code: "non_authentifie", message: "Appareil révoqué." }]);
     expect(fauxMoteur.requetes).toHaveLength(0);
+  });
+
+  test("un seul tour à la fois par conversation, tous appareils confondus", async () => {
+    // 1er appel : rapide (crée la conversation C) ; 2e et 3e appels : bloqués jusqu'à libération.
+    let appels = 0;
+    let liberer: () => void = () => undefined;
+    const liberation = new Promise<void>((resoudre) => {
+      liberer = resoudre;
+    });
+    let demarre: () => void = () => undefined;
+    const tourBloqueDemarre = new Promise<void>((resoudre) => {
+      demarre = resoudre;
+    });
+    const moteur: Moteur = {
+      executer(): AsyncIterable<EvenementMoteur> {
+        appels += 1;
+        const numero = appels;
+        return (async function* () {
+          yield { type: "texte", texte: "…" } satisfies EvenementMoteur;
+          if (numero === 2) demarre();
+          if (numero === 2 || numero === 3) await liberation;
+          yield { type: "fin", tokensEntree: 1, tokensSortie: 1 } satisfies EvenementMoteur;
+        })();
+      },
+    };
+    const { url, jeton, appairage } = await demarrer({ moteur });
+    const second = appairage.echanger(appairage.genererCode("kevin"), "Téléphone Kévin");
+    if ("erreur" in second) throw new Error(second.erreur);
+
+    const a = connecter(url);
+    const b = connecter(url);
+    await Promise.all([a.ouvert, b.ouvert]);
+    a.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    b.ws.send(JSON.stringify({ type: "authentifier", jeton: second.jeton }));
+    await Promise.all([a.attendre((e) => e.type === "pret"), b.attendre((e) => e.type === "pret")]);
+
+    a.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Un" }));
+    await a.attendre((e) => e.type === "fin");
+    const conversation = a.recus.find((e) => e.type === "conversation");
+    const conversationId = conversation?.type === "conversation" ? conversation.conversationId : "";
+
+    a.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE_2, texte: "Deux", conversationId }));
+    await tourBloqueDemarre;
+
+    b.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE_3, texte: "Trois", conversationId }));
+    await b.attendre((e) => e.type === "erreur");
+    expect(b.recus.at(-1)).toEqual({
+      type: "erreur",
+      idRequete: ID_REQUETE_3,
+      code: "occupe",
+      message: "Alicia répond déjà dans cette conversation.",
+    });
+    expect(appels).toBe(2);
+
+    // Une nouvelle conversation n'est jamais bloquée.
+    const ID_NOUVELLE = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
+    b.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_NOUVELLE, texte: "Ailleurs" }));
+    await b.attendre((e) => e.type === "conversation" && e.idRequete === ID_NOUVELLE);
+    expect(appels).toBe(3);
+
+    liberer();
+    await a.attendre((e) => e.type === "fin" && a.recus.filter((x) => x.type === "fin").length === 2);
+    await b.attendre((e) => e.type === "fin");
+
+    const ID_APRES = "1c2d3e4f-5061-4b7c-9d8e-0f1a2b3c4d5e";
+    b.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_APRES, texte: "Quatre", conversationId }));
+    await b.attendre((e) => e.type === "conversation" && e.idRequete === ID_APRES);
+    expect(b.recus.find((e) => e.type === "conversation" && e.idRequete === ID_APRES)).toEqual({
+      type: "conversation", idRequete: ID_APRES, conversationId,
+    });
+    await b.attendre((e) => e.type === "fin" && b.recus.filter((x) => x.type === "fin").length === 2);
+    expect(appels).toBe(4);
+    a.ws.close();
+    b.ws.close();
+  });
+
+  test("une conversation tout juste créée est verrouillée dès que son id est connu", async () => {
+    let liberer: () => void = () => undefined;
+    const liberation = new Promise<void>((resoudre) => {
+      liberer = resoudre;
+    });
+    let appels = 0;
+    const moteur: Moteur = {
+      executer(): AsyncIterable<EvenementMoteur> {
+        appels += 1;
+        return (async function* () {
+          yield { type: "texte", texte: "…" } satisfies EvenementMoteur;
+          await liberation;
+          yield { type: "fin", tokensEntree: 1, tokensSortie: 1 } satisfies EvenementMoteur;
+        })();
+      },
+    };
+    const { url, jeton, appairage } = await demarrer({ moteur });
+    const second = appairage.echanger(appairage.genererCode("kevin"), "Téléphone Kévin");
+    if ("erreur" in second) throw new Error(second.erreur);
+    const a = connecter(url);
+    const b = connecter(url);
+    await Promise.all([a.ouvert, b.ouvert]);
+    a.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    b.ws.send(JSON.stringify({ type: "authentifier", jeton: second.jeton }));
+    await Promise.all([a.attendre((e) => e.type === "pret"), b.attendre((e) => e.type === "pret")]);
+
+    a.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Un" }));
+    await a.attendre((e) => e.type === "morceau_texte");
+    const conversation = a.recus.find((e) => e.type === "conversation");
+    const conversationId = conversation?.type === "conversation" ? conversation.conversationId : "";
+
+    b.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE_2, texte: "Deux", conversationId }));
+    await b.attendre((e) => e.type === "erreur");
+    expect(b.recus.at(-1)).toMatchObject({ idRequete: ID_REQUETE_2, code: "occupe" });
+    expect(appels).toBe(1);
+
+    liberer();
+    await a.attendre((e) => e.type === "fin");
+    a.ws.close();
+    b.ws.close();
+  });
+
+  test("la conversation d'une autre personne est introuvable et reste intacte", async () => {
+    const { url, jeton, jetonElodie, depot, fauxMoteur } = await demarrer();
+    const k = connecter(url);
+    await k.ouvert;
+    k.ws.send(JSON.stringify({ type: "authentifier", jeton }));
+    await k.attendre((e) => e.type === "pret");
+    k.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE, texte: "Secret de Kévin" }));
+    await k.attendre((e) => e.type === "fin");
+    const conversation = k.recus.find((e) => e.type === "conversation");
+    const conversationId = conversation?.type === "conversation" ? conversation.conversationId : "";
+    const avant = depot.messages(conversationId);
+    expect(avant).toHaveLength(2);
+
+    const e = connecter(url);
+    await e.ouvert;
+    e.ws.send(JSON.stringify({ type: "authentifier", jeton: jetonElodie }));
+    await e.attendre((x) => x.type === "pret");
+    e.ws.send(JSON.stringify({ type: "envoyer", idRequete: ID_REQUETE_2, texte: "Je m'invite", conversationId }));
+    await e.attendre((x) => x.type === "erreur");
+    expect(e.recus.slice(1)).toEqual([
+      { type: "erreur", idRequete: ID_REQUETE_2, code: "requete_invalide", message: "Conversation introuvable." },
+    ]);
+    expect(depot.messages(conversationId)).toEqual(avant);
+    expect(depot.lister("elodie")).toHaveLength(0);
+    expect(fauxMoteur.requetes).toHaveLength(1);
+    expect(e.ws.readyState).toBe(WebSocket.OPEN);
+    k.ws.close();
+    e.ws.close();
   });
 
   test("une exception synchrone ne fait pas tomber le processus : erreur interne et fermeture 1011", async () => {

@@ -2,6 +2,7 @@ import { type EvenementServeur, MessageClient, type Personne } from "@alicia/pro
 import type { RawData, WebSocket } from "ws";
 import { traiterEnvoi } from "../conversations/service-chat.ts";
 import type { DependancesServeur } from "./serveur.ts";
+import type { VerrouConversations } from "./verrou-conversations.ts";
 
 const DELAI_AUTHENTIFICATION_PAR_DEFAUT_MS = 5000;
 const FERMETURE_NON_AUTHENTIFIE = 4401;
@@ -22,7 +23,7 @@ function lire(donnees: RawData): MessageClient | undefined {
   }
 }
 
-export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
+export function brancherWs(socket: WebSocket, deps: DependancesServeur, verrou: VerrouConversations): void {
   let session: { appareilId: string; personne: Personne } | undefined;
   const tours = new Set<AbortController>();
 
@@ -82,15 +83,37 @@ export function brancherWs(socket: WebSocket, deps: DependancesServeur): void {
     }
 
     const auteur = session.personne;
+    // Conversation existante : verrouillée avant le tour, quel que soit l'appareil qui y répond déjà.
+    let verrouillee: string | undefined;
+    if (message.conversationId !== undefined) {
+      if (!verrou.prendre(auteur.id, message.conversationId)) {
+        envoyer({
+          type: "erreur",
+          idRequete: message.idRequete,
+          code: "occupe",
+          message: "Alicia répond déjà dans cette conversation.",
+        });
+        return;
+      }
+      verrouillee = message.conversationId;
+    }
+
     const tour = new AbortController();
     tours.add(tour);
     void (async () => {
       try {
-        for await (const e of traiterEnvoi(deps.chat, auteur, message, tour.signal)) envoyer(e);
+        for await (const e of traiterEnvoi(deps.chat, auteur, message, tour.signal)) {
+          // Nouvelle conversation : verrouillée dès que son id existe, avant qu'un autre appareil ne le voie.
+          if (e.type === "conversation" && verrouillee === undefined && verrou.prendre(auteur.id, e.conversationId)) {
+            verrouillee = e.conversationId;
+          }
+          envoyer(e);
+        }
       } catch {
         envoyer({ type: "erreur", idRequete: message.idRequete, code: "interne", message: "Erreur interne." });
       } finally {
         tours.delete(tour);
+        if (verrouillee !== undefined) verrou.liberer(auteur.id, verrouillee);
       }
     })();
   };
