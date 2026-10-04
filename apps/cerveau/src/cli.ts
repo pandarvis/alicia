@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { EvenementServeur, type MessageClient, ReponseAppairage } from "@alicia/protocol";
+import { ServerEvent, type ClientMessage, PairingResponse } from "@alicia/protocol";
 import WebSocket from "ws";
 import { construireConsigne } from "./agent/consigne.ts";
 import { construireApplication, creerMoteurSdk } from "./application.ts";
@@ -118,14 +118,14 @@ async function obtenirJeton(urlWs: string, code: string | undefined): Promise<st
     body: JSON.stringify({ code, nomAppareil: "Terminal" }),
   });
   if (!reponse.ok) throw new Error(`Appairage refusé (${reponse.status}).`);
-  const { jeton } = ReponseAppairage.parse(await reponse.json());
+  const { jeton } = PairingResponse.parse(await reponse.json());
   console.log(`Jeton (à garder dans ALICIA_JETON) : ${jeton}`);
   return jeton;
 }
 
-function lireEvenement(donnees: WebSocket.RawData): EvenementServeur | undefined {
+function lireEvenement(donnees: WebSocket.RawData): ServerEvent | undefined {
   try {
-    const resultat = EvenementServeur.safeParse(JSON.parse(enTexte(donnees)));
+    const resultat = ServerEvent.safeParse(JSON.parse(enTexte(donnees)));
     return resultat.success ? resultat.data : undefined;
   } catch {
     return undefined;
@@ -139,7 +139,7 @@ async function discuter(url: string, code: string | undefined): Promise<void> {
   let finTour: (() => void) | undefined;
   const ouverte = (): boolean => ws.readyState === WebSocket.OPEN;
 
-  const envoyer = (m: MessageClient): void => {
+  const envoyer = (m: ClientMessage): void => {
     ws.send(JSON.stringify(m));
   };
   const pret = new Promise<void>((resoudre, rejeter) => {

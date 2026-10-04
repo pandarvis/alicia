@@ -1,21 +1,21 @@
 import { z } from "zod";
-import { Modele } from "./identity.ts";
+import { Model } from "./identity.ts";
 
-export const MessageAuthentifier = z.strictObject({
+export const AuthenticateMessage = z.strictObject({
   type: z.literal("authentifier"),
   jeton: z.string().min(20).max(200),
 });
-export type MessageAuthentifier = z.infer<typeof MessageAuthentifier>;
+export type AuthenticateMessage = z.infer<typeof AuthenticateMessage>;
 
-export const MessageEnvoyer = z.strictObject({
+export const SendMessage = z.strictObject({
   type: z.literal("envoyer"),
   idRequete: z.uuid(),
   conversationId: z.uuid().optional(),
-  texte: z.string().max(20_000).refine((s) => s.trim().length > 0, "Message vide"),
-  modele: Modele.optional(),
+  texte: z.string().max(20_000).refine((s) => s.trim().length > 0, "Empty message"),
+  modele: Model.optional(),
 });
-export type MessageEnvoyer = z.infer<typeof MessageEnvoyer>;
+export type SendMessage = z.infer<typeof SendMessage>;
 
-/** Tout ce que l'app peut envoyer au cerveau sur le WebSocket. */
-export const MessageClient = z.discriminatedUnion("type", [MessageAuthentifier, MessageEnvoyer]);
-export type MessageClient = z.infer<typeof MessageClient>;
+/** Everything the app can send to the brain over the WebSocket. */
+export const ClientMessage = z.discriminatedUnion("type", [AuthenticateMessage, SendMessage]);
+export type ClientMessage = z.infer<typeof ClientMessage>;

@@ -1,10 +1,10 @@
-import type { Personne } from "@alicia/protocol";
+import type { Person } from "@alicia/protocol";
 import { eq } from "drizzle-orm";
 import type { Base } from "../base/ouvrir.ts";
 import { personnes } from "../base/schema.ts";
 
 /** Crée ou renomme les personnes déclarées dans la config. Ne supprime jamais. */
-export function synchroniserPersonnes(base: Base, liste: readonly Personne[]): void {
+export function synchroniserPersonnes(base: Base, liste: readonly Person[]): void {
   for (const p of liste) {
     base
       .insert(personnes)
@@ -14,6 +14,6 @@ export function synchroniserPersonnes(base: Base, liste: readonly Personne[]): v
   }
 }
 
-export function trouverPersonne(base: Base, id: string): Personne | undefined {
+export function trouverPersonne(base: Base, id: string): Person | undefined {
   return base.select().from(personnes).where(eq(personnes.id, id)).get();
 }

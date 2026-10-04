@@ -1,4 +1,4 @@
-import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocol";
+import type { ServerEvent, SendMessage, Person } from "@alicia/protocol";
 import { construireConsigne, horodater } from "../agent/consigne.ts";
 import { choisirModele } from "../agent/modele.ts";
 import type { Horloge } from "../horloge.ts";
@@ -34,10 +34,10 @@ export function construirePromptReprise(historique: readonly Message[], prompt: 
 
 export async function* traiterEnvoi(
   deps: DependancesChat,
-  personne: Personne,
-  message: MessageEnvoyer,
+  personne: Person,
+  message: SendMessage,
   signal: AbortSignal,
-): AsyncGenerator<EvenementServeur> {
+): AsyncGenerator<ServerEvent> {
   const debut = deps.horloge();
 
   let conversation: Conversation;

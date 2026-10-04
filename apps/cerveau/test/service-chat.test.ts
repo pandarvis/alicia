@@ -1,4 +1,4 @@
-import type { EvenementServeur, MessageEnvoyer, Personne } from "@alicia/protocol";
+import type { ServerEvent, SendMessage, Person } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
 import { journal } from "../src/base/schema.ts";
 import { DepotConversations } from "../src/conversations/depot.ts";
@@ -25,10 +25,10 @@ function creerContexte(...scenarios: Scenario[]) {
 }
 
 async function envoyer(
-  deps: Parameters<typeof traiterEnvoi>[0], personne: Personne, message: Omit<MessageEnvoyer, "type" | "idRequete">,
+  deps: Parameters<typeof traiterEnvoi>[0], personne: Person, message: Omit<SendMessage, "type" | "idRequete">,
 ) {
-  const sortie: EvenementServeur[] = [];
-  const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, ...message };
+  const sortie: ServerEvent[] = [];
+  const complet: SendMessage = { type: "envoyer", idRequete: ID_REQUETE, ...message };
   for await (const e of traiterEnvoi(deps, personne, complet, new AbortController().signal)) sortie.push(e);
   return sortie;
 }
@@ -144,8 +144,8 @@ describe("traiterEnvoi", () => {
 
     const annule = new AbortController();
     annule.abort();
-    const sortie: EvenementServeur[] = [];
-    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Deux", conversationId: id };
+    const sortie: ServerEvent[] = [];
+    const complet: SendMessage = { type: "envoyer", idRequete: ID_REQUETE, texte: "Deux", conversationId: id };
     for await (const e of traiterEnvoi(deps, KEVIN, complet, annule.signal)) sortie.push(e);
 
     expect(faux.requetes).toHaveLength(2);
@@ -161,8 +161,8 @@ describe("traiterEnvoi", () => {
     const depot = new DepotConversations(creerBaseTest(), temps.horloge);
     const annule = new AbortController();
     annule.abort();
-    const sortie: EvenementServeur[] = [];
-    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Un" };
+    const sortie: ServerEvent[] = [];
+    const complet: SendMessage = { type: "envoyer", idRequete: ID_REQUETE, texte: "Un" };
     for await (const e of traiterEnvoi({ depot, moteur, horloge: temps.horloge, fuseau: "Europe/Paris" }, KEVIN, complet, annule.signal)) {
       sortie.push(e);
     }
@@ -190,8 +190,8 @@ describe("traiterEnvoi", () => {
     vi.spyOn(depot, "definirSession").mockImplementation(() => {
       throw new Error("disque plein");
     });
-    const sortie: EvenementServeur[] = [];
-    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Un" };
+    const sortie: ServerEvent[] = [];
+    const complet: SendMessage = { type: "envoyer", idRequete: ID_REQUETE, texte: "Un" };
     await expect(async () => {
       for await (const e of traiterEnvoi(deps, KEVIN, complet, new AbortController().signal)) sortie.push(e);
     }).rejects.toThrow("disque plein");
@@ -201,7 +201,7 @@ describe("traiterEnvoi", () => {
 
   test("le consommateur s'arrête tôt : le texte partiel et le journal sont quand même enregistrés", async () => {
     const { deps, depot, base } = creerContexte(REPONSE_SIMPLE);
-    const complet: MessageEnvoyer = { type: "envoyer", idRequete: ID_REQUETE, texte: "Salut" };
+    const complet: SendMessage = { type: "envoyer", idRequete: ID_REQUETE, texte: "Salut" };
     let id = "";
     for await (const e of traiterEnvoi(deps, KEVIN, complet, new AbortController().signal)) {
       if (e.type === "conversation") id = e.conversationId;

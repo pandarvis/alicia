@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { Personne } from "@alicia/protocol";
+import { Person } from "@alicia/protocol";
 import { parse } from "yaml";
 import { z } from "zod";
 
@@ -10,7 +10,7 @@ export const SchemaConfig = z.object({
   hote: z.string().default("0.0.0.0"),
   dossierDonnees: z.string().default("./donnees"),
   fuseau: z.string().default("Europe/Paris"),
-  personnes: z.array(Personne).min(1),
+  personnes: z.array(Person).min(1),
   moteur: z.object({ mode: z.enum(["abonnement", "cle_api"]) }),
   modeles: z
     .object({ sonnet: z.string().min(1), opus: z.string().min(1) })

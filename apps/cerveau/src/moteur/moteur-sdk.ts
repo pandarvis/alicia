@@ -1,4 +1,4 @@
-import type { Modele } from "@alicia/protocol";
+import type { Model } from "@alicia/protocol";
 import {
   type Options,
   query,
@@ -140,7 +140,7 @@ export async function* traduireTour(
 
 export interface ParametresMoteurSdk {
   auth: Authentification;
-  modeles: Readonly<Record<Modele, string>>;
+  modeles: Readonly<Record<Model, string>>;
   dossierEspace: string;
 }
 

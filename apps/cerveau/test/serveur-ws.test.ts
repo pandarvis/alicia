@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import { EvenementServeur } from "@alicia/protocol";
+import { ServerEvent } from "@alicia/protocol";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
@@ -59,16 +59,16 @@ async function demarrer(options: OptionsDemarrage = {}) {
 /** Ouvre une connexion et accumule les événements reçus (validés par le protocole). */
 function connecter(url: string) {
   const ws = new WebSocket(url);
-  const recus: EvenementServeur[] = [];
-  const attentes: { condition: (e: EvenementServeur) => boolean; resoudre: () => void }[] = [];
+  const recus: ServerEvent[] = [];
+  const attentes: { condition: (e: ServerEvent) => boolean; resoudre: () => void }[] = [];
   ws.on("message", (donnees: WebSocket.RawData) => {
     const texte = Buffer.isBuffer(donnees) ? donnees.toString("utf8") : "";
-    recus.push(EvenementServeur.parse(JSON.parse(texte)));
+    recus.push(ServerEvent.parse(JSON.parse(texte)));
     for (const a of attentes.filter((x) => recus.some(x.condition))) a.resoudre();
   });
   const ouvert = new Promise<void>((resoudre) => ws.once("open", () => { resoudre(); }));
   const ferme = new Promise<number>((resoudre) => ws.once("close", (code) => { resoudre(code); }));
-  const attendre = (condition: (e: EvenementServeur) => boolean) =>
+  const attendre = (condition: (e: ServerEvent) => boolean) =>
     new Promise<void>((resoudre) => {
       if (recus.some(condition)) resoudre();
       else attentes.push({ condition, resoudre });

@@ -1,10 +1,10 @@
-import type { Modele } from "@alicia/protocol";
+import type { Model } from "@alicia/protocol";
 
 export interface RequeteMoteur {
   prompt: string;
   /** Session SDK à reprendre ; undefined = nouvelle session. */
   sessionId: string | undefined;
-  modele: Modele;
+  modele: Model;
   consigneSysteme: string;
 }
 

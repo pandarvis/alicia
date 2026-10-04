@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
-import type { Personne } from "@alicia/protocol";
+import type { Person } from "@alicia/protocol";
 import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Base } from "../base/ouvrir.ts";
 import { appareils, codesAppairage } from "../base/schema.ts";
@@ -16,12 +16,12 @@ const tirerCodeAleatoire = (): string => randomInt(0, 1_000_000).toString().padS
 export const hacher = (valeur: string): string => createHash("sha256").update(valeur).digest("hex");
 
 export type ResultatAppairage =
-  | { jeton: string; personne: Personne }
+  | { jeton: string; personne: Person }
   | { erreur: "code_invalide" | "trop_de_tentatives" };
 
 export interface AppareilAuthentifie {
   appareilId: string;
-  personne: Personne;
+  personne: Person;
 }
 
 /** Un appareil appairé, tel qu'affiché par `alicia appareils` (dates en ms). */
@@ -117,7 +117,7 @@ export class ServiceAppairage {
     return { appareilId: appareil.id, personne };
   }
 
-  authentifier(jeton: string): Personne | undefined {
+  authentifier(jeton: string): Person | undefined {
     return this.authentifierAppareil(jeton)?.personne;
   }
 

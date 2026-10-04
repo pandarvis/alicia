@@ -1,9 +1,9 @@
-import type { Personne } from "@alicia/protocol";
+import type { Person } from "@alicia/protocol";
 import { ouvrirBase } from "../src/base/ouvrir.ts";
 import { synchroniserPersonnes } from "../src/identites/personnes.ts";
 
-export const KEVIN: Personne = { id: "kevin", nom: "Kévin" };
-export const ELODIE: Personne = { id: "elodie", nom: "Élodie" };
+export const KEVIN: Person = { id: "kevin", nom: "Kévin" };
+export const ELODIE: Person = { id: "elodie", nom: "Élodie" };
 
 /** Horloge de test : avance à la main. */
 export function creerHorlogeTest(depart = Date.UTC(2026, 9, 4, 13, 30)) {

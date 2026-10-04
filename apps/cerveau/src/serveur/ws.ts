@@ -1,4 +1,4 @@
-import { type EvenementServeur, MessageClient, type Personne } from "@alicia/protocol";
+import { type ServerEvent, ClientMessage, type Person } from "@alicia/protocol";
 import type { RawData, WebSocket } from "ws";
 import { traiterEnvoi } from "../conversations/service-chat.ts";
 import type { DependancesServeur } from "./serveur.ts";
@@ -14,9 +14,9 @@ export function enTexte(donnees: RawData): string {
   return Buffer.from(donnees).toString("utf8");
 }
 
-function lire(donnees: RawData): MessageClient | undefined {
+function lire(donnees: RawData): ClientMessage | undefined {
   try {
-    const resultat = MessageClient.safeParse(JSON.parse(enTexte(donnees)));
+    const resultat = ClientMessage.safeParse(JSON.parse(enTexte(donnees)));
     return resultat.success ? resultat.data : undefined;
   } catch {
     return undefined;
@@ -24,10 +24,10 @@ function lire(donnees: RawData): MessageClient | undefined {
 }
 
 export function brancherWs(socket: WebSocket, deps: DependancesServeur, verrou: VerrouConversations): void {
-  let session: { appareilId: string; personne: Personne } | undefined;
+  let session: { appareilId: string; personne: Person } | undefined;
   const tours = new Set<AbortController>();
 
-  const envoyer = (evenement: EvenementServeur): void => {
+  const envoyer = (evenement: ServerEvent): void => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(evenement));
   };
   const refuser = (message: string): void => {

@@ -1,14 +1,14 @@
 import { z } from "zod";
-import { Modele, Personne } from "./identity.ts";
+import { Model, Person } from "./identity.ts";
 
-export const CodeErreur = z.enum(["quota", "moteur", "requete_invalide", "non_authentifie", "occupe", "interne"]);
-export type CodeErreur = z.infer<typeof CodeErreur>;
+export const ErrorCode = z.enum(["quota", "moteur", "requete_invalide", "non_authentifie", "occupe", "interne"]);
+export type ErrorCode = z.infer<typeof ErrorCode>;
 
-const entier = z.number().int().nonnegative();
+const count = z.number().int().nonnegative();
 
-/** Tout ce que le cerveau peut envoyer à l'app sur le WebSocket. */
-export const EvenementServeur = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("pret"), personne: Personne }),
+/** Everything the brain can send to the app over the WebSocket. */
+export const ServerEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("pret"), personne: Person }),
   z.object({ type: z.literal("conversation"), idRequete: z.uuid(), conversationId: z.uuid() }),
   z.object({ type: z.literal("morceau_texte"), conversationId: z.uuid(), texte: z.string() }),
   z.object({
@@ -20,17 +20,17 @@ export const EvenementServeur = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("fin"),
     conversationId: z.uuid(),
-    modele: Modele,
-    tokensEntree: entier,
-    tokensSortie: entier,
-    dureeMs: entier,
+    modele: Model,
+    tokensEntree: count,
+    tokensSortie: count,
+    dureeMs: count,
   }),
   z.object({
     type: z.literal("erreur"),
     idRequete: z.uuid().optional(),
     conversationId: z.uuid().optional(),
-    code: CodeErreur,
+    code: ErrorCode,
     message: z.string(),
   }),
 ]);
-export type EvenementServeur = z.infer<typeof EvenementServeur>;
+export type ServerEvent = z.infer<typeof ServerEvent>;

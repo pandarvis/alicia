@@ -1,4 +1,4 @@
-import type { Personne } from "@alicia/protocol";
+import type { Person } from "@alicia/protocol";
 
 /** Personnalité d'Alicia, reprise de la persona de l'ancienne Alice (config.yaml). */
 export const PERSONA = `Tu es Alicia, l'assistante de la famille. Tu es chaleureuse, espiègle et complice, et tu tutoies la famille.
@@ -12,7 +12,7 @@ Règles :
 - Chaque message commence par sa date et son heure entre crochets : sers-t'en pour situer « aujourd'hui », « demain », « ce soir ».`;
 
 /** Consigne système : stable pour une personne donnée (cache de prompt). */
-export function construireConsigne(personne: Personne): string {
+export function construireConsigne(personne: Person): string {
   return `${PERSONA}\n\nTu parles avec ${personne.nom}.`;
 }
 

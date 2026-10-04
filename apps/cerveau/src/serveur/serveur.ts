@@ -1,9 +1,9 @@
 import websocket from "@fastify/websocket";
 import {
-  type MessageHistorique,
-  type Personne,
-  RequeteAppairage,
-  type ResumeConversation,
+  type HistoryMessage,
+  type Person,
+  PairingRequest,
+  type ConversationSummary,
 } from "@alicia/protocol";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { DepotConversations } from "../conversations/depot.ts";
@@ -56,7 +56,7 @@ export async function creerServeur(deps: DependancesServeur): Promise<FastifyIns
   // 128 Kio : le protocole plafonne les messages à 20 000 caractères.
   await app.register(websocket, { options: { maxPayload: 131_072 } });
 
-  const personneDe = (requete: FastifyRequest): Personne | undefined => {
+  const personneDe = (requete: FastifyRequest): Person | undefined => {
     const jeton = BEARER.exec(requete.headers.authorization ?? "")?.[1];
     return jeton === undefined ? undefined : deps.appairage.authentifier(jeton);
   };
@@ -64,7 +64,7 @@ export async function creerServeur(deps: DependancesServeur): Promise<FastifyIns
   app.get("/sante", () => ({ ok: true as const, version: deps.version }));
 
   app.post("/appairage", (requete, reponse) => {
-    const corps = RequeteAppairage.safeParse(requete.body);
+    const corps = PairingRequest.safeParse(requete.body);
     if (!corps.success) return reponse.code(400).send({ erreur: "requete_invalide" });
     const resultat = deps.appairage.echanger(corps.data.code, corps.data.nomAppareil);
     if ("erreur" in resultat) {
@@ -76,7 +76,7 @@ export async function creerServeur(deps: DependancesServeur): Promise<FastifyIns
   app.get("/conversations", (requete, reponse) => {
     const personne = personneDe(requete);
     if (personne === undefined) return reponse.code(401).send({ erreur: "non_authentifie" });
-    const liste: ResumeConversation[] = deps.depot
+    const liste: ConversationSummary[] = deps.depot
       .lister(personne.id)
       .map((c) => ({ id: c.id, titre: c.titre, majLe: iso(c.majLe) }));
     return liste;
@@ -88,7 +88,7 @@ export async function creerServeur(deps: DependancesServeur): Promise<FastifyIns
     if (deps.depot.obtenir(requete.params.id, personne.id) === undefined) {
       return reponse.code(404).send({ erreur: "introuvable" });
     }
-    const liste: MessageHistorique[] = deps.depot
+    const liste: HistoryMessage[] = deps.depot
       .messages(requete.params.id)
       .map((m) => ({ id: m.id, role: m.role, texte: m.texte, creeLe: iso(m.creeLe) }));
     return liste;
