@@ -12,7 +12,7 @@ test("foreign keys are enforced", () => {
   const db = openDb(":memory:");
   expect(() =>
     db.$client
-      .prepare("INSERT INTO conversations (id, personne_id, titre, cree_le, maj_le) VALUES ('c', 'personne', 't', 0, 0)")
+      .prepare("INSERT INTO conversations (id, person_id, title, created_at, updated_at) VALUES ('c', 'nobody', 't', 0, 0)")
       .run(),
   ).toThrow(/FOREIGN KEY/);
 });

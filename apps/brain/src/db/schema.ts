@@ -1,51 +1,51 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const people = sqliteTable("personnes", {
+export const people = sqliteTable("people", {
   id: text("id").primaryKey(),
-  name: text("nom").notNull(),
+  name: text("name").notNull(),
 });
 
-export const devices = sqliteTable("appareils", {
+export const devices = sqliteTable("devices", {
   id: text("id").primaryKey(),
-  personId: text("personne_id").notNull().references(() => people.id),
-  name: text("nom").notNull(),
-  tokenHash: text("jeton_hache").notNull().unique(),
-  createdAt: integer("cree_le").notNull(),
-  lastSeenAt: integer("vu_le"),
-  revokedAt: integer("revoque_le"),
+  personId: text("person_id").notNull().references(() => people.id),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: integer("created_at").notNull(),
+  lastSeenAt: integer("last_seen_at"),
+  revokedAt: integer("revoked_at"),
 });
 
-export const pairingCodes = sqliteTable("codes_appairage", {
-  codeHash: text("code_hache").primaryKey(),
-  personId: text("personne_id").notNull().references(() => people.id),
-  expiresAt: integer("expire_le").notNull(),
+export const pairingCodes = sqliteTable("pairing_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  personId: text("person_id").notNull().references(() => people.id),
+  expiresAt: integer("expires_at").notNull(),
 });
 
 export const conversations = sqliteTable("conversations", {
   id: text("id").primaryKey(),
-  personId: text("personne_id").notNull().references(() => people.id),
-  title: text("titre").notNull(),
+  personId: text("person_id").notNull().references(() => people.id),
+  title: text("title").notNull(),
   sessionId: text("session_id"),
-  createdAt: integer("cree_le").notNull(),
-  updatedAt: integer("maj_le").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
 });
 
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(),
   conversationId: text("conversation_id").notNull().references(() => conversations.id),
   role: text("role", { enum: ["user", "assistant"] }).notNull(),
-  text: text("texte").notNull(),
-  createdAt: integer("cree_le").notNull(),
+  text: text("text").notNull(),
+  createdAt: integer("created_at").notNull(),
 });
 
-export const turnLog = sqliteTable("journal", {
+export const turnLog = sqliteTable("turn_log", {
   id: text("id").primaryKey(),
   conversationId: text("conversation_id").notNull().references(() => conversations.id),
-  model: text("modele").notNull(),
-  inputTokens: integer("tokens_entree").notNull(),
-  outputTokens: integer("tokens_sortie").notNull(),
-  durationMs: integer("duree_ms").notNull(),
-  tools: text("outils").notNull(),
-  error: text("erreur"),
-  createdAt: integer("cree_le").notNull(),
+  model: text("model").notNull(),
+  inputTokens: integer("input_tokens").notNull(),
+  outputTokens: integer("output_tokens").notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  tools: text("tools").notNull(),
+  error: text("error"),
+  createdAt: integer("created_at").notNull(),
 });

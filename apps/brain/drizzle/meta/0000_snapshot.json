@@ -1,135 +1,9 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a47d28fd-964f-4e35-95a1-62ba01be7f09",
+  "id": "9afdad88-2652-46d5-be5c-53fac75f2bee",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
-    "appareils": {
-      "name": "appareils",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "personne_id": {
-          "name": "personne_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "nom": {
-          "name": "nom",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "jeton_hache": {
-          "name": "jeton_hache",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cree_le": {
-          "name": "cree_le",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "vu_le": {
-          "name": "vu_le",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revoque_le": {
-          "name": "revoque_le",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "appareils_jeton_hache_unique": {
-          "name": "appareils_jeton_hache_unique",
-          "columns": [
-            "jeton_hache"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "appareils_personne_id_personnes_id_fk": {
-          "name": "appareils_personne_id_personnes_id_fk",
-          "tableFrom": "appareils",
-          "tableTo": "personnes",
-          "columnsFrom": [
-            "personne_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "codes_appairage": {
-      "name": "codes_appairage",
-      "columns": {
-        "code_hache": {
-          "name": "code_hache",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "personne_id": {
-          "name": "personne_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expire_le": {
-          "name": "expire_le",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "codes_appairage_personne_id_personnes_id_fk": {
-          "name": "codes_appairage_personne_id_personnes_id_fk",
-          "tableFrom": "codes_appairage",
-          "tableTo": "personnes",
-          "columnsFrom": [
-            "personne_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "conversations": {
       "name": "conversations",
       "columns": {
@@ -140,15 +14,15 @@
           "notNull": true,
           "autoincrement": false
         },
-        "personne_id": {
-          "name": "personne_id",
+        "person_id": {
+          "name": "person_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "titre": {
-          "name": "titre",
+        "title": {
+          "name": "title",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -161,15 +35,15 @@
           "notNull": false,
           "autoincrement": false
         },
-        "cree_le": {
-          "name": "cree_le",
+        "created_at": {
+          "name": "created_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "maj_le": {
-          "name": "maj_le",
+        "updated_at": {
+          "name": "updated_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -178,12 +52,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "conversations_personne_id_personnes_id_fk": {
-          "name": "conversations_personne_id_personnes_id_fk",
+        "conversations_person_id_people_id_fk": {
+          "name": "conversations_person_id_people_id_fk",
           "tableFrom": "conversations",
-          "tableTo": "personnes",
+          "tableTo": "people",
           "columnsFrom": [
-            "personne_id"
+            "person_id"
           ],
           "columnsTo": [
             "id"
@@ -196,8 +70,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "journal": {
-      "name": "journal",
+    "devices": {
+      "name": "devices",
       "columns": {
         "id": {
           "name": "id",
@@ -206,71 +80,65 @@
           "notNull": true,
           "autoincrement": false
         },
-        "conversation_id": {
-          "name": "conversation_id",
+        "person_id": {
+          "name": "person_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "modele": {
-          "name": "modele",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "tokens_entree": {
-          "name": "tokens_entree",
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "tokens_sortie": {
-          "name": "tokens_sortie",
+        "last_seen_at": {
+          "name": "last_seen_at",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "duree_ms": {
-          "name": "duree_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "outils": {
-          "name": "outils",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "erreur": {
-          "name": "erreur",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "cree_le": {
-          "name": "cree_le",
+        "revoked_at": {
+          "name": "revoked_at",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "devices_token_hash_unique": {
+          "name": "devices_token_hash_unique",
+          "columns": [
+            "token_hash"
+          ],
+          "isUnique": true
+        }
+      },
       "foreignKeys": {
-        "journal_conversation_id_conversations_id_fk": {
-          "name": "journal_conversation_id_conversations_id_fk",
-          "tableFrom": "journal",
-          "tableTo": "conversations",
+        "devices_person_id_people_id_fk": {
+          "name": "devices_person_id_people_id_fk",
+          "tableFrom": "devices",
+          "tableTo": "people",
           "columnsFrom": [
-            "conversation_id"
+            "person_id"
           ],
           "columnsTo": [
             "id"
@@ -307,15 +175,15 @@
           "notNull": true,
           "autoincrement": false
         },
-        "texte": {
-          "name": "texte",
+        "text": {
+          "name": "text",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "cree_le": {
-          "name": "cree_le",
+        "created_at": {
+          "name": "created_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -342,8 +210,53 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "personnes": {
-      "name": "personnes",
+    "pairing_codes": {
+      "name": "pairing_codes",
+      "columns": {
+        "code_hash": {
+          "name": "code_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "person_id": {
+          "name": "person_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "pairing_codes_person_id_people_id_fk": {
+          "name": "pairing_codes_person_id_people_id_fk",
+          "tableFrom": "pairing_codes",
+          "tableTo": "people",
+          "columnsFrom": [
+            "person_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "people": {
+      "name": "people",
       "columns": {
         "id": {
           "name": "id",
@@ -352,8 +265,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "nom": {
-          "name": "nom",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -362,6 +275,93 @@
       },
       "indexes": {},
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "turn_log": {
+      "name": "turn_log",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "input_tokens": {
+          "name": "input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "output_tokens": {
+          "name": "output_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tools": {
+          "name": "tools",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "turn_log_conversation_id_conversations_id_fk": {
+          "name": "turn_log_conversation_id_conversations_id_fk",
+          "tableFrom": "turn_log",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
