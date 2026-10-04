@@ -20,7 +20,7 @@ async function createContext() {
       repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
     },
   });
-  return { app, pairing, repository, locks };
+  return { app, pairing, repository, locks, time };
 }
 
 async function pair(ctx: Awaited<ReturnType<typeof createContext>>, person: string) {
@@ -191,6 +191,27 @@ describe("HTTP server", () => {
       [409, "busy"],
     ]);
     for (const a of answers) expect(HttpErrorBody.parse(a.json()).error.message).not.toBe("");
+  });
+
+  test("POST /pairing: an address that keeps failing is blocked, the others are not", async () => {
+    const ctx = await createContext();
+    const attempt = (remoteAddress: string, code = "000000") =>
+      ctx.app.inject({ method: "POST", url: "/pairing", remoteAddress, payload: { code, deviceName: "PC" } });
+
+    for (let i = 0; i < 5; i++) expect((await attempt("10.0.0.1")).statusCode).toBe(401);
+    // Even a valid code is refused from this address now.
+    const blocked = await attempt("10.0.0.1", ctx.pairing.generateCode("kevin"));
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json()).toEqual(errorBody("too_many_attempts"));
+
+    // Past the global one-minute limit, another address pairs normally; the first one is still blocked.
+    ctx.time.advance(61_000);
+    expect((await attempt("10.0.0.2", ctx.pairing.generateCode("kevin"))).statusCode).toBe(200);
+    expect((await attempt("10.0.0.1", ctx.pairing.generateCode("kevin"))).statusCode).toBe(429);
+
+    // After 15 minutes, the first address may try again.
+    ctx.time.advance(15 * 60_000);
+    expect((await attempt("10.0.0.1", ctx.pairing.generateCode("kevin"))).statusCode).toBe(200);
   });
 });
 

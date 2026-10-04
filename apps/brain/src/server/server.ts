@@ -11,6 +11,7 @@ import type { ChatDependencies } from "../conversations/chat-service.ts";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { PairingService } from "../identity/pairing.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
+import { FailureLimiter } from "./failure-limiter.ts";
 import { sendError } from "./http-errors.ts";
 import { registerMemoryRoutes } from "./memory-routes.ts";
 import { attachWs } from "./ws.ts";
@@ -42,6 +43,10 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 
 /** Case-insensitive "Bearer" scheme (RFC 7235). */
 const BEARER = /^bearer +(\S+)$/i;
+
+const PAIRING_FAILURE_WINDOW_MS = 15 * 60_000;
+const PAIRING_MAX_FAILURES = 5;
+const PAIRING_MAX_ADDRESSES = 1_000;
 
 /** 4xx status carried by a Fastify error (malformed JSON, body too large…), otherwise undefined. */
 function clientStatus(error: unknown): number | undefined {
@@ -89,11 +94,25 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
 
   app.get("/health", () => ({ ok: true as const, version: deps.version }));
 
+  // Per address, on top of PairingService's global limit: one machine guessing codes is stopped without
+  // locking the whole household out. trustProxy is off on purpose: behind a reverse proxy every request
+  // shares the proxy's address, and this becomes a second global limit.
+  const pairingFailures = new FailureLimiter({
+    clock: deps.chat.clock,
+    windowMs: PAIRING_FAILURE_WINDOW_MS,
+    maxFailures: PAIRING_MAX_FAILURES,
+    maxKeys: PAIRING_MAX_ADDRESSES,
+  });
+
   app.post("/pairing", (request, reply) => {
+    if (pairingFailures.blocked(request.ip)) return sendError(reply, 429, "too_many_attempts");
     const body = PairingRequest.safeParse(request.body);
     if (!body.success) return sendError(reply, 400, "invalid_request");
     const result = deps.pairing.redeem(body.data.code, body.data.deviceName);
-    if ("error" in result) return sendError(reply, result.error === "too_many_attempts" ? 429 : 401, result.error);
+    if ("error" in result) {
+      if (result.error === "invalid_code") pairingFailures.fail(request.ip);
+      return sendError(reply, result.error === "too_many_attempts" ? 429 : 401, result.error);
+    }
     return result;
   });
 
