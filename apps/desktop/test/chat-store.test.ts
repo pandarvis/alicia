@@ -1,10 +1,25 @@
 import type { ConversationSummary, HistoryMessage, SendMessage } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { ChatStore } from "../src/renderer/src/lib/chat-store.svelte.ts";
+import { ChatStore, type ChatPorts } from "../src/renderer/src/lib/chat-store.svelte.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
+const CONV_B = "7a9d0c3e-1b2f-4e5a-8c6d-9e0f1a2b3c4d";
 
-function setup(history: HistoryMessage[] = []) {
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (reason: Error) => void = () => undefined;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function msg(id: string, text: string): HistoryMessage {
+  return { id, role: "user", text, createdAt: "2026-10-04T13:30:00.000Z" };
+}
+
+function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {}) {
   let counter = 0;
   const sent: SendMessage[] = [];
   const timers: { run: () => void; ms: number; cancelled: boolean }[] = [];
@@ -24,6 +39,7 @@ function setup(history: HistoryMessage[] = []) {
         t.cancelled = true;
       };
     },
+    ...overrides,
   });
   return {
     store, sent, timers,
@@ -144,5 +160,149 @@ describe("ChatStore", () => {
     store.startNew();
     expect(store.activeId).toBeNull();
     expect(store.messages).toEqual([]);
+  });
+
+  test("send during a pending open is refused", async () => {
+    const d = deferred<HistoryMessage[]>();
+    const { store, sent } = setup([], { history: () => d.promise });
+    const opening = store.open(CONV);
+    expect(store.loading).toBe(true);
+    expect(store.send("Salut")).toBe(false);
+    expect(sent).toHaveLength(0);
+    d.resolve([msg("a", "Hello")]);
+    await opening;
+    expect(store.loading).toBe(false);
+    expect(store.send("Salut")).toBe(true);
+  });
+
+  test("open clears the previous messages right away", async () => {
+    const d = deferred<HistoryMessage[]>();
+    const { store } = setup([], { history: () => d.promise });
+    store.messages = [{ id: "x", role: "user", text: "Ancien", streaming: false }];
+    const opening = store.open(CONV);
+    expect(store.messages).toEqual([]);
+    d.resolve([]);
+    await opening;
+  });
+
+  test("overlapping opens: only the latest one is shown", async () => {
+    const first = deferred<HistoryMessage[]>();
+    const second = deferred<HistoryMessage[]>();
+    const { store } = setup([], { history: (id) => (id === CONV ? first.promise : second.promise) });
+    const a = store.open(CONV);
+    const b = store.open(CONV_B);
+    second.resolve([msg("b", "Deuxième")]);
+    await b;
+    first.resolve([msg("a", "Première")]);
+    await a;
+    expect(store.activeId).toBe(CONV_B);
+    expect(store.messages.map((m) => m.text)).toEqual(["Deuxième"]);
+    expect(store.loading).toBe(false);
+  });
+
+  test("a failing stale open does not set a notice", async () => {
+    const first = deferred<HistoryMessage[]>();
+    const second = deferred<HistoryMessage[]>();
+    const { store } = setup([], { history: (id) => (id === CONV ? first.promise : second.promise) });
+    const a = store.open(CONV);
+    const b = store.open(CONV_B);
+    second.resolve([msg("b", "Deuxième")]);
+    await b;
+    first.reject(new Error("boom"));
+    await a;
+    expect(store.notice).toBeNull();
+    expect(store.messages.map((m) => m.text)).toEqual(["Deuxième"]);
+  });
+
+  test("a failing open sets a notice and ends loading", async () => {
+    const { store } = setup([], { history: () => Promise.reject(new Error("boom")) });
+    await store.open(CONV);
+    expect(store.notice).toBe("Impossible de charger cette conversation.");
+    expect(store.loading).toBe(false);
+  });
+
+  test("startNew cancels a pending open", async () => {
+    const d = deferred<HistoryMessage[]>();
+    const { store } = setup([], { history: () => d.promise });
+    const opening = store.open(CONV);
+    store.startNew();
+    d.resolve([msg("a", "Tard")]);
+    await opening;
+    expect(store.activeId).toBeNull();
+    expect(store.messages).toEqual([]);
+    expect(store.loading).toBe(false);
+  });
+
+  test("late events after connectionLost are ignored", () => {
+    const { store } = setup();
+    store.send("Salut");
+    store.connectionLost();
+    const count = store.messages.length;
+    store.handle({ type: "text_delta", conversationId: CONV, text: "Tard" });
+    store.handle({ type: "tool_call", conversationId: CONV, callId: "t", tool: "weather" });
+    store.handle({
+      type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0,
+    });
+    expect(store.messages).toHaveLength(count);
+    expect(store.activity).toBeNull();
+    expect(store.mascot).toBe("alert");
+  });
+
+  test("events for another conversation are ignored while busy", () => {
+    const { store, sent } = setup();
+    store.send("Un");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
+    store.handle({ type: "text_delta", conversationId: CONV_B, text: "Intrus" });
+    store.handle({
+      type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0,
+    });
+    expect(store.messages.map((m) => m.text)).toEqual(["Un"]);
+    expect(store.busy).toBe(true);
+  });
+
+  test("overlapping refreshes: an older response never overwrites a newer one", async () => {
+    const first = deferred<ConversationSummary[]>();
+    const second = deferred<ConversationSummary[]>();
+    const queue = [first, second];
+    const { store } = setup([], { listConversations: () => queue.shift()?.promise ?? Promise.resolve([]) });
+    const a = store.refreshConversations();
+    const b = store.refreshConversations();
+    second.resolve([{ id: CONV_B, title: "Récent", updatedAt: "2026-10-04T14:00:00.000Z" }]);
+    await b;
+    first.resolve([{ id: CONV, title: "Ancien", updatedAt: "2026-10-04T13:00:00.000Z" }]);
+    await a;
+    expect(store.conversations.map((c) => c.id)).toEqual([CONV_B]);
+  });
+
+  test("resync re-fetches the active history after a lost turn", async () => {
+    const history = vi.fn<ChatPorts["history"]>(() => Promise.resolve([msg("a", "Salut")]));
+    const { store, sent } = setup([], { history });
+    store.send("Salut");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
+    store.connectionLost();
+    history.mockResolvedValue([msg("a", "Salut"), { ...msg("b", "Fini !"), role: "assistant" }]);
+    await store.resync();
+    expect(history).toHaveBeenCalledWith(CONV);
+    expect(store.messages.map((m) => m.text)).toEqual(["Salut", "Fini !"]);
+    expect(store.loading).toBe(false);
+  });
+
+  test("resync does nothing while busy or without an active conversation", async () => {
+    const history = vi.fn<ChatPorts["history"]>(() => Promise.resolve([]));
+    const { store } = setup([], { history });
+    await store.resync();
+    store.send("Un");
+    await store.resync();
+    expect(history).not.toHaveBeenCalled();
+  });
+
+  test("resync failure keeps the messages and sets a notice", async () => {
+    const history = vi.fn<ChatPorts["history"]>(() => Promise.resolve([msg("a", "Salut")]));
+    const { store } = setup([], { history });
+    await store.open(CONV);
+    history.mockRejectedValue(new Error("boom"));
+    await store.resync();
+    expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
+    expect(store.notice).toBe("Impossible de charger cette conversation.");
   });
 });

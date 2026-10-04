@@ -1,4 +1,6 @@
-import type { ConversationSummary, HistoryMessage, SendMessage, ServerEvent } from "@alicia/protocol";
+import type {
+  ConversationSummary, ErrorCode, HistoryMessage, SendMessage, ServerEvent,
+} from "@alicia/protocol";
 import type { MascotState } from "./mascot.ts";
 
 export interface ChatMessage {
@@ -19,18 +21,28 @@ export interface ChatPorts {
 
 const SUCCESS_MS = 1500;
 const ALERT_MS = 2000;
-const MASCOT_ON_ERROR: Readonly<Record<string, MascotState>> = {
+const MASCOT_ON_ERROR: Partial<Record<ErrorCode, MascotState>> = {
   quota: "sleeping",
   busy: "alert",
   engine: "error",
   internal: "error",
 };
 
+type TurnEvent = Extract<ServerEvent, { type: "text_delta" | "tool_call" | "tool_result" | "done" }>;
+
+function isTurnEvent(event: ServerEvent): event is TurnEvent {
+  return (
+    event.type === "text_delta" || event.type === "tool_call" || event.type === "tool_result" || event.type === "done"
+  );
+}
+
 export class ChatStore {
   conversations = $state<ConversationSummary[]>([]);
   activeId = $state<string | null>(null);
   messages = $state<ChatMessage[]>([]);
   busy = $state(false);
+  /** True while a conversation history is being loaded. */
+  loading = $state(false);
   opus = $state(false);
   activity = $state<string | null>(null);
   notice = $state<string | null>(null);
@@ -39,14 +51,18 @@ export class ChatStore {
   readonly #ports: ChatPorts;
   #pendingRequestId: string | null = null;
   #cancelMascotReset: (() => void) | null = null;
+  #loadToken = 0;
+  #refreshToken = 0;
 
   constructor(ports: ChatPorts) {
     this.#ports = ports;
   }
 
   async refreshConversations(): Promise<void> {
+    const token = ++this.#refreshToken;
     try {
-      this.conversations = await this.#ports.listConversations();
+      const list = await this.#ports.listConversations();
+      if (token === this.#refreshToken) this.conversations = list;
     } catch {
       // Keep the current list; the connection status already tells the user what is wrong.
     }
@@ -56,18 +72,21 @@ export class ChatStore {
     if (this.busy) return;
     this.activeId = conversationId;
     this.notice = null;
+    this.messages = [];
     this.#setMascot("idle");
-    try {
-      const history = await this.#ports.history(conversationId);
-      if (this.activeId !== conversationId) return;
-      this.messages = history.map((m) => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
-    } catch {
-      this.notice = "Impossible de charger cette conversation.";
-    }
+    await this.#loadHistory(conversationId);
+  }
+
+  /** Reloads the active conversation after the connection came back (the brain may have finished a lost turn). */
+  async resync(): Promise<void> {
+    if (this.busy || this.activeId === null) return;
+    await Promise.all([this.#loadHistory(this.activeId), this.refreshConversations()]);
   }
 
   startNew(): void {
     if (this.busy) return;
+    this.#loadToken++;
+    this.loading = false;
     this.activeId = null;
     this.messages = [];
     this.notice = null;
@@ -75,7 +94,7 @@ export class ChatStore {
   }
 
   send(text: string): boolean {
-    if (text.trim() === "" || this.busy) return false;
+    if (text.trim() === "" || this.busy || this.loading) return false;
     const requestId = this.#ports.newId();
     const message: SendMessage = {
       type: "send",
@@ -98,6 +117,7 @@ export class ChatStore {
   }
 
   handle(event: ServerEvent): void {
+    if (isTurnEvent(event) && !this.#isCurrentTurn(event.conversationId)) return;
     switch (event.type) {
       case "ready":
         return;
@@ -139,6 +159,27 @@ export class ChatStore {
     this.#endTurn();
     this.notice = "Connexion perdue : la réponse d'Alicia n'est pas arrivée.";
     this.#setMascot("alert");
+  }
+
+  /** Turn events only count while a turn is pending and, once known, for the active conversation. */
+  #isCurrentTurn(conversationId: string): boolean {
+    return this.busy && (this.activeId === null || conversationId === this.activeId);
+  }
+
+  /** Loads a history; only the latest load may assign messages or report an error. */
+  async #loadHistory(conversationId: string): Promise<void> {
+    const token = ++this.#loadToken;
+    this.loading = true;
+    try {
+      const history = await this.#ports.history(conversationId);
+      if (token !== this.#loadToken) return;
+      this.messages = history.map((m) => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
+    } catch {
+      if (token !== this.#loadToken) return;
+      this.notice = "Impossible de charger cette conversation.";
+    } finally {
+      if (token === this.#loadToken) this.loading = false;
+    }
   }
 
   #endTurn(): void {
