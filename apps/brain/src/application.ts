@@ -8,6 +8,7 @@ import { ConversationRepository } from "./conversations/repository.ts";
 import { openDb } from "./db/open.ts";
 import type { Engine } from "./engine/engine.ts";
 import { SdkEngine } from "./engine/sdk-engine.ts";
+import { Maintenance } from "./maintenance.ts";
 import { PairingService } from "./identity/pairing.ts";
 import { syncPeople } from "./identity/people.ts";
 import type { Embedder } from "./memory/embedder.ts";
@@ -30,7 +31,9 @@ export interface Application {
   server: FastifyInstance;
   memory: MemoryStore;
   pairing: PairingService;
-  /** Closes the server (and its WebSockets), then the database. */
+  /** Nightly job (backup, journal rotation): started by `start` only, never by the maintenance commands. */
+  maintenance: Maintenance;
+  /** Stops the nightly job, closes the server (and its WebSockets), then the database. */
   close(): Promise<void>;
 }
 
@@ -74,6 +77,13 @@ export async function buildApplication(
   try {
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);
+    const maintenance = new Maintenance({
+      sqlite: db.$client,
+      repository,
+      backupDir: join(config.dataDir, "backups"),
+      timezone: config.timezone,
+      clock: systemClock,
+    });
     const server = await createServer({
       pairing,
       repository,
@@ -87,7 +97,9 @@ export async function buildApplication(
       server,
       memory,
       pairing,
+      maintenance,
       close: async () => {
+        await maintenance.stop();
         await server.close();
         db.$client.close();
       },

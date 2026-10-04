@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, expect, test } from "vitest";
 import { buildApplication } from "../src/application.ts";
@@ -25,6 +25,24 @@ engine: { mode: subscription }
   const res = await app.server.inject({ method: "GET", url: "/health" });
   expect(res.statusCode).toBe(200);
   await app.close();
+});
+
+test("the nightly job writes its backup into <dataDir>/backups", async () => {
+  dir = mkdtempSync(join(tmpdir(), "alicia-"));
+  const config = parseConfig(`
+dataDir: ${JSON.stringify(dir)}
+people: [{ id: kevin, name: Kévin }]
+engine: { mode: subscription }
+`);
+  const app = await buildApplication(config, new FakeEngine(() => []), { embedder: new FakeEmbedder() });
+  const path = await app.maintenance.runNow();
+  await app.close();
+  expect(dirname(path)).toBe(join(dir, "backups"));
+  expect(readdirSync(join(dir, "backups"))).toEqual([basename(path)]);
+  const copy = new Database(path, { readonly: true });
+  const ids = copy.prepare("SELECT id FROM people").pluck().all();
+  copy.close();
+  expect(ids).toEqual(["kevin"]);
 });
 
 test("startup purges memories forgotten for over 30 days and keeps the rest", async () => {

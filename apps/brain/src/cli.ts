@@ -44,6 +44,8 @@ async function start(): Promise<void> {
     throw error;
   }
   console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
+  // Nightly job (backup, journal rotation); catches up at once if the brain was off at 3:00.
+  void app.maintenance.start();
   // Load (first time: download) the memory model now, not in the middle of an answer.
   const warmStart = Date.now();
   app.memory.warmUp().then(
