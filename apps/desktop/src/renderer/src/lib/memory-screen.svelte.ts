@@ -66,14 +66,14 @@ export interface MemoryView {
   sort: MemorySort;
 }
 
-/** The list the user sees: kind filter, then every query word (accent- and case-insensitive), then the sort. */
+/** The list the user sees: kind filter, then every query word as the start of a word (accent- and case-insensitive), then the sort. */
 export function visibleMemories(items: readonly MemorySummary[], view: MemoryView, now: number): MemorySummary[] {
   const wanted = words(view.query);
   const filtered = items.filter((memory) => {
     if (view.kinds.length > 0 && !view.kinds.includes(memory.kind)) return false;
     if (wanted.length === 0) return true;
     const present = words(memory.text);
-    return wanted.every((word) => present.includes(word));
+    return wanted.every((word) => present.some((candidate) => candidate.startsWith(word)));
   });
   return filtered.sort(comparator(view.sort, now));
 }
@@ -114,6 +114,10 @@ function changes(memory: MemorySummary, draft: MemoryDraft): MemoryPatch | null 
     ...(draft.pinned !== memory.pinned ? { pinned: draft.pinned } : {}),
   };
   return Object.keys(patch).length === 0 ? null : patch;
+}
+
+function sameDraft(a: MemoryDraft, b: MemoryDraft): boolean {
+  return a.text === b.text && a.kind === b.kind && a.scope === b.scope && a.pinned === b.pinned;
 }
 
 function listFilter(tab: MemoryTab): { scope?: MemoryScope; forgotten?: boolean } {
@@ -228,19 +232,22 @@ export class MemoryScreen {
     if (memory === null) return;
     const patch = changes(memory, draft);
     if (patch === null) return;
+    const sent = { ...draft };
+    // Only a memory listed in this scoped tab can be moved out of it (a bench hit may belong to the other scope).
+    const listedHere = this.items.some((m) => m.id === memory.id && m.scope === this.tab);
     const result = await this.#write(() => this.#ports.update(memory.id, patch));
     if (result === null) return;
     if (result.ok) {
       this.error = null;
-      if (this.tab === "common" || this.tab === "personal") {
+      if (listedHere && result.memory.scope !== this.tab) {
         // Moved to the other scope: it leaves this tab.
-        if (result.memory.scope !== this.tab) {
-          this.#remove(memory.id);
-          return;
-        }
+        this.#remove(memory.id);
+        return;
       }
       this.#replace(result.memory);
-      if (this.selectedId === memory.id) this.draft = toDraft(result.memory);
+      if (this.selectedId === memory.id && this.draft !== null && sameDraft(this.draft, sent)) {
+        this.draft = toDraft(result.memory);
+      }
     } else {
       if (result.reason === "not_found") this.#remove(memory.id);
       this.error = WRITE_ERRORS[result.reason];
@@ -294,6 +301,7 @@ export class MemoryScreen {
   }
 
   async #create(draft: MemoryDraft): Promise<void> {
+    const sent = { ...draft };
     const input: MemoryCreate = { text: draft.text.trim(), kind: draft.kind, scope: draft.scope, pinned: draft.pinned };
     const result = await this.#write(() => this.#ports.create(input));
     if (result === null) return;
@@ -302,6 +310,7 @@ export class MemoryScreen {
       return;
     }
     this.error = null;
+    const edited = this.draft !== null && !sameDraft(this.draft, sent) ? { ...this.draft } : null;
     this.creating = false;
     this.draft = null;
     if (this.tab !== "all" && this.tab !== result.memory.scope) {
@@ -312,6 +321,8 @@ export class MemoryScreen {
       this.items = [result.memory, ...this.items.filter((m) => m.id !== result.memory.id)];
     }
     this.select(result.memory.id);
+    // Typed while the creation was in flight: keep it as edits of the new memory.
+    if (edited !== null && this.selectedId === result.memory.id) this.draft = edited;
   }
 
   /** Runs a write; null (with the error set) when the brain was unreachable. */

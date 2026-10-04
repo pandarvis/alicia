@@ -146,7 +146,7 @@ describe("visibleMemories", () => {
     expect(visibleMemories(items, { ...view, kinds: ["rule", "habit"] }, NOW)).toHaveLength(3);
   });
 
-  test("query: every word present, without accents or case", () => {
+  test("query: every word is the start of a word of the text, without accents or case", () => {
     const items = [
       memory(1, { text: "Kévin adore les LASAGNES de mamie" }),
       memory(2, { text: "Élodie cuisine des lasagnes" }),
@@ -159,6 +159,16 @@ describe("visibleMemories", () => {
     expect(ids("lasagnes moka")).toEqual([]);
     expect(ids("   ")).toHaveLength(3);
     expect(ids("s'appelle")).toEqual([id(3)]);
+    expect(ids("lasa")).toEqual([id(1), id(2)]);
+    expect(ids("kev")).toEqual([id(1)]);
+    expect(ids("lasagnes chat")).toEqual([]);
+    expect(ids("lasagnes mam")).toEqual([id(1)]);
+    expect(ids("sagnes")).toEqual([]);
+  });
+
+  test("prefix search: vol finds volets", () => {
+    const items = [memory(1, { text: "Les volets se ferment à 21 h" }), memory(2, { text: "Le chat dort" })];
+    expect(visibleMemories(items, { ...view, query: "vol" }, NOW).map((m) => m.id)).toEqual([id(1)]);
   });
 
   test("kind and query combine", () => {
@@ -660,5 +670,78 @@ describe("MemoryScreen: test bench", () => {
     await screen.forget();
     expect(screen.bench?.hits).toEqual([]);
     expect(screen.selectedId).toBeNull();
+  });
+});
+
+describe("MemoryScreen: scoped tabs and bench hits", () => {
+  test("editing a bench hit from another tab keeps it selected and in the bench", async () => {
+    const elsewhere = memory(5, { scope: "common", text: "Plat préféré : lasagnes" });
+    const { screen } = setup([memory(1, { scope: "personal" })], {
+      test: () => Promise.resolve([hit(0.95, elsewhere)]),
+      update: (_id, patch) => Promise.resolve({ ok: true, memory: patched(elsewhere, patch) }),
+    });
+    await screen.setTab("personal");
+    screen.query = "plat";
+    await screen.runBench();
+    screen.select(id(5));
+    if (screen.draft !== null) screen.draft.pinned = true;
+    await screen.save();
+    expect(screen.selectedId).toBe(id(5));
+    expect(screen.bench?.hits.map((h) => h.memory.id)).toEqual([id(5)]);
+    expect(screen.bench?.hits[0]?.memory.pinned).toBe(true);
+    expect(screen.draft?.pinned).toBe(true);
+    expect(screen.items.map((m) => m.id)).toEqual([id(1)]);
+  });
+
+  test("moving a memory of this tab to the other scope removes it from the list", async () => {
+    const { screen } = setup([memory(1, { scope: "common" }), memory(2, { scope: "common" })]);
+    await screen.setTab("common");
+    screen.select(id(1));
+    if (screen.draft !== null) screen.draft.scope = "personal";
+    await screen.save();
+    expect(screen.items.map((m) => m.id)).toEqual([id(2)]);
+    expect(screen.selectedId).toBeNull();
+  });
+});
+
+describe("MemoryScreen: edits during a save", () => {
+  test("newer edits typed while saving are not overwritten", async () => {
+    const pending = deferred<MemoryWriteResult>();
+    const { screen } = await ready([memory(1, { text: "Thé" })], { update: () => pending.promise });
+    screen.select(id(1));
+    if (screen.draft !== null) screen.draft.text = "Café";
+    const saving = screen.save();
+    if (screen.draft !== null) screen.draft.text = "Café au lait";
+    pending.resolve({ ok: true, memory: memory(1, { text: "Café" }) });
+    await saving;
+    expect(screen.items[0]?.text).toBe("Café");
+    expect(screen.draft?.text).toBe("Café au lait");
+    expect(screen.dirty).toBe(true);
+  });
+
+  test("an untouched draft is refreshed from the saved memory", async () => {
+    const pending = deferred<MemoryWriteResult>();
+    const { screen } = await ready([memory(1, { text: "Thé" })], { update: () => pending.promise });
+    screen.select(id(1));
+    if (screen.draft !== null) screen.draft.text = "  Café ";
+    const saving = screen.save();
+    pending.resolve({ ok: true, memory: memory(1, { text: "Café" }) });
+    await saving;
+    expect(screen.draft?.text).toBe("Café");
+    expect(screen.dirty).toBe(false);
+  });
+
+  test("edits typed while a creation is saving stay in the draft of the new memory", async () => {
+    const pending = deferred<MemoryWriteResult>();
+    const { screen } = await ready([], { create: () => pending.promise });
+    screen.startCreate();
+    if (screen.draft !== null) screen.draft.text = "Moka";
+    const saving = screen.save();
+    if (screen.draft !== null) screen.draft.text = "Moka le chat";
+    pending.resolve({ ok: true, memory: memory(99, { text: "Moka" }) });
+    await saving;
+    expect(screen.selectedId).toBe(id(99));
+    expect(screen.draft?.text).toBe("Moka le chat");
+    expect(screen.dirty).toBe(true);
   });
 });
