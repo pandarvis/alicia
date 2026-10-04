@@ -25,6 +25,13 @@ export interface EntreeJournal {
   erreur: string | null;
 }
 
+/**
+ * Dépôt des conversations, messages et journal.
+ *
+ * Cloisonnement : seul `obtenir` vérifie la propriété. `definirSession`, `ajouterMessage`,
+ * `messages` et `derniersMessages` ne prennent qu'un `conversationId` et ne contrôlent PAS
+ * à qui il appartient : l'appelant doit d'abord passer par `obtenir(id, personneId)`.
+ */
 export class DepotConversations {
   readonly #base: Base;
   readonly #horloge: Horloge;
@@ -57,7 +64,7 @@ export class DepotConversations {
       .select()
       .from(conversations)
       .where(eq(conversations.personneId, personneId))
-      .orderBy(desc(conversations.majLe))
+      .orderBy(desc(conversations.majLe), sql`rowid desc`)
       .limit(100)
       .all();
   }
@@ -68,15 +75,15 @@ export class DepotConversations {
 
   ajouterMessage(conversationId: string, role: Role, texte: string): void {
     const maintenant = this.#horloge();
-    this.#base
-      .insert(messages)
-      .values({ id: randomUUID(), conversationId, role, texte, creeLe: maintenant })
-      .run();
-    this.#base
-      .update(conversations)
-      .set({ majLe: maintenant })
-      .where(eq(conversations.id, conversationId))
-      .run();
+    this.#base.transaction((tx) => {
+      tx.insert(messages)
+        .values({ id: randomUUID(), conversationId, role, texte, creeLe: maintenant })
+        .run();
+      tx.update(conversations)
+        .set({ majLe: maintenant })
+        .where(eq(conversations.id, conversationId))
+        .run();
+    });
   }
 
   messages(conversationId: string): Message[] {

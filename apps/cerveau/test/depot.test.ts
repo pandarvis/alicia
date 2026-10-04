@@ -34,6 +34,14 @@ describe("DepotConversations", () => {
     expect(depot.lister("kevin").map((c) => c.id)).toEqual([a.id, b.id]);
   });
 
+  test("à égalité d'activité, la conversation créée en dernier passe en premier", () => {
+    const { depot } = creerDepot();
+    const a = depot.creer("kevin", "A");
+    const b = depot.creer("kevin", "B");
+    const c = depot.creer("kevin", "C");
+    expect(depot.lister("kevin").map((x) => x.id)).toEqual([c.id, b.id, a.id]);
+  });
+
   test("messages dans l'ordre, et derniers messages", () => {
     const { depot } = creerDepot();
     const c = depot.creer("kevin", "T");
