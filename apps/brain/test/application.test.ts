@@ -75,10 +75,11 @@ engine: { mode: subscription }
   expect(left).toEqual([ids[1]]);
 });
 
-test("starts with a relative dataDir (as in alicia.config.example.yaml), serving its updates folder", async () => {
+test("starts with a relative dataDir (as in alicia.config.example.yaml), serving its updates folder", async (context) => {
   dir = mkdtempSync(join(tmpdir(), "alicia-"));
   const relativeDir = relative(process.cwd(), dir);
-  expect(isAbsolute(relativeDir)).toBe(false);
+  // The temp folder on another drive than the repository (Windows): no relative path leads there.
+  if (isAbsolute(relativeDir)) context.skip("the temp folder is on another drive");
   const config = parseConfig(`
 dataDir: ${JSON.stringify(relativeDir)}
 people: [{ id: kevin, name: Kévin }]

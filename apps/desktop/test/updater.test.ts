@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import {
-  CHECK_EVERY_MS, progressPercent, type UpdateEngine, UpdateController, updateFeedUrl,
+  CHECK_EVERY_MS, isNothingPublished, progressPercent, type UpdateEngine, UpdateController, updateFeedUrl,
 } from "../src/main/updater.ts";
 import type { UpdateStatus } from "../src/shared/updates.ts";
 
@@ -102,13 +102,13 @@ describe("UpdateController", () => {
     expect(counts.installs).toBe(1);
   });
 
-  test("an install that fails (error) can be tried again once a version is ready", () => {
+  test("an install that fails (error) leaves the downloaded version ready, to be tried again", () => {
     const { controller, counts, emit } = setup();
     controller.setServer(SERVER);
     emit({ state: "ready", version: "0.2.0" });
     controller.install();
     emit({ state: "error" });
-    emit({ state: "ready", version: "0.2.0" });
+    expect(controller.status).toEqual({ state: "ready", version: "0.2.0" });
     controller.install();
     expect(counts.installs).toBe(2);
   });
@@ -142,6 +142,13 @@ describe("UpdateController", () => {
     expect(timers[0]?.cancelled).toBe(true);
     controller.brainReachable();
     expect(counts.checks).toBe(2);
+  });
+
+  test("no version published yet on the brain (no latest.yml) is not a failure", () => {
+    expect(isNothingPublished(Object.assign(new Error("Cannot find channel"), { code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" }))).toBe(true);
+    expect(isNothingPublished(Object.assign(new Error("refused"), { code: "ECONNREFUSED" }))).toBe(false);
+    expect(isNothingPublished(new Error("boom"))).toBe(false);
+    expect(isNothingPublished("ERR_UPDATER_CHANNEL_FILE_NOT_FOUND")).toBe(false);
   });
 
   test("download progress is a whole percentage between 0 and 100", () => {

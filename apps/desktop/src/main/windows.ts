@@ -7,6 +7,7 @@ import {
   clampAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type Rect, SPOTLIGHT_SIZE,
   spotlightBounds,
 } from "./layout.ts";
+import { onPageReset } from "./page-reset.ts";
 import type { Visibility } from "./turn-notifications.ts";
 
 const PRELOAD = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
@@ -30,6 +31,8 @@ export interface WindowManagerOptions {
   onMainVisibility(visible: boolean): void;
   /** Whether a window has the keyboard focus (in front of the person). */
   isFocused(window: BrowserWindow): boolean;
+  /** The main page lost its state (reloaded, crashed, closed): what it had set up must be undone. */
+  onMainReset(): void;
 }
 
 /** Only web links leave the app; anything else (file:, custom schemes) is refused. */
@@ -146,6 +149,9 @@ export class WindowManager {
         window.show();
       });
     }
+    onPageReset(window.webContents, () => {
+      this.#options.onMainReset();
+    });
     this.#load(window, "main");
     this.#main = window;
   }

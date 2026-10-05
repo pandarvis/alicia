@@ -36,7 +36,7 @@ const READY_TIMEOUT_CLOSE = 4000;
 const HEARTBEAT_TIMEOUT_MS = 75_000;
 const HEARTBEAT_TIMEOUT_CLOSE = 4001;
 
-/** Adapter from the standard WebSocket (renderer pages, and Electron's main process on Node 24) to SocketLike. */
+/** Adapter from the standard WebSocket (Node 24's, in Electron's main process: the BrainHub) to SocketLike. */
 export function openWebSocket(url: string): SocketLike {
   const ws = new WebSocket(url);
   const socket: SocketLike = {

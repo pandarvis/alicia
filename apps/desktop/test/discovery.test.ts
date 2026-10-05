@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test } from "vitest";
 import {
-  type BrainBrowser, BrainDiscovery, brainFromService, guardSocketErrors, staticBrowser,
+  type BrainBrowser, BrainDiscovery, brainFromService, guardSocketErrors, LastSeen, staticBrowser,
 } from "../src/main/discovery.ts";
 import type { DiscoveredBrain } from "../src/shared/discovery.ts";
 
@@ -68,8 +68,29 @@ describe("guardSocketErrors", () => {
   });
 });
 
+describe("LastSeen", () => {
+  test("names not heard from within the delay are expired, once", () => {
+    const seen = new LastSeen(30_000);
+    seen.seen("Alicia sur pi5", 0);
+    seen.seen("Alicia sur mac-mini", 10_000);
+    expect(seen.expire(30_000)).toEqual([]);
+    expect(seen.expire(30_001)).toEqual(["Alicia sur pi5"]);
+    expect(seen.expire(30_002)).toEqual([]);
+    seen.seen("Alicia sur mac-mini", 35_000);
+    expect(seen.expire(60_000)).toEqual([]);
+    expect(seen.expire(65_001)).toEqual(["Alicia sur mac-mini"]);
+  });
+
+  test("a name that said goodbye is forgotten", () => {
+    const seen = new LastSeen(30_000);
+    seen.seen("Alicia sur pi5", 0);
+    seen.forget("Alicia sur pi5");
+    expect(seen.expire(100_000)).toEqual([]);
+  });
+});
+
 describe("BrainDiscovery", () => {
-  test("lists the brains found by name, without duplicates, and forgets those gone", () => {
+  test("lists the brains found by name, without duplicates, and forgets those gone; an unchanged brain is no news", () => {
     const lists: string[][] = [];
     const network = controllableBrowser();
     const discovery = new BrainDiscovery(network.browser, (brains) => { lists.push(brains.map((brain) => brain.name)); });
@@ -80,7 +101,6 @@ describe("BrainDiscovery", () => {
     network.down("Alicia sur pi5");
     expect(lists).toEqual([
       ["Alicia sur pi5"],
-      ["Alicia sur mac-mini", "Alicia sur pi5"],
       ["Alicia sur mac-mini", "Alicia sur pi5"],
       ["Alicia sur mac-mini"],
     ]);
@@ -99,9 +119,10 @@ describe("BrainDiscovery", () => {
     expect(discovery.brains.map((brain) => brain.url)).toEqual(["http://192.168.1.31:8780", "http://192.168.1.20:8780"]);
   });
 
-  test("looking pauses while the window is hidden, and resumes with what was found", () => {
+  test("looking pauses while the window is hidden, and resumes from an empty list (what was found may be gone)", () => {
+    const lists: DiscoveredBrain[][] = [];
     const network = controllableBrowser();
-    const discovery = new BrainDiscovery(network.browser, () => undefined);
+    const discovery = new BrainDiscovery(network.browser, (brains) => { lists.push(brains); });
     discovery.setVisible(false);
     discovery.start();
     expect(network.counts()).toEqual([0, 0]);
@@ -113,7 +134,8 @@ describe("BrainDiscovery", () => {
     expect(discovery.brains).toEqual([PI]);
     discovery.setVisible(true);
     expect(network.counts()).toEqual([2, 1]);
-    expect(discovery.brains).toEqual([PI]);
+    expect(discovery.brains).toEqual([]);
+    expect(lists).toEqual([[PI], []]);
     discovery.stop();
     discovery.setVisible(false);
     discovery.setVisible(true);

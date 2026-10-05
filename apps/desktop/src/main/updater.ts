@@ -16,6 +16,14 @@ export function updateFeedUrl(serverUrl: string): string {
   return `${serverUrl}/updates/`;
 }
 
+/**
+ * Nothing published on the brain yet (no `latest.yml` under /updates/: a 404): the app is as new as it gets, which
+ * is not a failure.
+ */
+export function isNothingPublished(error: unknown): boolean {
+  return error instanceof Error && Reflect.get(error, "code") === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND";
+}
+
 /** A whole percentage between 0 and 100 (electron-updater reports a float, sometimes slightly off). */
 export function progressPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -45,7 +53,11 @@ export class UpdateController {
       // Signed out: what electron-updater still reports is not shown. A version it already downloaded still
       // installs when Alicia quits (autoInstallOnAppQuit): it came from the brain this PC was paired with.
       if (this.#status.state === "disabled") return;
-      if (status.state === "error") this.#installing = false;
+      if (status.state === "error" && this.#installing) {
+        // The installer did not start: the downloaded version is still there, ready to be tried again.
+        this.#installing = false;
+        if (this.#status.state === "ready") return;
+      }
       this.#set(status);
     });
   }
@@ -123,9 +135,13 @@ export function electronUpdateEngine(): UpdateEngine {
       autoUpdater.setFeedURL({ provider: "generic", url, useMultipleRangeRequest: false });
     },
     check: async () => {
-      const result = await autoUpdater.checkForUpdates();
-      // A failed download is reported by the "error" event; its promise must not be left unhandled.
-      result?.downloadPromise?.catch(() => undefined);
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        // A failed download is reported by the "error" event; its promise must not be left unhandled.
+        result?.downloadPromise?.catch(() => undefined);
+      } catch (error) {
+        if (!isNothingPublished(error)) throw error;
+      }
     },
     install: () => {
       autoUpdater.quitAndInstall();
@@ -146,8 +162,8 @@ export function electronUpdateEngine(): UpdateEngine {
       autoUpdater.on("update-downloaded", (event) => {
         listener({ state: "ready", version: event.version });
       });
-      autoUpdater.on("error", () => {
-        listener({ state: "error" });
+      autoUpdater.on("error", (error) => {
+        listener(isNothingPublished(error) ? { state: "up_to_date" } : { state: "error" });
       });
     },
   };

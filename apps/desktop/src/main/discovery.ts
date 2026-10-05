@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { isIPv4 } from "node:net";
-import { Bonjour, type Service } from "bonjour-service";
+import { Bonjour, type Browser, type Service } from "bonjour-service";
 import { z } from "zod";
 import { DiscoveredBrain } from "../shared/discovery.ts";
 
@@ -21,6 +21,38 @@ export function guardSocketErrors(bonjour: unknown, onError: (error: unknown) =>
 
 /** Brains started after the search began answer the next query. */
 const REQUERY_MS = 4000;
+/** bonjour-service reports a service once per browser: a fresh one every few queries hears every brain again. */
+const RENEW_EVERY = 3;
+/**
+ * A brain not heard from for this long has left the network. bonjour-service's own expiry cannot tell: it never
+ * refreshes a known service, and the brain's PTR record lives 8 hours.
+ */
+export const STALE_MS = 30_000;
+
+/** When each brain was last heard from, to drop those that went quiet without saying goodbye. */
+export class LastSeen {
+  readonly #staleMs: number;
+  readonly #seen = new Map<string, number>();
+
+  constructor(staleMs: number) {
+    this.#staleMs = staleMs;
+  }
+
+  seen(name: string, now: number): void {
+    this.#seen.set(name, now);
+  }
+
+  forget(name: string): void {
+    this.#seen.delete(name);
+  }
+
+  /** The names not heard from for longer than the delay; they are forgotten as they are returned. */
+  expire(now: number): string[] {
+    const gone = [...this.#seen].filter(([, at]) => now - at > this.#staleMs).map(([name]) => name);
+    for (const name of gone) this.#seen.delete(name);
+    return gone;
+  }
+}
 const Txt = z.object({ version: z.string().min(1).max(40) });
 
 /** The parts of an mDNS answer we read (bonjour-service's Service). */
@@ -71,24 +103,40 @@ export function bonjourBrowser(): BrainBrowser {
       };
       const bonjour = new Bonjour(undefined, unavailable);
       if (!guardSocketErrors(bonjour, unavailable)) console.error("mDNS: socket errors cannot be caught with this bonjour-service");
-      const browser = bonjour.find({ type: SERVICE_TYPE });
-      browser.on("up", (service: Service) => {
-        const brain = brainFromService(service);
-        if (brain !== null) onUp(brain);
-      });
-      browser.on("down", (service: Service) => {
-        onDown(service.name);
-      });
-      // Same brain, new address or port: the old entry goes, the new one comes.
-      browser.on("srv-update", (service: Service, previous: Service) => {
-        onDown(previous.name);
-        const brain = brainFromService(service);
-        if (brain !== null) onUp(brain);
-      });
+      const lastSeen = new LastSeen(STALE_MS);
+      const find = (): Browser => {
+        const browser = bonjour.find({ type: SERVICE_TYPE });
+        browser.on("up", (service: Service) => {
+          lastSeen.seen(service.name, Date.now());
+          const brain = brainFromService(service);
+          if (brain !== null) onUp(brain);
+        });
+        browser.on("down", (service: Service) => {
+          lastSeen.forget(service.name);
+          onDown(service.name);
+        });
+        // Same brain, new address or port: the old entry goes, the new one comes.
+        browser.on("srv-update", (service: Service, previous: Service) => {
+          lastSeen.forget(previous.name);
+          onDown(previous.name);
+          lastSeen.seen(service.name, Date.now());
+          const brain = brainFromService(service);
+          if (brain !== null) onUp(brain);
+        });
+        return browser;
+      };
+      let browser = find();
+      let queries = 0;
       const timer = setInterval(() => {
-        // Brains that stopped answering (their record's lifetime is over) leave the list.
-        browser.expire();
-        browser.update();
+        queries++;
+        if (queries % RENEW_EVERY === 0) {
+          browser.stop();
+          browser = find();
+        } else {
+          browser.update();
+        }
+        // Brains that went quiet (unplugged, asleep) leave the list.
+        for (const name of lastSeen.expire(Date.now())) onDown(name);
       }, REQUERY_MS);
       return () => {
         clearInterval(timer);
@@ -148,14 +196,25 @@ export class BrainDiscovery {
   setVisible(visible: boolean): void {
     this.#visible = visible;
     if (!this.#wanted) return;
-    if (visible) this.#run();
-    else this.#halt();
+    if (!visible) {
+      this.#halt();
+      return;
+    }
+    // What was found before the pause may be gone: the list starts again from what answers now.
+    if (this.#stop === null && this.#found.size > 0) {
+      this.#found.clear();
+      this.#onChange(this.brains);
+    }
+    this.#run();
   }
 
   #run(): void {
     if (this.#stop !== null) return;
     this.#stop = this.#browser.start(
       (brain) => {
+        // Heard again unchanged (every renewal of the mDNS browser): no news.
+        const same = this.#found.get(brain.url);
+        if (same?.name === brain.name && same.version === brain.version) return;
         for (const [url, known] of this.#found) {
           if (known.name === brain.name || url === brain.url) this.#found.delete(url);
         }

@@ -341,6 +341,18 @@ test("Réglages: shortcut, launch at startup and Holo are kept after a restart; 
   await second.page.getByTestId("pairing-code").waitFor();
 });
 
+test("Réglages: a page reloaded while a new shortcut is typed gives the current shortcut back", async () => {
+  const brain = await startBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-shortcut-change").click();
+  await page.getByTestId("settings-shortcut-capture").waitFor();
+  await expect.poll(async () => (await recorded(app)).shortcuts, POLL).toEqual([]);
+  await page.reload();
+  await expect.poll(async () => (await recorded(app)).shortcuts, POLL).toEqual(["Ctrl+Alt+A"]);
+});
+
 test("first launch: the brain found on the network fills the address", async () => {
   const brain = await startBrain();
   const found = JSON.stringify([{ name: "Alicia sur test", url: brain.url, version: "0.1.0" }]);
@@ -363,6 +375,10 @@ test("nothing found on the network: the manual address stays, with a hint for Ta
   // Nor change settings, nor sign the device out.
   await expect(bar.evaluate(() => window.alicia.settings.update({ showHolo: false }))).rejects.toThrow();
   await expect(bar.evaluate(() => window.alicia.clearSession())).rejects.toThrow();
+  // Nor pair it with another brain (pairing lives in the main window).
+  await expect(bar.evaluate(() => window.alicia.saveSession({
+    serverUrl: "http://127.0.0.1:9", token: "t".repeat(43), person: { id: "kevin", name: "Kévin" },
+  }))).rejects.toThrow();
 });
 
 test("a confirmation reaches only the window whose turn asked, and only that window can answer it, once", async () => {

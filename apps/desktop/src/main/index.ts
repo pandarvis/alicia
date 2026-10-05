@@ -113,6 +113,10 @@ function start(): void {
       discovery.setVisible(visible);
     },
     isFocused: (window) => os.isFocused(window),
+    // A page reloaded or crashed while Réglages captured a new shortcut can never resume it: done here.
+    onMainReset: () => {
+      settings.resumeShortcut();
+    },
   });
   const presence = new Presence({
     schedule,

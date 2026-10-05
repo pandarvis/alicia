@@ -51,8 +51,12 @@ export function registerIpc(deps: IpcDependencies): void {
     return deps.session.get();
   });
   handle(INVOKE.paired, NONE, () => deps.session.paired());
-  // An invalid session is answered with a reason, not an exception (the pairing screen explains it).
-  handle(INVOKE.saveSession, z.unknown(), (raw) => deps.session.save(raw));
+  // Pairing lives in the main window. An invalid session is answered with a reason, not an exception (the
+  // pairing screen explains it).
+  handle(INVOKE.saveSession, z.unknown(), (raw, sender) => {
+    mainOnly(sender);
+    return deps.session.save(raw);
+  });
   // Signing out and changing settings belong to the main window (Réglages).
   handle(INVOKE.clearSession, NONE, (_none, sender) => {
     mainOnly(sender);

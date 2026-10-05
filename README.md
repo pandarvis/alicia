@@ -121,9 +121,9 @@ pnpm --filter @alicia/desktop test       # tests unitaires
 pnpm --filter @alicia/desktop test:e2e   # bout en bout : construit l'app, lance un cerveau de test (FakeEngine)
 pnpm --filter @alicia/desktop mascot     # régénère les images de la mascotte depuis design/
 ```
-Premier lancement : saisir l'adresse du cerveau (par défaut `http://127.0.0.1:8780`, ou
-l'adresse HTTPS Tailscale) et un code obtenu avec `pnpm exec tsx src/cli.ts pair <personne>`
-(depuis `apps/brain`). La session (adresse + jeton d'appareil) est chiffrée par Windows
+Premier lancement : l'app cherche d'abord le cerveau sur le réseau local (voir « Sur le PC ») et
+remplit son adresse ; à défaut, la saisir (par défaut `http://127.0.0.1:8780`, ou l'adresse HTTPS
+Tailscale). Puis le code obtenu avec `pnpm exec tsx src/cli.ts pair <personne>` (depuis `apps/brain`). La session (adresse + jeton d'appareil) est chiffrée par Windows
 (DPAPI, via `safeStorage`) dans le profil de l'utilisateur ; « Déconnecter cet appareil » dans
 Réglages l'efface. Un appareil révoqué côté cerveau (`revoke <id>`) revient à l'écran d'appairage.
 
@@ -148,7 +148,8 @@ propres souvenirs, jamais ceux de l'autre.
 ### Sur le PC
 
 - **Une seule Alicia** : relancer l'app ramène la fenêtre existante. Fermer la fenêtre la range dans la
-  zone de notification (clic gauche : rouvrir ; clic droit : Holo, lancement au démarrage, quitter).
+  zone de notification (clic gauche : rouvrir ; clic droit : Ouvrir Alicia, Holo, lancement au démarrage,
+  « Redémarrer pour mettre à jour » quand une nouvelle version est prête, quitter).
 - **Notifications** : quand Alicia répond alors que sa fenêtre est cachée, réduite ou derrière une autre
   application (ou à une question posée par la barre Spotlight), la réponse arrive en notification Windows ;
   un clic ouvre la conversation.
@@ -166,7 +167,8 @@ propres souvenirs, jamais ceux de l'autre.
 - **Premier lancement** : l'app cherche le cerveau sur le réseau local (mDNS, service `_alicia._tcp`) ; sinon,
   saisir son adresse (Tailscale). Le cerveau s'annonce tout seul (« Alicia sur <machine> ») ;
   `discovery: false` dans sa config pour couper. Un port mDNS (5353) indisponible n'empêche ni le cerveau
-  ni l'app de tourner : l'annonce ou la recherche est simplement abandonnée (message dans le journal).
+  ni l'app de tourner : l'annonce ou la recherche est simplement abandonnée (message dans le journal). Un
+  cerveau qui ne répond plus depuis 30 s (éteint, débranché) quitte la liste.
 
 ### Installer et publier une version
 
@@ -182,7 +184,8 @@ pnpm --filter @alicia/desktop dist   # → apps/desktop/dist/Alicia-Setup-<versi
   `.blockmap` des versions précédentes : ils permettent de ne télécharger que ce qui change. Les apps installées
   vérifient au démarrage, toutes les six heures et dès que le cerveau répond à nouveau après un échec,
   téléchargent, et installent en quittant (ou tout de suite depuis Réglages / le menu). Une version déjà
-  téléchargée s'installe en quittant même si l'appareil a été déconnecté entre-temps.
+  téléchargée s'installe en quittant même si l'appareil a été déconnecté entre-temps. Tant que rien n'est
+  publié (pas de `latest.yml` dans `<dataDir>/updates/`), l'app se dit simplement à jour.
 - **Premier téléchargement** : `http://<cerveau>:8780/updates/Alicia-Setup-<version>.exe` dans un navigateur
   (la route `/updates/` est publique : un installateur ne contient aucun secret).
 
@@ -194,8 +197,9 @@ ne peut être vérifié que sur le vrai profil Windows, avec l'installateur `app
 1. **Installation** : pas de demande de droits admin ; SmartScreen (« Informations complémentaires » →
    « Exécuter quand même ») ; raccourcis Bureau et menu Démarrer ; l'exe et l'installateur portent l'icône
    d'Alicia.
-2. **Zone de notification** : l'icône est là ; clic gauche rouvre ; clic droit : Ouvrir, Afficher l'Holo,
-   Lancer au démarrage, Quitter (Quitter ferme vraiment l'app).
+2. **Zone de notification** : l'icône est là ; clic gauche rouvre ; clic droit : Ouvrir Alicia, Afficher
+   l'Holo, Lancer au démarrage, Quitter Alicia (ferme vraiment l'app) ; quand une mise à jour est téléchargée,
+   « Redémarrer pour mettre à jour » apparaît et installe la nouvelle version.
 3. **Premier lancement / mDNS** : le cerveau (redémarré, `discovery` actif) est trouvé et son adresse remplie ;
    le pare-feu Windows peut demander l'autorisation une fois ; l'adresse manuelle (Tailscale) marche aussi.
    Le cerveau journalise « Annoncée sur le réseau local : « Alicia sur <machine> ». ».
