@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   ClientMessage,
   ConversationSummary,
+  HistoryMessage,
   HttpErrorBody,
   MEMORY_KINDS,
   MemoryPatch,
@@ -224,5 +225,16 @@ describe("memory", () => {
   });
   test("an empty patch changes nothing and is refused", () => {
     expect(MemoryPatch.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("HistoryMessage", () => {
+  test("history messages carry their attachments", () => {
+    const base = { id: "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192", role: "user", text: "Regarde", createdAt: "2026-10-05T10:00:00.000Z" };
+    expect(HistoryMessage.safeParse(base).success).toBe(false);
+    expect(HistoryMessage.parse({ ...base, attachments: [] }).attachments).toEqual([]);
+    const file = { id: "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6", name: "facture.pdf", kind: "pdf", size: 3 };
+    expect(HistoryMessage.parse({ ...base, attachments: [file] }).attachments).toEqual([file]);
+    expect(HistoryMessage.safeParse({ ...base, attachments: [{ ...file, path: "C:/x.pdf", kind: "exe" }] }).success).toBe(false);
   });
 });

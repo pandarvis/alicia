@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AttachmentSummary } from "./attachments.ts";
 import { Person } from "./identity.ts";
 import { MemoryRefusalReason } from "./memory.ts";
 
@@ -26,6 +27,8 @@ export const HistoryMessage = z.object({
   role: z.enum(["user", "assistant"]),
   text: z.string(),
   createdAt: z.iso.datetime(),
+  /** The files sent with the message (none for Alicia's answers). */
+  attachments: z.array(AttachmentSummary),
 });
 export type HistoryMessage = z.infer<typeof HistoryMessage>;
 

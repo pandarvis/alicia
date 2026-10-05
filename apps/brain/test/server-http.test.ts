@@ -83,7 +83,8 @@ describe("HTTP server", () => {
       method: "GET", url: `/conversations/${c.id}/messages`, headers: { authorization: `Bearer ${token}` },
     });
     expect(res.json()).toEqual([
-      { id: expect.any(String) as string, role: "user", text: "Bonjour", createdAt: "2026-10-04T13:30:00.000Z" },
+      { id: expect.any(String) as string, role: "user", text: "Bonjour", createdAt: "2026-10-04T13:30:00.000Z",
+        attachments: [] },
     ]);
   });
 

@@ -21,7 +21,7 @@ function textOf(item: ChatItem): string {
 }
 
 function msg(id: string, text: string): HistoryMessage {
-  return { id, role: "user", text, createdAt: "2026-10-04T13:30:00.000Z" };
+  return { id, role: "user", text, createdAt: "2026-10-04T13:30:00.000Z", attachments: [] };
 }
 
 function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {}) {
@@ -188,8 +188,8 @@ describe("ChatStore", () => {
 
   test("open loads the history; startNew clears it", async () => {
     const { store } = setup([
-      { id: "a", role: "user", text: "Salut", createdAt: "2026-10-04T13:30:00.000Z" },
-      { id: "b", role: "assistant", text: "Coucou !", createdAt: "2026-10-04T13:30:01.000Z" },
+      { id: "a", role: "user", text: "Salut", createdAt: "2026-10-04T13:30:00.000Z", attachments: [] },
+      { id: "b", role: "assistant", text: "Coucou !", createdAt: "2026-10-04T13:30:01.000Z", attachments: [] },
     ]);
     await store.open(CONV);
     expect(store.activeId).toBe(CONV);
@@ -565,7 +565,7 @@ describe("confirmations", () => {
     store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "refused" });
     expect(store.messages.at(-1)).toMatchObject({ status: "refused" });
     // Its turn ends: the history is reloaded with the answer; the card stays after its question.
-    history.push({ id: "m2", role: "assistant", text: "Je le garde.", createdAt: "2026-10-04T13:31:00.000Z" });
+    history.push({ id: "m2", role: "assistant", text: "Je le garde.", createdAt: "2026-10-04T13:31:00.000Z", attachments: [] });
     store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 });
     await vi.waitFor(() => { expect(store.messages.map((m) => m.role)).toEqual(["user", "confirmation", "assistant"]); });
     expect(store.messages[1]).toMatchObject({ status: "refused" });
@@ -594,9 +594,9 @@ describe("confirmations", () => {
     store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
     store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 });
     history.push(
-      { id: "m2", role: "assistant", text: "Je le garde.", createdAt: "2026-10-04T13:31:00.000Z" },
-      { id: "m3", role: "user", text: "Et la recette ?", createdAt: "2026-10-04T13:32:00.000Z" },
-      { id: "m4", role: "assistant", text: "La voici.", createdAt: "2026-10-04T13:33:00.000Z" },
+      { id: "m2", role: "assistant", text: "Je le garde.", createdAt: "2026-10-04T13:31:00.000Z", attachments: [] },
+      { id: "m3", role: "user", text: "Et la recette ?", createdAt: "2026-10-04T13:32:00.000Z", attachments: [] },
+      { id: "m4", role: "assistant", text: "La voici.", createdAt: "2026-10-04T13:33:00.000Z", attachments: [] },
     );
     await store.resync();
     expect(store.messages.map((m) => textOf(m))).toEqual([

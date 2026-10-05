@@ -8,9 +8,11 @@ import {
   type Person,
 } from "@alicia/protocol";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import { toSummary } from "../attachments/store.ts";
 import type { ChatDependencies } from "../conversations/chat-service.ts";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { PairingService } from "../identity/pairing.ts";
+import { attachmentRoutes } from "./attachment-routes.ts";
 import type { DrainOptions } from "./backpressure.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
 import { addressKey, FailureLimiter } from "./failure-limiter.ts";
@@ -201,9 +203,13 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     if (deps.repository.get(request.params.id, person.id) === undefined) {
       return sendError(reply, 404, "not_found");
     }
+    const byMessage = deps.chat.attachments.byMessage(request.params.id);
     const list: HistoryMessage[] = deps.repository
       .messages(request.params.id)
-      .map((m) => ({ id: m.id, role: m.role, text: m.text, createdAt: iso(m.createdAt) }));
+      .map((m) => ({
+        id: m.id, role: m.role, text: m.text, createdAt: iso(m.createdAt),
+        attachments: (byMessage.get(m.id) ?? []).map(toSummary),
+      }));
     return list;
   });
 
@@ -218,6 +224,8 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     if (!locks.acquire(person.id, id)) return sendError(reply, 409, "busy");
     try {
       deps.repository.delete(id, person.id);
+      // Its attachment rows went with it: their files go too.
+      deps.chat.attachments.removeConversationFiles(id);
     } finally {
       locks.release(person.id, id);
     }
@@ -225,6 +233,7 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
   });
 
   registerMemoryRoutes(app, { memory: deps.chat.memory, repository: deps.repository, personOf });
+  await app.register(attachmentRoutes({ attachments: deps.chat.attachments, personOf }));
 
   app.route({
     method: "GET",

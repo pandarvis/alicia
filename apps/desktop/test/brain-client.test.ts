@@ -133,10 +133,14 @@ describe("BrainApi", () => {
   });
   test("history of a conversation", async () => {
     const { calls, fetchFn } = fakeFetch(200, [
-      { id: CONVERSATION_ID, role: "user", text: "Salut", createdAt: "2026-10-04T13:30:00.000Z" },
+      {
+        id: CONVERSATION_ID, role: "user", text: "Salut", createdAt: "2026-10-04T13:30:00.000Z",
+        attachments: [{ id: CONVERSATION_ID, name: "facture.pdf", kind: "pdf", size: 3 }],
+      },
     ]);
     const history = await new BrainApi(fetchFn, session).history(CONVERSATION_ID);
     expect(history[0]?.text).toBe("Salut");
+    expect(history[0]?.attachments.map((a) => a.name)).toEqual(["facture.pdf"]);
     expect(calls[0]?.url).toBe(`http://127.0.0.1:8780/conversations/${CONVERSATION_ID}/messages`);
   });
   test("401 → UnauthorizedError (revoked device)", async () => {
