@@ -6039,6 +6039,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `README.md` (CRLF)
 
+> **Alignement (mise en œuvre) :** la section est un `###` « Comptes Google (agenda, Gmail) » sous « App de bureau », juste après « Écran « Souvenirs » » (un `##` à cet endroit aurait rangé « Sur le PC » sous Google). Elle dit aussi le démarrage sans Google (« Comptes Google désactivés : <raison> »), l'« Annuler », la pastille et la carte du chat, la vérification de l'appareil avant le corps. Les étapes de la tâche 22 sont recopiées dans le README (« Vérification réelle » → « Comptes Google (manuel, par Kévin…) ») pour que Kévin les ait sous la main ; le README mentionne aussi le bouton « Détacher Alicia » et les fenêtres de test invisibles. `git grep` ne trouve les motifs d'envoi que dans des tests qui vérifient qu'ils sont refusés (`fake-google.test.ts`, `google-client.test.ts`, `protocol.test.ts`) ; aucune source.
+
 - [ ] **Step 1: README**
 
 Ajouter une section après « Écran « Souvenirs » » (conserver les CRLF) :

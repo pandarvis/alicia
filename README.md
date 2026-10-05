@@ -301,6 +301,43 @@ moteur ; ceci vérifie que le vrai SDK se comporte comme prévu.
 Pour finir : arrêter le cerveau de test et l'app de développement, supprimer `apps/brain/data-copie/`,
 `apps/brain/alicia.test.yaml` et le profil `%TEMP%\alicia-essai`, puis relancer l'Alicia installée.
 
+### Comptes Google (manuel, par Kévin ; consomme un peu de quota)
+
+À faire une fois, à la main : ces étapes touchent la console Google, `apps/brain/.env` et
+`apps/brain/alicia.config.yaml`.
+
+1. **Console Google Cloud** (https://console.cloud.google.com, projet de la famille ou un nouveau) :
+   - « API et services » → activer **Gmail API** et **Google Calendar API**.
+   - « Écran de consentement OAuth » (Google Auth Platform) : type **Externe** ; dans « Accès aux données »,
+     ajouter les scopes `…/auth/calendar.events`, `…/auth/calendar.calendarlist.readonly`,
+     `…/auth/gmail.readonly`, `…/auth/gmail.compose`.
+   - **Statut de publication : « En production »**. En « Test », Google fait expirer les jetons au bout de
+     **7 jours**. En production sans validation, Google affiche « Google n'a pas validé cette application » :
+     « Paramètres avancés » → « Accéder à Alicia » (normal pour un usage familial).
+   - « Identifiants » → « Créer des identifiants » → « ID client OAuth » → type **« Application de bureau »**,
+     nom « Alicia ». **Ne pas réutiliser le client de l'ancienne Alice** (retirer un compte dans Alicia révoque
+     l'accès du client). Télécharger le JSON.
+2. **Sur la machine du cerveau** (PC de test, puis Pi / Mac mini) :
+   - copier le JSON en `apps/brain/secrets/google_client_secret.json` (dossier ignoré par git) ;
+   - dans `apps/brain/alicia.config.yaml` : `google: { clientSecretFile: "./secrets/google_client_secret.json" }` ;
+   - générer la clé (commande plus haut, « Comptes Google »), l'ajouter **sur une ligne** dans `apps/brain/.env` :
+     `ALICIA_SECRET_KEY=<clé>`, et la ranger dans le gestionnaire de mots de passe ;
+   - redémarrer le cerveau → attendu : « Comptes Google : activés. » (sinon le message dit pourquoi).
+3. **Dans l'app, sur le PC de Kévin** : « Comptes » → « Ajouter un compte Famille » → se connecter au compte
+   Google de la famille dans le navigateur, **tout cocher**, valider → page « C'est fait ! » → le compte apparaît
+   « Connecté ». Puis « Ajouter mon compte » avec le compte perso de Kévin.
+4. **Sur le PC d'Élodie** : « Comptes » → « Ajouter mon compte » avec son compte perso ; vérifier qu'elle voit
+   le compte Famille mais **pas** celui de Kévin.
+5. **Essai réel** : « On a quoi samedi ? » ; « Ajoute piscine samedi à 14 h dans l'agenda Famille » (dans Google
+   Agenda : aucun invité) ; « Trie mes mails » ; « Prépare une réponse au mail de … » → le brouillon est dans
+   Gmail › Brouillons, **rien** dans Envoyés ; « Supprime l'événement piscine » → carte de confirmation, **Non**
+   puis **Oui**.
+6. **En cas de souci** : `redirect_uri_mismatch` → le client n'est pas de type « Application de bureau » ;
+   « accès bloqué » → scope ou API manquants dans la console ; compte « À reconnecter » au bout d'une semaine →
+   l'écran de consentement est resté « En test » : « Google Auth Platform » → « Audience » → **« Publier
+   l'application »**, puis reconnecter les comptes une dernière fois (carte « Reconnecter le compte » ou écran
+   Comptes).
+
 ## App de bureau (Windows)
 
 ```bash
@@ -333,6 +370,34 @@ propres souvenirs, jamais ceux de l'autre.
   Définitif (messages compris) ; les souvenirs qui en viennent sont conservés. Impossible pendant
   qu'Alicia y répond.
 
+### Comptes Google (agenda, Gmail)
+
+Alicia lit les agendas et les mails d'un compte **Famille** (commun) et des comptes **perso** de chacun,
+crée des événements (jamais d'invités), en modifie ou supprime après confirmation dans l'app, et
+prépare des **brouillons** : elle **n'envoie jamais** de mail (aucun outil ne le permet). Kévin et
+Élodie accèdent au compte Famille et chacun aux siens, jamais à ceux de l'autre.
+
+- **Secrets** (hors dépôt) : `google.clientSecretFile` dans `alicia.config.yaml` (client OAuth
+  « Application de bureau » dédié à Alicia ; le fichier va dans `apps/brain/secrets/`, ignoré par git) et
+  `ALICIA_SECRET_KEY` dans `.env` (32 octets en base64, chiffre les jetons en base ; à garder dans un
+  gestionnaire de mots de passe : la perdre oblige à reconnecter tous les comptes). Générer la clé :
+  `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`.
+  Au démarrage, le cerveau écrit « Comptes Google : activés. » ; une clé absente ou invalide, ou un fichier
+  de secret client absent ou illisible, ne l'empêchent pas de démarrer : il écrit « Comptes Google
+  désactivés : <raison> » et tourne sans Google.
+- **Écran « Comptes »** de l'app : « Ajouter un compte Famille » / « Ajouter mon compte » ouvre le
+  navigateur sur Google (« Annuler » arrête l'attente) ; « Reconnecter » quand Google n'accepte plus l'accès
+  (une pastille ambre le signale dans le menu) ; « Retirer » révoque l'accès d'Alicia. Quand un compte doit
+  être reconnecté pendant une conversation, une carte « Reconnecter le compte » apparaît dans le chat : un
+  clic ouvre Comptes et relance la connexion.
+- **API** (jeton d'appareil, vérifié avant de lire le corps) : `GET /google/oauth-client`,
+  `GET /google/accounts`, `POST /google/accounts` (code + vérificateur PKCE + URI de boucle locale),
+  `DELETE /google/accounts/:id`. `503 google_unavailable` quand Google n'est pas configuré.
+- **Skills** : `preparer-la-semaine` (agendas + météo → récap, conflits, oublis) et `tri-des-mails`
+  (résumé, urgent, brouillons proposés).
+- Les tests automatiques n'appellent jamais Google (`FakeGoogle`) et n'ouvrent jamais de navigateur
+  (l'enregistreur note l'adresse de la page de consentement).
+
 ### Sur le PC
 
 - **Une seule Alicia** : relancer l'app ramène la fenêtre existante. Fermer la fenêtre la range dans la
@@ -343,7 +408,8 @@ propres souvenirs, jamais ceux de l'autre.
   un clic ouvre la conversation.
 - **L'Holo** : Alicia flotte sur le bureau, toujours au-dessus, et reflète ce qu'elle fait. Elle se déplace à
   la souris (sa place est retenue, d'un écran à l'autre) ; un clic ouvre une petite discussion, Échap la
-  referme. L'Holo replié ne prend jamais le focus : il se pilote **à la souris seulement** ; le clavier
+  referme. Le bouton « Détacher Alicia » / « Rattacher Alicia » de la barre de titre l'affiche ou le range
+  (même réglage que le menu de la zone de notification et Réglages). L'Holo replié ne prend jamais le focus : il se pilote **à la souris seulement** ; le clavier
   fonctionne une fois la discussion ouverte.
 - **Spotlight** : `Ctrl+Alt+A` (modifiable dans Réglages) ouvre une barre au centre de l'écran ; Entrée envoie.
 - **Réglages** : raccourci, lancement au démarrage, Holo, informations de l'appareil, mises à jour,
@@ -379,8 +445,10 @@ pnpm --filter @alicia/desktop dist   # → apps/desktop/dist/Alicia-Setup-<versi
 
 ### Vérifications manuelles (sur le vrai PC, pas automatisables)
 
-Les tests automatiques remplacent le système par un enregistreur (`ALICIA_OS_INTEGRATION=off`) : ce qui suit
-ne peut être vérifié que sur le vrai profil Windows, avec l'installateur `apps/desktop/dist/Alicia-Setup-<version>.exe`.
+Les tests automatiques remplacent le système par un enregistreur (`ALICIA_OS_INTEGRATION=off`) ; leurs fenêtres
+sont transparentes, laissent passer la souris, ne prennent jamais le focus et restent hors de la barre des tâches
+(on peut se servir du PC pendant qu'ils tournent). Ce qui suit ne peut être vérifié que sur le vrai profil
+Windows, avec l'installateur `apps/desktop/dist/Alicia-Setup-<version>.exe`.
 
 1. **Installation** : pas de demande de droits admin ; SmartScreen (« Informations complémentaires » →
    « Exécuter quand même ») ; raccourcis Bureau et menu Démarrer ; l'exe et l'installateur portent l'icône
@@ -392,9 +460,10 @@ ne peut être vérifié que sur le vrai profil Windows, avec l'installateur `app
    le pare-feu Windows peut demander l'autorisation une fois ; l'adresse manuelle (Tailscale) marche aussi.
    Le cerveau journalise « Annoncée sur le réseau local : « Alicia sur <machine> ». ».
 4. **Holo** : apparaît en bas à droite ; la mascotte ne saute pas quand la discussion s'ouvre ou se ferme ;
-   déplacement à la souris, y compris **entre deux écrans d'échelles différentes** (125 % / 100 %) ; la place
+   déplacement à la souris, y compris **entre deux écrans d'échelles différentes** (125 % ou 150 % / 100 %),
+   sans que l'Holo grossisse d'un pixel contre un bord ; la place
    est retenue ; **brancher / débrancher un écran** pendant qu'il est affiché le ramène sur un écran existant ;
-   le masquer et le réafficher depuis le menu.
+   le masquer et le réafficher depuis le menu et depuis le bouton « Détacher Alicia » de la barre de titre.
 5. **Spotlight** : `Ctrl+Alt+A` depuis une autre application ouvre la barre au-dessus de tout ; Entrée ; la
    notification arrive au nom d'« Alicia » ; son clic ouvre la conversation.
 6. **Notifications** : fermer la fenêtre pendant une réponse → notification ; relancer l'app depuis le menu
