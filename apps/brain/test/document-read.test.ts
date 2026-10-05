@@ -5,7 +5,7 @@ import { ConversationRepository } from "../src/conversations/repository.ts";
 import { callTool } from "../src/engine/fake-engine.ts";
 import { ToolCatalog } from "../src/tools/catalog.ts";
 import { decodeText, DOCUMENT_TEXT_MAX, documentTools } from "../src/tools/document-read.ts";
-import { compoundFile, docx, docxParts, withDeclaredSize, xlsx } from "./documents.ts";
+import { compoundFile, docx, docxParts, partsBytes, rawZip, withDeclaredSize, withLocalSize, xlsx } from "./documents.ts";
 import { createTempDir, createTestClock, createTestDb, createTestTurn, ELODIE, KEVIN, PDF_BYTES, testRequest } from "./helpers.ts";
 
 function setup() {
@@ -66,7 +66,7 @@ describe("document_read", () => {
 
   test("text: UTF-8, UTF-16 with its byte order mark, and Windows-1252 (CSV saved by a French Excel)", async () => {
     expect(decodeText(Uint8Array.from([0x44, 0xe9, 0x70, 0x65, 0x6e, 0x73, 0x65, 0x3b, 0x31, 0x32]))).toBe("Dépense;12");
-    expect(decodeText(new TextEncoder().encode("﻿Café;3"))).toBe("Café;3");
+    expect(decodeText(new TextEncoder().encode("\uFEFFCafé;3"))).toBe("Café;3");
     expect(decodeText(Uint8Array.from([0xff, 0xfe, 0x43, 0x00, 0x61, 0x00, 0x66, 0x00, 0xe9, 0x00]))).toBe("Café");
     expect(decodeText(Uint8Array.from([0xfe, 0xff, 0x00, 0x43, 0x00, 0x61, 0x00, 0x66, 0x00, 0xe9]))).toBe("Café");
     expect(decodeText(Uint8Array.from([0x80, 0x20, 0x31, 0x32]))).toBe("€ 12");
@@ -104,6 +104,18 @@ describe("document_read", () => {
       const parts = { ...docxParts(["x"]), "word/media/zeros.bin": new Uint8Array(4 * 1024 * 1024) };
       const id = await attach("zeros.docx", zipSync(parts, { level: 9 }));
       expect(await callTool(request, "document_read", { attachment: id })).toEqual(TOO_BIG);
+    });
+
+    test("an archive another reader would read differently (second end record, lying local header)", async () => {
+      const { attach, request } = setup();
+      const parts = partsBytes(docxParts(["x"]));
+      const end = Uint8Array.from([0x50, 0x4b, 0x05, 0x06, ...Array<number>(18).fill(0)]);
+      for (const [name, bytes] of [
+        ["commentaire.docx", rawZip(parts, { comment: end })],
+        ["menteur-local.docx", withLocalSize(docx(["x"]), "word/document.xml", 50 * 1024 * 1024)],
+      ] as const) {
+        expect(await callTool(request, "document_read", { attachment: await attach(name, bytes) }), name).toEqual(UNREADABLE);
+      }
     });
 
     test("too many entries", async () => {

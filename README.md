@@ -83,9 +83,11 @@ mémoire… », « Alicia retient ça… »).
   ```
 - **Documents** : `document_read` lit le texte d'une pièce jointe Word (.docx), Excel (.xlsx, chaque feuille en CSV)
   ou texte (.txt, .csv en UTF-8, UTF-16 ou Windows-1252). Avant d'ouvrir un .docx / .xlsx, le cerveau inspecte
-  l'archive : 100 Mo décompressés au plus, 5 000 entrées, pas de taux de compression aberrant (« bombe zip ») ; le
-  type vient du contenu, pas de l'extension. Un document protégé par mot de passe est signalé comme tel. Le texte
-  est coupé à 60 000 caractères.
+  l'archive (une seule lecture possible, 50 Mo décompressés au plus, 5 000 entrées, pas de taux de compression
+  aberrant : pas de « bombe zip ») puis la reconstruit ; seule la copie reconstruite est lue, dans un fil d'exécution
+  à part (512 Mo de mémoire, 30 s au plus) : un document trop lourd est refusé sans gêner le cerveau. Le type vient
+  du contenu, pas de l'extension. Un document protégé par mot de passe est signalé comme tel. Le texte est coupé à
+  60 000 caractères.
 - **Outils natifs du SDK**, et eux seuls : `WebSearch`, `WebFetch`, `Read` (images et PDF joints à la conversation,
   et les fichiers des skills — rien d'autre : ni le reste du disque, ni une autre conversation) et `Skill`. Pas de
   terminal, pas d'écriture de fichiers, pas d'agents.
@@ -103,7 +105,8 @@ Une carte **Oui / Non** s'affiche dans la conversation, sur l'appareil qui a env
   lui-même : adresses locales et privées, Tailscale compris, `.local`, `.lan`, nom sans point…). Une adresse qui
   contient un identifiant ou un mot de passe est refusée d'office.
 - **Une fois qu'un contenu extérieur est entré dans la conversation** (page web, résultats de recherche,
-  document, pièce jointe, plus tard un mail) : chercher sur le web (la carte montre la requête) ; ouvrir une page
+  document, pièce jointe, plus tard un mail) : chercher sur le web (la carte montre la requête entière ; une requête
+  trop longue ou contenant des caractères invisibles est refusée) ; ouvrir une page
   dont l'adresse ne vient ni du message de la personne ni d'une recherche du même tour (la carte montre le site
   sur sa propre ligne, puis l'adresse complète) ; retenir ou modifier un souvenir (la carte montre le texte exact).
 

@@ -9,6 +9,8 @@ export interface ToolScope {
   conversationId: string;
   /** Read when a tool runs (it changes during the turn): outside content entered the turn or the conversation. */
   readonly untrusted: boolean;
+  /** Aborts when the turn ends: a tool waiting on the network stops with it. */
+  readonly signal: AbortSignal;
 }
 
 /** A family of tools (memory, weather, documents, later Google), built for each turn and bound to its scope. */
@@ -36,8 +38,8 @@ export class ToolCatalog {
   }
 
   /** At startup: two providers giving the same tool name are a programming error, found before any turn. */
-  checkNames(scope: Omit<ToolScope, "untrusted">): void {
-    this.#build({ ...scope, untrusted: false });
+  checkNames(scope: Pick<ToolScope, "person" | "conversationId">): void {
+    this.#build({ ...scope, untrusted: false, signal: new AbortController().signal });
   }
 
   #build(scope: ToolScope): ToolDefinition[] {

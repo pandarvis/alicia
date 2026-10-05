@@ -12,6 +12,16 @@ export const NOT_READABLE = "Lecture refusée : seuls les fichiers joints à cet
 export const BAD_URL = "Adresse refusée : seules les pages web (http ou https) peuvent être ouvertes.";
 export const BAD_CREDENTIALS = "Adresse refusée : elle contient un identifiant ou un mot de passe.";
 export const BAD_SEARCH = "Recherche refusée : la requête est vide.";
+export const HIDDEN_SEARCH =
+  "Recherche refusée : la requête contient des caractères invisibles. Réécris-la en clair, puis réessaie si besoin.";
+export const LONG_SEARCH =
+  "Recherche non faite : la requête est trop longue pour être montrée en entier à la personne. Raccourcis-la, puis réessaie.";
+/** The protocol caps a card's question at 500 characters. */
+const CARD_MAX = 500;
+/** Invisible format characters (zero-width, direction marks…): they could carry data the person cannot see. */
+const FORMAT_CHARACTERS = /\p{Cf}/u;
+/** Line breaks (and the spaces around them): the card shows the query on one line. */
+const LINE_BREAKS = /\s*[\r\n\u0085\p{Zl}\p{Zp}]+\s*/gu;
 
 const OUTSIDE_CONTENT = "Alicia vient de lire un contenu extérieur qui pourrait l'y pousser.";
 
@@ -116,9 +126,12 @@ async function checkSearch(turn: TurnContext, input: unknown, signal: AbortSigna
   const parsed = SearchInput.safeParse(input);
   if (!parsed.success) return deny(BAD_SEARCH);
   if (turn.untrusted) {
-    const refused = await ask(
-      turn, "WebSearch", `Chercher sur le web : “${parsed.data.query}” ? ${OUTSIDE_CONTENT}`, signal, SEARCH_REFUSALS,
-    );
+    // What the person approves must be what leaves: nothing hidden, nothing cut.
+    const query = parsed.data.query;
+    if (FORMAT_CHARACTERS.test(query)) return deny(HIDDEN_SEARCH);
+    const summary = `Chercher sur le web : “${query.replace(LINE_BREAKS, " ")}” ? ${OUTSIDE_CONTENT}`;
+    if (summary.length > CARD_MAX) return deny(LONG_SEARCH);
+    const refused = await ask(turn, "WebSearch", summary, signal, SEARCH_REFUSALS);
     if (refused !== undefined) return refused;
   }
   turn.markUntrusted();
@@ -154,8 +167,9 @@ export function createNativeGuard(turn: TurnContext): NativeToolGuard {
     after(tool, input, response) {
       switch (tool) {
         case "WebSearch":
-          turn.markUntrusted();
+          // The addresses first: what the turn may open never depends on the mark being written.
           turn.addSearchUrls(searchUrls(response));
+          turn.markUntrusted();
           return UNTRUSTED_REMINDER;
         case "WebFetch":
           return UNTRUSTED_REMINDER;

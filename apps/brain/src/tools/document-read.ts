@@ -1,17 +1,13 @@
 import { readFile } from "node:fs/promises";
-import mammoth from "mammoth";
-import { read, utils } from "xlsx";
 import { z } from "zod";
-import { checkOffice } from "../attachments/office.ts";
 import type { AttachmentStore } from "../attachments/store.ts";
 import { defineTool, type ToolResult } from "../engine/tools.ts";
 import type { ToolProvider } from "./catalog.ts";
+import { officeTextIsolated } from "./office-isolated.ts";
 import { frameUntrusted } from "./untrusted.ts";
 
 /** What Alicia gets of a document at most (about 15,000 tokens). */
 export const DOCUMENT_TEXT_MAX = 60_000;
-/** Rows read per sheet: a family spreadsheet is far smaller; a huge one is cut. */
-const SHEET_ROWS_MAX = 5_000;
 
 const NOT_FOUND: ToolResult = { text: "Pièce jointe introuvable dans cette conversation.", isError: true };
 const USE_READ: ToolResult = {
@@ -23,6 +19,10 @@ const UNREADABLE: ToolResult = {
 const PROTECTED: ToolResult = { text: "Document protégé par mot de passe : impossible de le lire.", isError: true };
 const TOO_BIG: ToolResult = {
   text: "Document refusé : une fois décompressé, il serait anormalement gros (archive piégée ?). Dis-le et propose d'en joindre une autre version.",
+  isError: true,
+};
+const TOO_SLOW: ToolResult = {
+  text: "Document refusé : il est trop lourd à lire (trop long ou trop gros). Dis-le et propose d'en joindre une version plus légère.",
   isError: true,
 };
 const EMPTY = "Le document ne contient aucun texte lisible.";
@@ -53,18 +53,6 @@ function decodeWindows1252(bytes: Uint8Array): string {
     .replace(/[\u0080-\u009f]/gu, (c) => String.fromCharCode(WINDOWS_1252_HIGH[c.charCodeAt(0) - 0x80] || 0xff_fd));
 }
 
-function workbookText(bytes: Buffer): string {
-  // No formulas, styles, HTML or macros: only the displayed values.
-  const workbook = read(bytes, {
-    type: "buffer", dense: true, sheetRows: SHEET_ROWS_MAX, cellFormula: false, cellHTML: false, cellStyles: false, bookVBA: false,
-  });
-  return workbook.SheetNames.map((name) => {
-    const sheet = workbook.Sheets[name];
-    const csv = sheet === undefined ? "" : utils.sheet_to_csv(sheet, { blankrows: false, strip: true });
-    return `## Feuille « ${name} »\n${csv.trim()}`;
-  }).join("\n\n");
-}
-
 /** At most DOCUMENT_TEXT_MAX characters (never half an emoji), and how many were left out. */
 function clip(text: string): { kept: string; omitted: number } {
   if (text.length <= DOCUMENT_TEXT_MAX) return { kept: text, omitted: 0 };
@@ -76,13 +64,14 @@ function clip(text: string): { kept: string; omitted: number } {
 /** The text of a Word, Excel or text attachment, or why there is none. */
 async function readDocument(kind: "word" | "excel" | "text", bytes: Buffer): Promise<string | ToolResult> {
   if (kind === "text") return decodeText(bytes);
-  // Decided by the archive itself, checked before any parser opens it (zip bombs, password, disguised formats).
-  const office = await checkOffice(bytes);
+  // In a worker thread with its own memory and a deadline; the archive is checked and rebuilt before any parser
+  // opens it (zip bombs, password, disguised formats).
+  const office = await officeTextIsolated(bytes);
   switch (office.status) {
-    case "word":
-      return (await mammoth.extractRawText({ buffer: bytes })).value;
-    case "excel":
-      return workbookText(bytes);
+    case "text":
+      return office.text;
+    case "too_slow":
+      return TOO_SLOW;
     case "protected":
       return PROTECTED;
     case "too_big":

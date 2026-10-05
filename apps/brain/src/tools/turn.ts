@@ -44,6 +44,8 @@ export class TurnContext {
   readonly #confirm: TurnParams["confirm"];
   readonly #onUntrusted: (() => void) | undefined;
   #untrusted: boolean;
+  /** The conversation already carries the mark (it started untrusted, or this turn wrote it). */
+  #persisted: boolean;
 
   constructor(params: TurnParams) {
     this.person = params.person;
@@ -52,6 +54,7 @@ export class TurnContext {
     this.skillsDir = params.skillsDir;
     this.userUrls = userUrls(params.userText);
     this.#untrusted = params.untrusted ?? false;
+    this.#persisted = this.#untrusted;
     this.#onUntrusted = params.onUntrusted;
     this.#signal = params.signal;
     this.#confirm = params.confirm;
@@ -62,15 +65,34 @@ export class TurnContext {
     return this.#untrusted;
   }
 
+  /** Aborts when the turn ends, whatever the reason. */
+  get signal(): AbortSignal {
+    return this.#signal;
+  }
+
   /** True once the turn is over: a question asked or answered from now on is cancelled. */
   get ended(): boolean {
     return this.#signal.aborted;
   }
 
+  /** Outside content entered the turn: kept here at once, passed on to the conversation (see persistUntrusted). */
   markUntrusted(): void {
-    if (this.#untrusted) return;
     this.#untrusted = true;
-    this.#onUntrusted?.();
+    this.persistUntrusted();
+  }
+
+  /**
+   * Passes the mark on to the conversation, once. A failed write (locked database…) never drops the mark of this
+   * turn: it is logged, and tried again at the next mark and when the turn ends.
+   */
+  persistUntrusted(): void {
+    if (!this.#untrusted || this.#persisted || this.#onUntrusted === undefined) return;
+    try {
+      this.#onUntrusted();
+      this.#persisted = true;
+    } catch (error) {
+      console.error(`Conversation ${this.conversationId}: the outside-content mark could not be saved:`, error);
+    }
   }
 
   /** Addresses a web search of this turn returned (comparable form): they may be opened without asking. */

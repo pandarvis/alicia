@@ -31,7 +31,7 @@ const Forecast = z.object({
     precipitation: z.number(),
   }),
   daily: z.object({
-    time: z.array(z.string()),
+    time: z.array(z.iso.date()),
     weather_code: z.array(z.number().int()),
     temperature_2m_max: z.array(z.number()),
     temperature_2m_min: z.array(z.number()),
@@ -57,10 +57,13 @@ const DAY = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", 
 const dayLabel = (day: string): string => DAY.format(new Date(`${day}T12:00:00Z`));
 const MILLIMETRES = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
 
+/** Two decimals (about a kilometre): enough for the weather, no more about where the family lives. */
+const coarse = (degrees: number): string => String(Math.round(degrees * 100) / 100);
+
 export function forecastUrl(home: Home, timezone: string, days: number): string {
   const params = new URLSearchParams({
-    latitude: String(home.latitude),
-    longitude: String(home.longitude),
+    latitude: coarse(home.latitude),
+    longitude: coarse(home.longitude),
     current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation",
     daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
     timezone,
@@ -88,9 +91,9 @@ export function formatForecast(forecast: Forecast): string {
   return lines.join("\n");
 }
 
-/** The weather at home (Open-Meteo: no key; nothing about the family leaves the house but the coordinates). */
+/** The weather at home (Open-Meteo: no key; nothing about the family leaves the house but rounded coordinates). */
 export function weatherTools(options: WeatherOptions): ToolProvider {
-  return () => [
+  return ({ signal }) => [
     defineTool({
       name: "weather",
       label: "Alicia regarde la météo…",
@@ -101,7 +104,8 @@ export function weatherTools(options: WeatherOptions): ToolProvider {
         let body: unknown;
         try {
           const response = await options.fetch(forecastUrl(options.home, options.timezone, days ?? DEFAULT_DAYS), {
-            signal: AbortSignal.timeout(TIMEOUT_MS),
+            // Given up after 10 s, or as soon as the turn ends.
+            signal: AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), signal]),
           });
           if (!response.ok) return UNAVAILABLE;
           body = await response.json();

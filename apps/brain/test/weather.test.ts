@@ -15,16 +15,16 @@ const SAMPLE = {
   },
 };
 
-function setup(answer: () => Promise<Response>) {
+function setup(answer: () => Promise<Response>, home = { latitude: 48.85, longitude: 2.35 }) {
   const calls: { url: string; init: RequestInit | undefined }[] = [];
   const fakeFetch: typeof fetch = (input, init) => {
     calls.push({ url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url, init });
     return answer();
   };
-  const provider = weatherTools({ home: { latitude: 48.85, longitude: 2.35 }, timezone: "Europe/Paris", fetch: fakeFetch });
-  const { turn } = createTestTurn(KEVIN, CONV);
+  const provider = weatherTools({ home, timezone: "Europe/Paris", fetch: fakeFetch });
+  const { turn, end } = createTestTurn(KEVIN, CONV);
   const tools = new ToolCatalog([provider]).forTurn(turn);
-  return { calls, turn, request: testRequest({ tools }) };
+  return { calls, turn, end, request: testRequest({ tools }) };
 }
 
 const json = (body: unknown, status = 200) => () => Promise.resolve(new Response(JSON.stringify(body), { status }));
@@ -64,6 +64,23 @@ describe("weather", () => {
       .toBe("Maintenant : 19 °C (ressenti 18 °C), temps indéterminé, vent 8 km/h, 1,2 mm de pluie.");
   });
 
+  test("only the coordinates rounded to about a kilometre leave the house", async () => {
+    const { calls, request } = setup(json(SAMPLE), { latitude: 48.856_613, longitude: 2.352_222 });
+    await callTool(request, "weather", {});
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.searchParams.get("latitude")).toBe("48.86");
+    expect(url.searchParams.get("longitude")).toBe("2.35");
+  });
+
+  test("the request stops when the turn ends", async () => {
+    const { calls, end, request } = setup(json(SAMPLE));
+    await callTool(request, "weather", {});
+    const signal = calls[0]?.init?.signal;
+    expect(signal?.aborted).toBe(false);
+    end();
+    expect(signal?.aborted).toBe(true);
+  });
+
   test("days: 1 to 7", async () => {
     const { calls, request } = setup(json(SAMPLE));
     await callTool(request, "weather", { days: 7 });
@@ -75,6 +92,7 @@ describe("weather", () => {
   test.each([
     ["HTTP error", json({ error: true }, 500)],
     ["unexpected answer", json({ current: {} })],
+    ["days that are not dates", json({ ...SAMPLE, daily: { ...SAMPLE.daily, time: ["demain", "après"] } })],
     ["not JSON", () => Promise.resolve(new Response("<html>", { status: 200 }))],
     ["network failure", () => Promise.reject(new Error("offline"))],
   ])("%s: says it is unavailable, never makes up a forecast", async (_label, answer) => {

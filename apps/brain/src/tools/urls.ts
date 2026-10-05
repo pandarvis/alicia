@@ -4,7 +4,9 @@ const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/iu;
 const DISPLAY_MAX = 200;
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u;
 /** Names that only ever mean a machine of the house (or of its private network). */
-const LOCAL_SUFFIXES = [".localhost", ".local", ".lan", ".home.arpa", ".internal", ".ts.net"];
+const LOCAL_SUFFIXES = [
+  ".localhost", ".local", ".localdomain", ".lan", ".home", ".home.arpa", ".internal", ".corp", ".ts.net",
+];
 
 /** A web address (http or https, with a host), scheme optional ("www.…"); undefined for anything else. */
 export function parseWebUrl(raw: string): URL | undefined {
@@ -50,8 +52,13 @@ function isPrivateIpv4(a: number, b: number): boolean {
     || (a === 100 && b >= 64 && b <= 127) // CGNAT, Tailscale
     || (a === 169 && b === 254) // link-local (cloud metadata too)
     || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168);
+    || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19)) // benchmarking
+    || a >= 224; // multicast, reserved, broadcast
 }
+
+/** Whether the IPv4 address held in two 16-bit groups is private (only its first two bytes matter). */
+const ipv4In = (high: number): boolean => isPrivateIpv4(high >> 8, high & 0xff);
 
 /** The eight 16-bit groups of an IPv6 address (as the URL parser writes it: lowercase hex, "::" possible). */
 function ipv6Groups(address: string): number[] | undefined {
@@ -68,19 +75,24 @@ function ipv6Groups(address: string): number[] | undefined {
 function isPrivateIpv6(address: string): boolean {
   const groups = ipv6Groups(address);
   if (groups === undefined) return true; // unreadable: treated as local (asks)
-  const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
+  const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0] = groups;
   const zeroHead = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
-  if (zeroHead && g5 === 0 && g6 === 0 && (g7 === 0 || g7 === 1)) return true; // :: and ::1
-  if (zeroHead && g5 === 0xff_ff) return isPrivateIpv4(g6 >> 8, g6 & 0xff); // IPv4-mapped
+  // ::, ::1 and IPv4-compatible (::a.b.c.d), IPv4-mapped (::ffff:a.b.c.d).
+  if (zeroHead && (g5 === 0 || g5 === 0xff_ff)) return ipv4In(g6);
+  // NAT64 (64:ff9b::a.b.c.d) and 6to4 (2002:a.b.c.d::): the IPv4 address inside decides.
+  if (g0 === 0x64 && g1 === 0xff_9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) return ipv4In(g6);
+  if (g0 === 0x20_02) return ipv4In(g1);
   return (g0 & 0xfe_00) === 0xfc_00 // unique local
     || (g0 & 0xff_c0) === 0xfe_80 // link-local
-    || (g0 & 0xff_c0) === 0xfe_c0; // site-local (deprecated)
+    || (g0 & 0xff_c0) === 0xfe_c0 // site-local (deprecated)
+    || (g0 & 0xff_00) === 0xff_00; // multicast
 }
 
 /**
  * A machine of the house or of its private network: loopback, private, CGNAT (Tailscale) and link-local addresses,
- * IPv6 unique-local and link-local, single-label names and local suffixes (.local, .lan, .ts.net…).
- * By name only: a public name resolving to a private address is not caught here.
+ * IPv6 unique-local, link-local and multicast, IPv4 inside IPv6 (compatible, mapped, NAT64, 6to4), multicast and
+ * reserved IPv4 ranges, single-label names and local suffixes (.local, .lan, .home, .ts.net…).
+ * By name only: a public name resolving to a private address is not caught here (no DNS lookup, on purpose for now).
  */
 export function isLocalHost(url: URL): boolean {
   const host = url.hostname.toLowerCase();

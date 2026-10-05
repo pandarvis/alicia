@@ -270,6 +270,8 @@ export async function* handleSend(
     }
   } finally {
     turnScope.abort();
+    // A mark that could not be written during the turn (locked database…) gets a last try.
+    turn.persistUntrusted();
     // Always store what was said and log the turn, even if the consumer stops.
     const durationMs = deps.clock() - start;
     if (text !== "") deps.repository.addMessage(conversationId, "assistant", text);

@@ -68,6 +68,10 @@ describe("isLocalHost", () => {
     "http://[::ffff:192.168.1.1]/", "http://[::ffff:127.0.0.1]/",
     "http://box.local/", "http://homeassistant:8123/", "http://nas.lan/", "http://imprimante.home.arpa/",
     "http://service.internal/", "https://alicia.mon-reseau.ts.net/",
+    // IPv4 inside IPv6 (compatible, NAT64, 6to4), multicast, benchmarking and reserved ranges, local suffixes.
+    "http://[::192.168.1.1]/", "http://[64:ff9b::10.0.0.1]/", "http://[2002:c0a8:0101::1]/", "http://[ff02::1]/",
+    "http://198.18.0.1/", "http://198.19.255.1/", "http://224.0.0.1/", "http://255.255.255.255/",
+    "http://nas.localdomain/", "http://box.home/", "http://intranet.corp/", "http://localhost./",
   ])("%s is local", (raw) => {
     const url = parseWebUrl(raw);
     expect(url === undefined ? undefined : isLocalHost(url)).toBe(true);
@@ -76,6 +80,7 @@ describe("isLocalHost", () => {
   test.each([
     "https://example.com/", "http://172.32.0.1/", "http://172.15.0.1/", "http://100.128.0.1/", "http://100.63.0.1/",
     "http://8.8.8.8/", "http://[2001:db8::1]/", "http://[::ffff:8.8.8.8]/", "https://local.example.com/",
+    "http://evil.com./", "http://[64:ff9b::8.8.8.8]/", "http://[2002:0808:0808::1]/", "http://198.20.0.1/", "http://223.255.255.1/",
   ])("%s is not", (raw) => {
     const url = parseWebUrl(raw);
     expect(url === undefined ? undefined : isLocalHost(url)).toBe(false);

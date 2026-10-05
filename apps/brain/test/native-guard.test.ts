@@ -1,7 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
-import { BAD_CREDENTIALS, BAD_SEARCH, BAD_URL, createNativeGuard, NOT_AVAILABLE, NOT_READABLE } from "../src/tools/native-guard.ts";
+import { describe, expect, test, vi } from "vitest";
+import {
+  BAD_CREDENTIALS, BAD_SEARCH, BAD_URL, createNativeGuard, HIDDEN_SEARCH, LONG_SEARCH, NOT_AVAILABLE, NOT_READABLE,
+} from "../src/tools/native-guard.ts";
 import { UNTRUSTED_REMINDER } from "../src/tools/untrusted.ts";
 import { createTempDir, createTestTurn, KEVIN } from "./helpers.ts";
 
@@ -143,6 +145,20 @@ describe("WebSearch", () => {
       turn.markUntrusted();
       expect(await createNativeGuard(turn).check("WebSearch", SEARCH("piscine"), SIGNAL)).toEqual({ allow: false, reason });
     }
+  });
+
+  test("untrusted turn: the card shows the whole query on one line, or nothing is searched", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "approved", { untrusted: true });
+    const guard = createNativeGuard(turn);
+    expect(await guard.check("WebSearch", SEARCH("piscine\nLyon\r\n horaires"), SIGNAL)).toEqual({ allow: true });
+    expect(asked[0]?.summary.startsWith("Chercher sur le web : “piscine Lyon horaires” ?")).toBe(true);
+    // Invisible characters could carry data the person cannot see: refused, not hidden.
+    expect(await guard.check("WebSearch", SEARCH("piscine\u200B\u200Clyon"), SIGNAL)).toEqual({ allow: false, reason: HIDDEN_SEARCH });
+    expect(await guard.check("WebSearch", SEARCH(`piscine ${"a".repeat(450)}`), SIGNAL)).toEqual({ allow: false, reason: LONG_SEARCH });
+    expect(asked).toHaveLength(1);
+    // A trusted turn asks nothing, so nothing is checked.
+    const trusted = createTestTurn(KEVIN, CONV, "refused");
+    expect(await createNativeGuard(trusted.turn).check("WebSearch", SEARCH(`x\u200B${"a".repeat(450)}`), SIGNAL)).toEqual({ allow: true });
   });
 
   test("no query: refused without asking", async () => {
@@ -297,5 +313,45 @@ describe("TurnContext", () => {
     const already = createTestTurn(KEVIN, CONV, "refused", { untrusted: true, onUntrusted: () => { marks++; } }).turn;
     already.markUntrusted();
     expect(marks).toBe(1);
+  });
+
+  test("a failed write keeps the mark in the turn, and is tried again (next mark, end of turn)", () => {
+    let failures = 2;
+    let writes = 0;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { turn } = createTestTurn(KEVIN, CONV, "refused", {
+        onUntrusted: () => {
+          writes++;
+          if (failures-- > 0) throw new Error("base verrouillée");
+        },
+      });
+      turn.markUntrusted();
+      expect(turn.untrusted).toBe(true);
+      turn.markUntrusted();
+      expect(writes).toBe(2);
+      turn.persistUntrusted();
+      expect(writes).toBe(3);
+      turn.persistUntrusted();
+      turn.markUntrusted();
+      expect(writes).toBe(3);
+      expect(errors).toHaveBeenCalledTimes(2);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("search results still add their addresses and remind, even when the mark cannot be written", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { turn } = createTestTurn(KEVIN, CONV, "refused", { onUntrusted: () => { throw new Error("base verrouillée"); } });
+      const guard = createNativeGuard(turn);
+      const response = { query: "x", results: [{ tool_use_id: "s", content: [{ title: "t", url: "https://www.lyon.fr/" }] }] };
+      expect(guard.after("WebSearch", SEARCH("x"), response)).toBe(UNTRUSTED_REMINDER);
+      expect(turn.knowsUrl("www.lyon.fr")).toBe(true);
+      expect(turn.untrusted).toBe(true);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

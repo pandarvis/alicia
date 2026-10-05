@@ -750,6 +750,28 @@ describe("prompt-injection guard", () => {
     expect(asked.map((a) => a.tool)).toEqual(["WebFetch"]);
   });
 
+  test("a mark that could not be written during the turn is written when it ends", async () => {
+    const engine = new FakeEngine(() => [{ type: "done", inputTokens: 0, outputTokens: 0 }]);
+    const deps = createChatDeps(createTestDb(), createTestClock().clock, engine);
+    const uploaded = deps.attachments.upload("kevin", "facture.pdf", PDF_BYTES);
+    if (uploaded.status !== "stored") throw new Error("refused");
+    const id = uploaded.attachment.id;
+    // The attachments mark the turn at its start: that write fails, nothing else marks the turn afterwards.
+    const write = vi.spyOn(deps.repository, "markUntrusted").mockImplementationOnce(() => {
+      throw new Error("base verrouillée");
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const events = await send(deps, KEVIN, { text: "Lis-la", attachments: [id] });
+      const conversationId = events[0]?.type === "conversation" ? events[0].conversationId : "";
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(deps.repository.get(conversationId, "kevin")?.untrustedAt).not.toBeNull();
+    } finally {
+      errors.mockRestore();
+      write.mockRestore();
+    }
+  });
+
   test("a conversation that never let outside content in stays trusted from turn to turn", async () => {
     const decisions: NativeDecision[] = [];
     const engine = new FakeEngine(

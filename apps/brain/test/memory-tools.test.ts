@@ -164,6 +164,14 @@ describe("memory tools once outside content came in", () => {
     expect(no.store.get("kevin", other.memory.id)?.kind).toBe("habit");
   });
 
+  test("forgetting asks exactly as in a trusted turn (it always asks)", async () => {
+    const { store, request, asked } = untrustedSetup("refused");
+    const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "habit", text: "Kévin court le dimanche", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    expect((await callTool(request, "memory_forget", { id: saved.memory.id })).isError).toBe(true);
+    expect(asked).toEqual([{ tool: "memory_forget", summary: "Oublier ce souvenir : « Kévin court le dimanche » ?" }]);
+  });
+
   test("updating: a memory changed while the card waited is left alone; an unknown one is not asked about", async () => {
     let id = "";
     // The card is answered once the memory changed (the callback runs after `changing` exists).

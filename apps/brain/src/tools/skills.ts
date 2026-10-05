@@ -8,7 +8,8 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 
 /** The forbidden keys a SKILL.md declares (any case); an unreadable frontmatter counts as forbidden. */
 export function forbiddenSkillKeys(skillMd: string): string[] {
-  const block = FRONTMATTER.exec(skillMd)?.[1];
+  // A byte order mark or blank lines first must not hide the frontmatter from this check (a reader may skip them).
+  const block = FRONTMATTER.exec(skillMd.replace(/^[\uFEFF\s]+/u, ""))?.[1];
   if (block === undefined) return [];
   let data: unknown;
   try {

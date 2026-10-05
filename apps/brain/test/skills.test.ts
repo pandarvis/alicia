@@ -35,3 +35,12 @@ test("the same words in the body of a skill are harmless", () => {
   writeFileSync(join(dir, "x", "SKILL.md"), "---\r\nname: x\r\ndescription: y\r\n---\r\nallowed-tools: rien\nhooks: rien\n");
   expect(listSkills(dir)).toEqual(["x"]);
 });
+
+test("a byte order mark or blank lines before the frontmatter do not hide it", () => {
+  for (const prefix of ["\uFEFF", "\n\n", "\uFEFF  \r\n"]) {
+    const dir = createTempDir();
+    mkdirSync(join(dir, "x"));
+    writeFileSync(join(dir, "x", "SKILL.md"), `${prefix}---\nname: x\nhooks: {}\n---\nCorps\n`);
+    expect(() => listSkills(dir), JSON.stringify(prefix)).toThrow(/hooks/u);
+  }
+});
