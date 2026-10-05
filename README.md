@@ -124,8 +124,8 @@ pnpm --filter @alicia/desktop mascot     # régénère les images de la mascotte
 Premier lancement : saisir l'adresse du cerveau (par défaut `http://127.0.0.1:8780`, ou
 l'adresse HTTPS Tailscale) et un code obtenu avec `pnpm exec tsx src/cli.ts pair <personne>`
 (depuis `apps/brain`). La session (adresse + jeton d'appareil) est chiffrée par Windows
-(DPAPI, via `safeStorage`) dans le profil de l'utilisateur ; « Déconnecter » dans le menu
-l'efface. Un appareil révoqué côté cerveau (`revoke <id>`) revient à l'écran d'appairage.
+(DPAPI, via `safeStorage`) dans le profil de l'utilisateur ; « Déconnecter cet appareil » dans
+Réglages l'efface. Un appareil révoqué côté cerveau (`revoke <id>`) revient à l'écran d'appairage.
 
 ### Écran « Souvenirs »
 
@@ -144,3 +144,77 @@ propres souvenirs, jamais ceux de l'autre.
 - **Supprimer une conversation** : survoler la conversation dans le menu → 🗑 → « Oui ».
   Définitif (messages compris) ; les souvenirs qui en viennent sont conservés. Impossible pendant
   qu'Alicia y répond.
+
+### Sur le PC
+
+- **Une seule Alicia** : relancer l'app ramène la fenêtre existante. Fermer la fenêtre la range dans la
+  zone de notification (clic gauche : rouvrir ; clic droit : Holo, lancement au démarrage, quitter).
+- **Notifications** : quand Alicia répond alors que sa fenêtre est cachée, réduite ou derrière une autre
+  application (ou à une question posée par la barre Spotlight), la réponse arrive en notification Windows ;
+  un clic ouvre la conversation.
+- **L'Holo** : Alicia flotte sur le bureau, toujours au-dessus, et reflète ce qu'elle fait. Elle se déplace à
+  la souris (sa place est retenue, d'un écran à l'autre) ; un clic ouvre une petite discussion, Échap la
+  referme. L'Holo replié ne prend jamais le focus : il se pilote **à la souris seulement** ; le clavier
+  fonctionne une fois la discussion ouverte.
+- **Spotlight** : `Ctrl+Alt+A` (modifiable dans Réglages) ouvre une barre au centre de l'écran ; Entrée envoie.
+- **Réglages** : raccourci, lancement au démarrage, Holo, informations de l'appareil, mises à jour,
+  déconnexion. Pendant la saisie d'un nouveau raccourci, l'ancien est mis de côté. Sur un clavier AZERTY,
+  `Ctrl+Alt` + une touche dont AltGr ne tape rien (ex. `&`) donne le chiffre (`Ctrl+Alt+1`) quand Chromium
+  fournit la disposition du clavier (`navigator.keyboard.getLayoutMap()`) ; sinon la combinaison est refusée.
+  « Lancer au démarrage » suit Windows : désactivé dans les applications de démarrage de Windows, il apparaît
+  décoché au lancement suivant.
+- **Premier lancement** : l'app cherche le cerveau sur le réseau local (mDNS, service `_alicia._tcp`) ; sinon,
+  saisir son adresse (Tailscale). Le cerveau s'annonce tout seul (« Alicia sur <machine> ») ;
+  `discovery: false` dans sa config pour couper. Un port mDNS (5353) indisponible n'empêche ni le cerveau
+  ni l'app de tourner : l'annonce ou la recherche est simplement abandonnée (message dans le journal).
+
+### Installer et publier une version
+
+```bash
+pnpm --filter @alicia/desktop dist   # → apps/desktop/dist/Alicia-Setup-<version>.exe + latest.yml
+```
+- Installation par utilisateur, sans droits admin (`%LOCALAPPDATA%\Programs\Alicia`), sans signature de code
+  (Windows SmartScreen peut demander « Exécuter quand même » la première fois). L'app installée s'appelle
+  « Alicia » : son profil (`%APPDATA%\Alicia`) est distinct de celui du développement.
+- **Publier** : augmenter `version` dans `apps/desktop/package.json`, lancer `dist`, puis copier
+  `latest.yml`, `Alicia-Setup-<version>.exe` et `Alicia-Setup-<version>.exe.blockmap` dans
+  `<dataDir>/updates/` **sur la machine du cerveau**. Les apps installées vérifient au démarrage et toutes les
+  six heures, téléchargent, et installent en quittant (ou tout de suite depuis Réglages / le menu).
+- **Premier téléchargement** : `http://<cerveau>:8780/updates/Alicia-Setup-<version>.exe` dans un navigateur
+  (la route `/updates/` est publique : un installateur ne contient aucun secret).
+
+### Vérifications manuelles (sur le vrai PC, pas automatisables)
+
+Les tests automatiques remplacent le système par un enregistreur (`ALICIA_OS_INTEGRATION=off`) : ce qui suit
+ne peut être vérifié que sur le vrai profil Windows, avec l'installateur `apps/desktop/dist/Alicia-Setup-<version>.exe`.
+
+1. **Installation** : pas de demande de droits admin ; SmartScreen (« Informations complémentaires » →
+   « Exécuter quand même ») ; raccourcis Bureau et menu Démarrer ; l'exe et l'installateur portent l'icône
+   d'Alicia.
+2. **Zone de notification** : l'icône est là ; clic gauche rouvre ; clic droit : Ouvrir, Afficher l'Holo,
+   Lancer au démarrage, Quitter (Quitter ferme vraiment l'app).
+3. **Premier lancement / mDNS** : le cerveau (redémarré, `discovery` actif) est trouvé et son adresse remplie ;
+   le pare-feu Windows peut demander l'autorisation une fois ; l'adresse manuelle (Tailscale) marche aussi.
+   Le cerveau journalise « Annoncée sur le réseau local : « Alicia sur <machine> ». ».
+4. **Holo** : apparaît en bas à droite ; la mascotte ne saute pas quand la discussion s'ouvre ou se ferme ;
+   déplacement à la souris, y compris **entre deux écrans d'échelles différentes** (125 % / 100 %) ; la place
+   est retenue ; **brancher / débrancher un écran** pendant qu'il est affiché le ramène sur un écran existant ;
+   le masquer et le réafficher depuis le menu.
+5. **Spotlight** : `Ctrl+Alt+A` depuis une autre application ouvre la barre au-dessus de tout ; Entrée ; la
+   notification arrive au nom d'« Alicia » ; son clic ouvre la conversation.
+6. **Notifications** : fermer la fenêtre pendant une réponse → notification ; relancer l'app depuis le menu
+   Démarrer → la fenêtre existante revient (pas de deuxième Alicia).
+7. **Réglages, raccourci** : en changer (l'ancien ne doit pas ouvrir Spotlight pendant la saisie) ; sur un
+   clavier **AZERTY**, `Ctrl+Alt+&` doit donner `Ctrl+Alt+1` et `Ctrl+Alt+E` être refusé (€). Si
+   `Ctrl+Alt+&` est refusé, vérifier dans la console de la fenêtre que
+   `await navigator.keyboard.getLayoutMap()` répond (le gestionnaire de permissions qui refuse tout pourrait le
+   bloquer : la règle stricte s'applique alors).
+8. **Lancer au démarrage** : l'activer, fermer la session Windows et la rouvrir : Alicia démarre dans la zone
+   de notification, sans fenêtre ; relancer l'app à la main alors ramène bien la fenêtre. Le désactiver dans
+   Paramètres Windows → Applications → Démarrage : au lancement suivant, la case est décochée.
+9. **Fermeture de session / arrêt** avec Alicia ouverte : rien ne bloque la fermeture de Windows.
+10. **Mise à jour réelle** : passer `version` à `0.1.1`, `dist`, copier les trois fichiers dans
+    `<dataDir>/updates/` du cerveau, relancer l'app : Réglages finit par afficher « La version 0.1.1 est
+    prête » ; « Redémarrer pour installer » ; l'app redémarre en 0.1.1 (Réglages → Version de l'app).
+11. **Développement** : `pnpm --filter @alicia/desktop dev` — le rechargement à chaud (HMR) fonctionne
+    toujours avec la CSP resserrée (`connect-src 'self' http: https:`, sans `ws:`).

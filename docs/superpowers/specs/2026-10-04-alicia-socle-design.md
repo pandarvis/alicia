@@ -251,7 +251,7 @@ l'ancienne Alice. Transitions fluides entre états et écrans, jamais de saut se
 
 **Distribution :** electron-builder, cible NSIS par utilisateur (sans droits admin) ;
 `electron-updater` en fournisseur générique pointant sur le cerveau
-(`/mises-a-jour/`), qui sert les versions publiées.
+(`/updates/`, publique en lecture seule), qui sert les versions publiées.
 
 ## Erreurs
 
