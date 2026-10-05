@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Person } from "@alicia/protocol";
 import { onTestFinished } from "vitest";
+import { AttachmentStore } from "../src/attachments/store.ts";
 import type { Clock } from "../src/clock.ts";
 import type { ChatDependencies, TurnPorts } from "../src/conversations/chat-service.ts";
 import { ConversationRepository } from "../src/conversations/repository.ts";
@@ -18,6 +19,10 @@ import { TurnContext } from "../src/tools/turn.ts";
 
 export const KEVIN: Person = { id: "kevin", name: "Kévin" };
 export const ELODIE: Person = { id: "elodie", name: "Élodie" };
+
+/** The first bytes of real files, for attachment tests. */
+export const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+export const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj\n");
 
 /** Test clock: advanced by hand. */
 export function createTestClock(start = Date.UTC(2026, 9, 4, 13, 30)) {
@@ -55,6 +60,7 @@ export function createChatDeps(
     engine,
     memory,
     tools: new ToolCatalog([memoryTools(memory), ...extraTools]),
+    attachments: new AttachmentStore(db, createTempDir(), clock),
     clock,
     timezone: "Europe/Paris",
   };

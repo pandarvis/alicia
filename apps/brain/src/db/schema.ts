@@ -1,4 +1,4 @@
-import { MEMORY_KINDS } from "@alicia/protocol";
+import { ATTACHMENT_KINDS, MEMORY_KINDS } from "@alicia/protocol";
 import { blob, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const people = sqliteTable("people", {
@@ -95,5 +95,29 @@ export const memories = sqliteTable(
     index("memories_scope_idx").on(table.scope, table.forgottenAt),
     // Deleting a conversation sets its memories' conversation_id to NULL.
     index("memories_conversation_idx").on(table.conversationId),
+  ],
+);
+
+/**
+ * Files sent to Alicia. Pending (uploaded, not yet sent in a message) while conversation_id is null; the file
+ * itself lives in <dataDir>/attachments (see AttachmentStore), under a generated name.
+ */
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: text("id").primaryKey(),
+    personId: text("person_id").notNull().references(() => people.id),
+    conversationId: text("conversation_id").references(() => conversations.id, { onDelete: "cascade" }),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
+    /** Display name only: the file on disk is <id><extension>. */
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ATTACHMENT_KINDS }).notNull(),
+    extension: text("extension").notNull(),
+    size: integer("size").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("attachments_conversation_idx").on(table.conversationId),
+    index("attachments_person_idx").on(table.personId, table.conversationId),
   ],
 );

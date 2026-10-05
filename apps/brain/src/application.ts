@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
+import { AttachmentStore } from "./attachments/store.ts";
 import { systemClock } from "./clock.ts";
 import type { Authentication, Config } from "./config.ts";
 import { ConversationRepository } from "./conversations/repository.ts";
@@ -94,6 +95,9 @@ export async function buildApplication(
       timezone: config.timezone,
       clock: systemClock,
     });
+    // Files sent with the messages; uploads never sent are dropped after a day (here, and nightly later).
+    const attachments = new AttachmentStore(db, join(config.dataDir, "attachments"), systemClock);
+    attachments.purgePending();
     const tools = new ToolCatalog([memoryTools(memory)]);
     // Two tools with one name would only fail on the first turn: refuse to start instead.
     const someone = config.people[0];
@@ -102,7 +106,7 @@ export async function buildApplication(
       pairing,
       repository,
       version: VERSION,
-      chat: { repository, engine, memory, tools, clock: systemClock, timezone: config.timezone },
+      chat: { repository, engine, memory, tools, attachments, clock: systemClock, timezone: config.timezone },
       allowedOrigins: config.allowedOrigins,
       updatesDir,
       ...(options.logging !== undefined ? { logging: options.logging } : {}),

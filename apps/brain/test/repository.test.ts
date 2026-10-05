@@ -17,6 +17,13 @@ describe("ConversationRepository", () => {
     expect(repository.get(c.id, "kevin")?.title).toBe("Volets");
   });
 
+  test("addMessage returns the new message id", () => {
+    const { repository } = createRepository();
+    const c = repository.create("kevin", "Volets");
+    const id = repository.addMessage(c.id, "user", "x");
+    expect(repository.messages(c.id)[0]?.id).toBe(id);
+  });
+
   test("isolation: Élodie does not see Kévin's conversation", () => {
     const { repository } = createRepository();
     const c = repository.create("kevin", "Privé");

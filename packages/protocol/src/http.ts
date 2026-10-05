@@ -39,6 +39,10 @@ export const HttpErrorCode = z.enum([
   "invalid_code",
   "too_many_attempts",
   "forbidden_origin",
+  // An upload refused (the same words as AttachmentRefusalReason).
+  "too_large",
+  "unsupported",
+  "empty",
   "internal",
 ]);
 export type HttpErrorCode = z.infer<typeof HttpErrorCode>;

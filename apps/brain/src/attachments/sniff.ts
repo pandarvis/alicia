@@ -1,0 +1,40 @@
+const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const JPEG = [0xff, 0xd8, 0xff];
+const ZIP = [0x50, 0x4b, 0x03, 0x04];
+
+const ascii = (text: string): Uint8Array => new TextEncoder().encode(text);
+const startsWith = (bytes: Uint8Array, signature: ArrayLike<number>, offset = 0): boolean => {
+  if (bytes.length < offset + signature.length) return false;
+  for (let i = 0; i < signature.length; i++) {
+    if (bytes[offset + i] !== signature[i]) return false;
+  }
+  return true;
+};
+
+/**
+ * Does the content look like what its extension claims? Magic numbers for binary formats (.docx and .xlsx are
+ * ZIP archives); text must not contain NUL bytes (UTF-8 or Windows-1252, like CSV files saved by a French Excel).
+ */
+export function contentMatches(extension: string, bytes: Uint8Array): boolean {
+  switch (extension) {
+    case ".png":
+      return startsWith(bytes, PNG);
+    case ".jpg":
+    case ".jpeg":
+      return startsWith(bytes, JPEG);
+    case ".gif":
+      return startsWith(bytes, ascii("GIF87a")) || startsWith(bytes, ascii("GIF89a"));
+    case ".webp":
+      return startsWith(bytes, ascii("RIFF")) && startsWith(bytes, ascii("WEBP"), 8);
+    case ".pdf":
+      return startsWith(bytes, ascii("%PDF-"));
+    case ".docx":
+    case ".xlsx":
+      return startsWith(bytes, ZIP);
+    case ".txt":
+    case ".csv":
+      return !bytes.includes(0);
+    default:
+      return false;
+  }
+}

@@ -1,6 +1,7 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
+import type { AttachmentStore } from "../attachments/store.ts";
 import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
 import { buildSheet } from "../memory/sheet.ts";
@@ -20,6 +21,8 @@ export interface ChatDependencies {
   memory: MemoryStore;
   /** Tool providers; each turn builds its tools from them. */
   tools: ToolCatalog;
+  /** Files sent with the messages (pending uploads, then per-conversation folders). */
+  attachments: AttachmentStore;
   clock: Clock;
   timezone: string;
 }

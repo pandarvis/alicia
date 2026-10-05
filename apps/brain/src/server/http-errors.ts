@@ -14,6 +14,9 @@ const MESSAGES: Readonly<Record<HttpErrorCode, string>> = {
   invalid_code: "Code d'appairage invalide ou expiré.",
   too_many_attempts: "Trop d'essais : réessaie dans quelques minutes.",
   forbidden_origin: "Origine non autorisée.",
+  too_large: "Fichier trop gros : 25 Mo au maximum.",
+  unsupported: "Type de fichier non pris en charge : images, PDF, Word (.docx), Excel (.xlsx) et texte (.txt, .csv).",
+  empty: "Fichier vide.",
   internal: "Erreur interne du cerveau.",
 };
 

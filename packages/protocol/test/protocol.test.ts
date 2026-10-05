@@ -173,6 +173,9 @@ describe("HTTP", () => {
 describe("HTTP errors", () => {
   test("a plain error and a refused memory", () => {
     expect(HttpErrorBody.safeParse({ error: { code: "not_found", message: "Introuvable." } }).success).toBe(true);
+    for (const code of ["too_large", "unsupported", "empty"]) {
+      expect(HttpErrorBody.safeParse({ error: { code, message: "…" } }).success, code).toBe(true);
+    }
     expect(
       HttpErrorBody.safeParse({ error: { code: "refused", message: "Souvenir refusé.", reason: "secret" } }).success,
     ).toBe(true);
