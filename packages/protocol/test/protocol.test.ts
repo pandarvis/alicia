@@ -87,7 +87,7 @@ describe("server events", () => {
     { type: "ready", person: { id: "kevin", name: "Kévin" } },
     { type: "conversation", requestId: UUID, conversationId: UUID },
     { type: "text_delta", conversationId: UUID, text: "Bon" },
-    { type: "tool_call", conversationId: UUID, callId: "t1", tool: "weather" },
+    { type: "tool_call", conversationId: UUID, callId: "t1", tool: "weather", label: "Alicia regarde la météo…" },
     { type: "tool_result", conversationId: UUID, callId: "t1", success: true },
     { type: "done", conversationId: UUID, model: "sonnet", inputTokens: 10, outputTokens: 5, durationMs: 900 },
     { type: "error", code: "quota", message: "Je me repose." },
@@ -97,6 +97,11 @@ describe("server events", () => {
   });
   test("heartbeat", () => {
     expect(ServerEvent.parse({ type: "heartbeat" })).toEqual({ type: "heartbeat" });
+  });
+  test("tool_call carries a French label", () => {
+    const event = { type: "tool_call", conversationId: UUID, callId: "t1", tool: "weather", label: "Alicia regarde la météo…" };
+    expect(ServerEvent.parse(event)).toEqual(event);
+    expect(ServerEvent.safeParse({ ...event, label: undefined }).success).toBe(false);
   });
   test("rejects negative tokens", () => {
     expect(

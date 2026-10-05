@@ -15,6 +15,8 @@ export const ServerEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_delta"), conversationId: z.uuid(), text: z.string() }),
   z.object({
     type: z.literal("tool_call"), conversationId: z.uuid(), callId: z.string(), tool: z.string(),
+    /** French activity line (« Alicia regarde la météo… »), chosen by the brain. */
+    label: z.string(),
   }),
   z.object({
     type: z.literal("tool_result"), conversationId: z.uuid(), callId: z.string(), success: z.boolean(),

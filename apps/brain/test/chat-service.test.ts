@@ -1,11 +1,11 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { buildResumePrompt, handleSend, titleFrom } from "../src/conversations/chat-service.ts";
-import { ConversationRepository, type Message } from "../src/conversations/repository.ts";
+import { buildResumePrompt, type ChatDependencies, handleSend, titleFrom } from "../src/conversations/chat-service.ts";
+import type { Message } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
 import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
 import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
-import { createTestClock, createTestDb, createTestMemory, ELODIE, KEVIN } from "./helpers.ts";
+import { createChatDeps, createTestClock, createTestDb, ELODIE, KEVIN } from "./helpers.ts";
 
 const REQUEST_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 
@@ -19,14 +19,13 @@ const SIMPLE_REPLY: Scenario = () => [
 function createContext(...scenarios: Scenario[]) {
   const db = createTestDb();
   const time = createTestClock();
-  const repository = new ConversationRepository(db, time.clock);
   const engine = new FakeEngine(...scenarios);
-  const memory = createTestMemory(db, time.clock);
-  return { db, repository, engine, deps: { repository, engine, memory, clock: time.clock, timezone: "Europe/Paris" } };
+  const deps = createChatDeps(db, time.clock, engine);
+  return { db, deps, engine, repository: deps.repository, memory: deps.memory };
 }
 
 async function send(
-  deps: Parameters<typeof handleSend>[0], person: Person, message: Omit<SendMessage, "type" | "requestId">,
+  deps: ChatDependencies, person: Person, message: Omit<SendMessage, "type" | "requestId">,
 ) {
   const output: ServerEvent[] = [];
   const full: SendMessage = { type: "send", requestId: REQUEST_ID, ...message };
@@ -174,8 +173,18 @@ describe("handleSend", () => {
       { type: "text", text: "Beau temps." },
       { type: "done", inputTokens: 1, outputTokens: 1 },
     ]);
-    const types = (await send(deps, KEVIN, { text: "Météo ?" })).map((e) => e.type);
-    expect(types).toEqual(["conversation", "tool_call", "tool_result", "text_delta", "done"]);
+    const events = await send(deps, KEVIN, { text: "Météo ?" });
+    expect(events.map((e) => e.type)).toEqual(["conversation", "tool_call", "tool_result", "text_delta", "done"]);
+    expect(events[1]).toMatchObject({ type: "tool_call", tool: "weather", label: "Alicia utilise l'outil « weather »…" });
+  });
+
+  test("a tool call carries the label of the turn's tool", async () => {
+    const { deps } = createContext(() => [
+      { type: "tool_call", callId: "t1", tool: "memory_remember" },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ]);
+    const events = await send(deps, KEVIN, { text: "Retiens ça" });
+    expect(events[1]).toMatchObject({ type: "tool_call", label: "Alicia retient ça…" });
   });
 
   test("cancellation: no retry, session kept, no \"done\", turn logged as « annulé »", async () => {
@@ -183,9 +192,8 @@ describe("handleSend", () => {
     // An engine that ignores the signal, like a process dying while being cancelled.
     const engine: Engine = { run: (request) => fake.run(request) };
     const db = createTestDb();
-    const repository = new ConversationRepository(db, createTestClock().clock);
-    const clock = createTestClock().clock;
-    const deps = { repository, engine, memory: createTestMemory(db, clock), clock, timezone: "Europe/Paris" };
+    const deps = createChatDeps(db, createTestClock().clock, engine);
+    const { repository } = deps;
     const firsts = await send(deps, KEVIN, { text: "Un" });
     const id = firsts[0]?.type === "conversation" ? firsts[0].conversationId : "";
 
@@ -205,14 +213,12 @@ describe("handleSend", () => {
     const fake = new FakeEngine(SIMPLE_REPLY);
     const engine: Engine = { run: (request) => fake.run(request) };
     const time = createTestClock();
-    const db = createTestDb();
-    const repository = new ConversationRepository(db, time.clock);
-    const memory = createTestMemory(db, time.clock);
+    const deps = createChatDeps(createTestDb(), time.clock, engine);
     const cancelled = new AbortController();
     cancelled.abort();
     const output: ServerEvent[] = [];
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Un" };
-    for await (const e of handleSend({ repository, engine, memory, clock: time.clock, timezone: "Europe/Paris" }, KEVIN, full, cancelled.signal)) {
+    for await (const e of handleSend(deps, KEVIN, full, cancelled.signal)) {
       output.push(e);
     }
     expect(output.some((e) => e.type === "done")).toBe(false);

@@ -13,8 +13,10 @@ import { PairingService } from "./identity/pairing.ts";
 import { syncPeople } from "./identity/people.ts";
 import type { Embedder } from "./memory/embedder.ts";
 import { MemoryStore } from "./memory/store.ts";
+import { memoryTools } from "./memory/tools.ts";
 import { TransformersEmbedder } from "./memory/transformers-embedder.ts";
 import { createServer } from "./server/server.ts";
+import { ToolCatalog } from "./tools/catalog.ts";
 import { VERSION } from "./version.ts";
 
 /** cwd of the SDK process (skills in plan 3). */
@@ -88,11 +90,12 @@ export async function buildApplication(
       timezone: config.timezone,
       clock: systemClock,
     });
+    const tools = new ToolCatalog([memoryTools(memory)]);
     const server = await createServer({
       pairing,
       repository,
       version: VERSION,
-      chat: { repository, engine, memory, clock: systemClock, timezone: config.timezone },
+      chat: { repository, engine, memory, tools, clock: systemClock, timezone: config.timezone },
       allowedOrigins: config.allowedOrigins,
       updatesDir,
       ...(options.logging !== undefined ? { logging: options.logging } : {}),

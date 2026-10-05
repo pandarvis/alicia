@@ -133,7 +133,7 @@ describe("BrainHub", () => {
     hub.send(message(), "holo");
     socket().receive({ type: "conversation", requestId: REQUEST, conversationId: CONV });
     socket().receive({ type: "text_delta", conversationId: CONV, text: "Bonjour" });
-    socket().receive({ type: "tool_call", conversationId: CONV, callId: "c", tool: "weather" });
+    socket().receive({ type: "tool_call", conversationId: CONV, callId: "c", tool: "weather", label: "Alicia regarde la météo…" });
     socket().receive({ type: "tool_result", conversationId: CONV, callId: "c", success: true });
     socket().receive({ type: "text_delta", conversationId: OTHER_CONV, text: "?" });
     socket().receive(DONE);
@@ -160,7 +160,7 @@ describe("BrainHub", () => {
     hub.send(message(), "spotlight");
     socket().receive({ type: "conversation", requestId: REQUEST, conversationId: CONV });
     socket().receive({ type: "text_delta", conversationId: CONV, text: "Bonjour " });
-    socket().receive({ type: "tool_call", conversationId: CONV, callId: "c", tool: "weather" });
+    socket().receive({ type: "tool_call", conversationId: CONV, callId: "c", tool: "weather", label: "Alicia regarde la météo…" });
     socket().receive({ type: "text_delta", conversationId: CONV, text: "Kévin" });
     expect(finished).toEqual([]);
     socket().receive(DONE);

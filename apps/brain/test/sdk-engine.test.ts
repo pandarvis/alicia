@@ -251,7 +251,7 @@ describe("tools", () => {
   });
 
   test("toolNames lists the allowed MCP names", () => {
-    const tool = defineTool({ name: "memory_search", description: "d", input: {}, run: () => Promise.resolve({ text: "" }) });
+    const tool = defineTool({ name: "memory_search", label: "Alicia cherche…", description: "d", input: {}, run: () => Promise.resolve({ text: "" }) });
     expect(allowedToolNames([tool])).toEqual(["mcp__alicia__memory_search"]);
   });
 
@@ -263,7 +263,7 @@ describe("tools", () => {
 
   test("toolHandler runs the tool with its arguments", async () => {
     const echo = defineTool({
-      name: "echo", description: "Répète", input: { word: z.string() },
+      name: "echo", label: "Alicia répète…", description: "Répète", input: { word: z.string() },
       run: ({ word }) => Promise.resolve({ text: `écho ${word}` }),
     });
     expect(await toolHandler(echo)({ word: "salut" })).toEqual({ content: [{ type: "text", text: "écho salut" }] });
@@ -271,7 +271,7 @@ describe("tools", () => {
 
   test("toolHandler turns an exception into a generic tool error, without its details", async () => {
     const broken = defineTool({
-      name: "broken", description: "Casse", input: {},
+      name: "broken", label: "Alicia casse…", description: "Casse", input: {},
       run: () => Promise.reject(new Error(`database locked, key ${SECRET}`)),
     });
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -286,7 +286,7 @@ describe("tools", () => {
 
   test("toolHandler also catches a synchronous throw", async () => {
     const broken = defineTool({
-      name: "broken", description: "Casse", input: {},
+      name: "broken", label: "Alicia casse…", description: "Casse", input: {},
       run: () => {
         throw new Error("sync");
       },

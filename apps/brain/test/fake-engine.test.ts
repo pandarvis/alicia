@@ -33,7 +33,7 @@ test("a throwing scenario makes run throw synchronously", () => {
 
 test("an async scenario can call a tool of the request", async () => {
   const echo = defineTool({
-    name: "echo", description: "Répète", input: { word: z.string() },
+    name: "echo", label: "Alicia répète…", description: "Répète", input: { word: z.string() },
     run: ({ word }) => Promise.resolve({ text: `écho ${word}` }),
   });
   const engine = new FakeEngine(async (request) => {
@@ -46,7 +46,7 @@ test("an async scenario can call a tool of the request", async () => {
 
 test("callTool rejects an unknown tool and invalid arguments", async () => {
   const echo = defineTool({
-    name: "echo", description: "Répète", input: { word: z.string() },
+    name: "echo", label: "Alicia répète…", description: "Répète", input: { word: z.string() },
     run: ({ word }) => Promise.resolve({ text: word }),
   });
   const request = { ...REQUEST, tools: [echo] };

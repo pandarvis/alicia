@@ -52,8 +52,8 @@ describe("Presence", () => {
   test("remembering gives an idea, other tools keep thinking", () => {
     const { presence, moods } = setup();
     presence.sent(1);
-    presence.event({ type: "tool_call", conversationId: CONV, callId: "a", tool: "memory_remember" });
-    presence.event({ type: "tool_call", conversationId: CONV, callId: "b", tool: "weather" });
+    presence.event({ type: "tool_call", conversationId: CONV, callId: "a", tool: "memory_remember", label: "Alicia retient ça…" });
+    presence.event({ type: "tool_call", conversationId: CONV, callId: "b", tool: "weather", label: "Alicia regarde la météo…" });
     expect(moods).toEqual(["thinking", "idea", "thinking"]);
   });
 
@@ -141,7 +141,7 @@ describe("Presence", () => {
   test("events without a turn of ours change nothing", () => {
     const { presence, moods } = setup();
     presence.event({ type: "text_delta", conversationId: CONV, text: "?" });
-    presence.event({ type: "tool_call", conversationId: CONV, callId: "c", tool: "weather" });
+    presence.event({ type: "tool_call", conversationId: CONV, callId: "c", tool: "weather", label: "Alicia regarde la météo…" });
     expect(moods).toEqual([]);
   });
 });

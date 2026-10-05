@@ -2,11 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import { createServer } from "../src/server/server.ts";
-import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
+import { createChatDeps, createTestClock, createTestDb } from "./helpers.ts";
 
 const dirs: string[] = [];
 const servers: { close(): Promise<unknown> }[] = [];
@@ -20,14 +19,12 @@ afterEach(async () => {
 async function serverWith(updatesDir?: string) {
   const db = createTestDb();
   const time = createTestClock();
-  const repository = new ConversationRepository(db, time.clock);
+  const chat = createChatDeps(db, time.clock, new FakeEngine(() => []));
   const server = await createServer({
     pairing: new PairingService(db, time.clock),
-    repository,
+    repository: chat.repository,
     version: "0.1.0",
-    chat: {
-      repository, engine: new FakeEngine(() => []), memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
-    },
+    chat,
     ...(updatesDir !== undefined ? { updatesDir } : {}),
   });
   servers.push(server);

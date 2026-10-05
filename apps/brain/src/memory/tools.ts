@@ -1,6 +1,7 @@
-import { MEMORY_KINDS, MemoryScope, type Person } from "@alicia/protocol";
+import { MEMORY_KINDS, MemoryScope } from "@alicia/protocol";
 import { z } from "zod";
-import { defineTool, type ToolDefinition, type ToolResult } from "../engine/tools.ts";
+import { defineTool, type ToolResult } from "../engine/tools.ts";
+import type { ToolProvider } from "../tools/catalog.ts";
 import { oneLine } from "./sheet.ts";
 import type { Memory, MemoryStore, RefusalReason } from "./store.ts";
 
@@ -33,10 +34,11 @@ function refused(reason: RefusalReason): ToolResult {
 const NOT_FOUND: ToolResult = { text: "Souvenir introuvable.", isError: true };
 
 /** Memory tools bound to the person speaking: they can only ever reach "common" and that person. */
-export function memoryTools(store: MemoryStore, person: Person, conversationId: string | null): ToolDefinition[] {
-  return [
+export function memoryTools(store: MemoryStore): ToolProvider {
+  return ({ person, conversationId }) => [
     defineTool({
       name: "memory_search",
+      label: "Alicia fouille dans sa mémoire…",
       description: "Cherche dans ta mémoire (commune et personnelle de la personne qui te parle). Donne des mots-clés ou une question.",
       input: { query: z.string().min(1).max(300) },
       async run({ query }) {
@@ -46,6 +48,7 @@ export function memoryTools(store: MemoryStore, person: Person, conversationId: 
     }),
     defineTool({
       name: "memory_remember",
+      label: "Alicia retient ça…",
       description:
         "Retiens un souvenir durable. scope : « common » (toute la famille) ou « personal » (la personne qui te parle). kind : rule, preference, habit, fact, event.",
       input: {
@@ -58,7 +61,7 @@ export function memoryTools(store: MemoryStore, person: Person, conversationId: 
         const result = await store.remember({
           personId: person.id, scope, kind, text, source: "conversation",
           ...(pinned !== undefined ? { pinned } : {}),
-          ...(conversationId !== null ? { conversationId } : {}),
+          conversationId,
         });
         switch (result.status) {
           case "created":
@@ -72,6 +75,7 @@ export function memoryTools(store: MemoryStore, person: Person, conversationId: 
     }),
     defineTool({
       name: "memory_update",
+      label: "Alicia met sa mémoire à jour…",
       description: "Corrige un souvenir (texte, type, portée, épinglé) à partir de son identifiant entre crochets (donné par memory_search ou memory_remember).",
       input: {
         id: z.string().min(1),
@@ -99,6 +103,7 @@ export function memoryTools(store: MemoryStore, person: Person, conversationId: 
     }),
     defineTool({
       name: "memory_forget",
+      label: "Alicia oublie ce souvenir…",
       description: "Oublie un souvenir à partir de son identifiant entre crochets (donné par memory_search), récupérable pendant 30 jours.",
       input: { id: z.string().min(1) },
       run({ id }) {

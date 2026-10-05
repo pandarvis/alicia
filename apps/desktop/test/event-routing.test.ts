@@ -10,7 +10,7 @@ const OPEN: readonly Surface[] = ["main", "holo", "spotlight"];
 const TURN_EVENTS: ServerEvent[] = [
   { type: "conversation", requestId: REQUEST, conversationId: CONV },
   { type: "text_delta", conversationId: CONV, text: "Bonjour" },
-  { type: "tool_call", conversationId: CONV, callId: "c", tool: "weather" },
+  { type: "tool_call", conversationId: CONV, callId: "c", tool: "weather", label: "Alicia regarde la météo…" },
   { type: "tool_result", conversationId: CONV, callId: "c", success: true },
   { type: "error", requestId: REQUEST, code: "engine", message: "Raté." },
 ];

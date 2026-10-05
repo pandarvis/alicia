@@ -2,7 +2,6 @@ import type {
   ConversationSummary, HistoryMessage, SendMessage, ServerEvent,
 } from "@alicia/protocol";
 import { MASCOT_ON_ERROR, type MascotState } from "../../../shared/mascot.ts";
-import { toolActivity } from "./tool-labels.ts";
 
 export interface ChatMessage {
   id: string;
@@ -177,7 +176,7 @@ export class ChatStore {
         return;
       }
       case "tool_call":
-        this.activity = toolActivity(event.tool);
+        this.activity = event.label;
         this.#setMascot(event.tool === "memory_remember" ? "idea" : "thinking");
         return;
       case "tool_result":

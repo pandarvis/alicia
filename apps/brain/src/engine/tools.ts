@@ -11,6 +11,8 @@ export interface ToolResult {
  */
 export interface ToolDefinition<Shape extends z.ZodRawShape = z.ZodRawShape> {
   name: string;
+  /** What the family sees while it runs, in French (« Alicia regarde la météo… »). */
+  label: string;
   description: string;
   input: Shape;
   run(args: z.infer<z.ZodObject<Shape>>): Promise<ToolResult>;

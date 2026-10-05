@@ -196,7 +196,7 @@ async function chat(url: string, code: string | undefined): Promise<void> {
           process.stdout.write(e.text);
           break;
         case "tool_call":
-          process.stdout.write(`\n  [outil : ${e.tool}]\n`);
+          process.stdout.write(`\n  [${e.label}]\n`);
           break;
         case "tool_result":
         case "heartbeat":

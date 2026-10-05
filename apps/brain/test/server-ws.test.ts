@@ -3,13 +3,12 @@ import { ServerEvent } from "@alicia/protocol";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
-import { ConversationRepository } from "../src/conversations/repository.ts";
 import type { Engine, EngineEvent } from "../src/engine/engine.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import type { DrainOptions } from "../src/server/backpressure.ts";
 import { createServer } from "../src/server/server.ts";
-import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
+import { createChatDeps, createTestClock, createTestDb } from "./helpers.ts";
 
 const REQUEST_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 const REQUEST_ID_2 = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
@@ -32,7 +31,6 @@ interface StartOptions {
 async function start(options: StartOptions = {}) {
   const db = createTestDb();
   const time = createTestClock();
-  const repository = new ConversationRepository(db, time.clock);
   const pairing = new PairingService(db, time.clock);
   const fakeEngine = new FakeEngine(() => [
     { type: "session", sessionId: "s1" },
@@ -40,13 +38,13 @@ async function start(options: StartOptions = {}) {
     { type: "done", inputTokens: 3, outputTokens: 2 },
   ]);
   const engine = options.engine ?? fakeEngine;
+  const chat = createChatDeps(db, time.clock, engine);
+  const { repository, memory } = chat;
   app = await createServer({
     pairing,
     repository,
     version: "0.1.0",
-    chat: {
-      repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
-    },
+    chat,
     ...(options.authTimeoutMs === undefined
       ? {}
       : { authTimeoutMs: options.authTimeoutMs }),
@@ -61,7 +59,7 @@ async function start(options: StartOptions = {}) {
   const elodie = pairing.redeem(pairing.generateCode("elodie"), "Tablette");
   if ("error" in elodie) throw new Error(elodie.error);
   return {
-    url: `ws://127.0.0.1:${port}/ws`, token: r.token, elodieToken: elodie.token, pairing, repository, fakeEngine,
+    url: `ws://127.0.0.1:${port}/ws`, token: r.token, elodieToken: elodie.token, pairing, repository, memory, fakeEngine,
   };
 }
 

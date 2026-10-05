@@ -1,9 +1,14 @@
 import type { Person } from "@alicia/protocol";
 import type { Clock } from "../src/clock.ts";
+import type { ChatDependencies } from "../src/conversations/chat-service.ts";
+import { ConversationRepository } from "../src/conversations/repository.ts";
 import { type Db, openDb } from "../src/db/open.ts";
+import type { Engine } from "../src/engine/engine.ts";
 import { syncPeople } from "../src/identity/people.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
 import { MemoryStore } from "../src/memory/store.ts";
+import { memoryTools } from "../src/memory/tools.ts";
+import { ToolCatalog, type ToolProvider } from "../src/tools/catalog.ts";
 
 export const KEVIN: Person = { id: "kevin", name: "Kévin" };
 export const ELODIE: Person = { id: "elodie", name: "Élodie" };
@@ -29,4 +34,22 @@ export function createTestDb() {
 /** Memory store with the deterministic embedder (never downloads a model). */
 export function createTestMemory(db: Db, clock: Clock) {
   return new MemoryStore(db, new FakeEmbedder(), clock, { minSimilarity: 0.3 });
+}
+
+/** Chat dependencies on a test database; `extraTools` are added after the memory tools. */
+export function createChatDeps(
+  db: Db,
+  clock: Clock,
+  engine: Engine,
+  extraTools: readonly ToolProvider[] = [],
+): ChatDependencies {
+  const memory = createTestMemory(db, clock);
+  return {
+    repository: new ConversationRepository(db, clock),
+    engine,
+    memory,
+    tools: new ToolCatalog([memoryTools(memory), ...extraTools]),
+    clock,
+    timezone: "Europe/Paris",
+  };
 }

@@ -5,13 +5,15 @@ import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
 import { buildSheet } from "../memory/sheet.ts";
 import type { MemoryStore } from "../memory/store.ts";
-import { memoryTools } from "../memory/tools.ts";
+import { labelOf, type ToolCatalog } from "../tools/catalog.ts";
 import type { Conversation, ConversationRepository, LoggedToolCall, Message } from "./repository.ts";
 
 export interface ChatDependencies {
   repository: ConversationRepository;
   engine: Engine;
   memory: MemoryStore;
+  /** Tool providers; each turn builds its tools from them. */
+  tools: ToolCatalog;
   clock: Clock;
   timezone: string;
 }
@@ -105,7 +107,7 @@ export async function* handleSend(
   const model = chooseModel(message.model, message.text);
   const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
   const systemPrompt = buildSystemPrompt(person, sheet);
-  const tools = memoryTools(deps.memory, person, conversationId);
+  const tools = deps.tools.forTurn({ person, conversationId });
   const prompt = timestamp(message.text, new Date(start), deps.timezone);
 
   let text = "";
@@ -154,7 +156,7 @@ export async function* handleSend(
               break;
             case "tool_call":
               loggedTools.push({ callId: e.callId, tool: e.tool, success: null });
-              yield { type: "tool_call", conversationId, callId: e.callId, tool: e.tool };
+              yield { type: "tool_call", conversationId, callId: e.callId, tool: e.tool, label: labelOf(e.tool, tools) };
               break;
             case "tool_result": {
               const call = loggedTools.find((t) => t.callId === e.callId);

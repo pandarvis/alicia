@@ -1,13 +1,19 @@
 import { describe, expect, test } from "vitest";
+import { ConversationRepository } from "../src/conversations/repository.ts";
 import type { EngineRequest } from "../src/engine/engine.ts";
 import { callTool } from "../src/engine/fake-engine.ts";
 import { memoryTools } from "../src/memory/tools.ts";
 import { createTestClock, createTestDb, createTestMemory, ELODIE, KEVIN } from "./helpers.ts";
 
 function setup() {
-  const store = createTestMemory(createTestDb(), createTestClock().clock);
+  const db = createTestDb();
+  const { clock } = createTestClock();
+  const store = createTestMemory(db, clock);
+  const repository = new ConversationRepository(db, clock);
+  // Memories point to the conversation they were learnt in: it must exist.
   const requestFor = (person: typeof KEVIN): EngineRequest => ({
-    prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "", tools: memoryTools(store, person, null),
+    prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "",
+    tools: memoryTools(store)({ person, conversationId: repository.create(person.id, "Test").id }),
   });
   return { store, kevin: requestFor(KEVIN), elodie: requestFor(ELODIE) };
 }

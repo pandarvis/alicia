@@ -1,24 +1,22 @@
 import { HttpErrorBody } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { ConversationRepository } from "../src/conversations/repository.ts";
 import { FakeEngine } from "../src/engine/fake-engine.ts";
 import { PairingService } from "../src/identity/pairing.ts";
 import { ConversationLocks } from "../src/server/conversation-locks.ts";
 import { errorBody } from "../src/server/http-errors.ts";
 import { createServer, isAllowedOrigin } from "../src/server/server.ts";
-import { createTestClock, createTestDb, createTestMemory } from "./helpers.ts";
+import { createChatDeps, createTestClock, createTestDb } from "./helpers.ts";
 
 async function createContext(options: { allowedOrigins?: readonly string[] } = {}) {
   const db = createTestDb();
   const time = createTestClock();
-  const repository = new ConversationRepository(db, time.clock);
   const pairing = new PairingService(db, time.clock);
   const engine = new FakeEngine(() => [{ type: "done", inputTokens: 0, outputTokens: 0 }]);
   const locks = new ConversationLocks();
+  const chat = createChatDeps(db, time.clock, engine);
+  const { repository } = chat;
   const app = await createServer({
-    locks, pairing, repository, version: "0.1.0", chat: {
-      repository, engine, memory: createTestMemory(db, time.clock), clock: time.clock, timezone: "Europe/Paris",
-    },
+    locks, pairing, repository, version: "0.1.0", chat,
     ...(options.allowedOrigins !== undefined ? { allowedOrigins: options.allowedOrigins } : {}),
   });
   return { app, pairing, repository, locks, time };
