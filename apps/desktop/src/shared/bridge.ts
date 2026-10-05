@@ -5,6 +5,7 @@ import type { HoloView } from "./holo.ts";
 import type { MascotState } from "./mascot.ts";
 import type { SaveSessionResult, StoredSession } from "./session.ts";
 import type { SettingsPatch, SettingsSnapshot, SettingsUpdateResult } from "./settings.ts";
+import type { UpdateStatus } from "./updates.ts";
 
 export type Unsubscribe = () => void;
 
@@ -74,6 +75,14 @@ export interface DiscoveryBridge {
   onChange(listener: (brains: DiscoveredBrain[]) => void): Unsubscribe;
 }
 
+/** Automatic updates of the installed app, from the paired brain. */
+export interface UpdatesBridge {
+  status(): Promise<UpdateStatus>;
+  /** Restarts into the downloaded version. */
+  install(): Promise<void>;
+  onChange(listener: (status: UpdateStatus) => void): Unsubscribe;
+}
+
 /** API exposed to every page as `window.alicia` by the preload script. */
 export interface AliciaBridge {
   getSession(): Promise<StoredSession | null>;
@@ -92,6 +101,7 @@ export interface AliciaBridge {
   holo: HoloBridge;
   settings: SettingsBridge;
   discovery: DiscoveryBridge;
+  updates: UpdatesBridge;
 }
 
 /** Page → main process (ipcRenderer.invoke); every handler checks the sender and validates the payload. */
@@ -117,6 +127,8 @@ export const INVOKE = {
   settingsUpdate: "settings:update",
   discoveryStart: "discovery:start",
   discoveryStop: "discovery:stop",
+  updatesStatus: "updates:status",
+  updatesInstall: "updates:install",
 } as const;
 
 /** Main process → pages (webContents.send); the preload validates every payload. */
@@ -133,4 +145,5 @@ export const PUSH = {
   conversationsChanged: "push:conversations-changed",
   settings: "push:settings",
   discovery: "push:discovery",
+  updates: "push:updates",
 } as const;

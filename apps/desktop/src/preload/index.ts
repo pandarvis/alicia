@@ -8,6 +8,7 @@ import { HoloView } from "../shared/holo.ts";
 import { MascotState } from "../shared/mascot.ts";
 import { SaveSessionResult, StoredSession } from "../shared/session.ts";
 import { SettingsSnapshot, SettingsUpdateResult } from "../shared/settings.ts";
+import { UpdateStatus } from "../shared/updates.ts";
 
 /** Listens to a main-process push; anything that does not match the schema is dropped. */
 function subscribe<T>(channel: string, schema: z.ZodType<T>, listener: (value: T) => void): () => void {
@@ -99,6 +100,11 @@ const bridge: AliciaBridge = {
     start: () => call(z.array(DiscoveredBrain), INVOKE.discoveryStart),
     stop: () => call(z.undefined(), INVOKE.discoveryStop),
     onChange: (listener) => subscribe(PUSH.discovery, z.array(DiscoveredBrain), listener),
+  },
+  updates: {
+    status: () => call(UpdateStatus, INVOKE.updatesStatus),
+    install: () => call(z.undefined(), INVOKE.updatesInstall),
+    onChange: (listener) => subscribe(PUSH.updates, UpdateStatus, listener),
   },
 };
 

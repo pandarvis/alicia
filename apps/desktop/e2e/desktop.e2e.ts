@@ -320,6 +320,9 @@ test("Réglages: shortcut, launch at startup and Holo are kept after a restart; 
   expect((await recorded(second.app)).shortcuts).toEqual(["Ctrl+Shift+K"]);
   expect(await windowVisible(second.app, "holo")).toBe(false);
 
+  // Development build: updates only exist in the installed app.
+  await expect.poll(() => second.page.getByTestId("settings-updates").textContent(), POLL).toContain("app installée");
+
   // Signing out is in Réglages now.
   await second.page.getByTestId("sign-out").click();
   await second.page.getByTestId("sign-out-yes").click();

@@ -5,6 +5,7 @@ design/mascotte/references/
 apps/brain/alicia.config.yaml
 apps/brain/data/
 apps/desktop/out/
+apps/desktop/dist/
 
 # Mascotte : originaux lourds hors dépôt, seuls l'aperçu et les métadonnées sont versionnés
 design/mascotte/papier-decoupe/*

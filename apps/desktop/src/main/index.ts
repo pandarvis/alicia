@@ -23,6 +23,7 @@ import { SettingsStore } from "./settings-store.ts";
 import { type TrayAction, type TrayItem, trayMenuItems } from "./tray-menu.ts";
 import { isTrustedSenderUrl } from "./trusted-sender.ts";
 import { notificationFor } from "./turn-notifications.ts";
+import { electronUpdateEngine, UpdateController } from "./updater.ts";
 import { hardenWebContents, WindowManager } from "./windows.ts";
 
 const RENDERER_INDEX = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
@@ -156,6 +157,22 @@ function start(): void {
   const discovery = new BrainDiscovery(brainBrowser(), (brains) => {
     windows.sendTo("main", PUSH.discovery, brains);
   });
+  // Updates from the paired brain, in the installed app only; installing goes through the one quit path.
+  const updates = new UpdateController(
+    app.isPackaged
+      ? electronUpdateEngine({
+        beforeInstall: () => {
+          windows.prepareQuit();
+          quitCleanup();
+        },
+      })
+      : null,
+    schedule,
+    (status) => {
+      windows.broadcast(PUSH.updates, status);
+      refreshTray();
+    },
+  );
   const settings = new SettingsController(new SettingsStore(join(app.getPath("userData"), "settings.json")), {
     registerShortcut: (accelerator) =>
       os.registerShortcut(accelerator, () => {
@@ -178,13 +195,14 @@ function start(): void {
   /** Lets go of the brain, the network and the OS (shortcut, tray icon); shared by every way of quitting. */
   const quitCleanup = runOnce(() => {
     discovery.stop();
+    updates.stop();
     hub.disconnect();
     os.dispose();
   });
 
   function trayItems(): TrayItem[] {
     const { showHolo, launchAtStartup } = settings.snapshot.settings;
-    return trayMenuItems({ paired: current !== null, showHolo, launchAtStartup, updateReady: false });
+    return trayMenuItems({ paired: current !== null, showHolo, launchAtStartup, updateReady: updates.status.state === "ready" });
   }
 
   function refreshTray(): void {
@@ -223,7 +241,7 @@ function start(): void {
         updateFromOutside({ launchAtStartup: !settings.snapshot.settings.launchAtStartup });
         return;
       case "install-update":
-        // Offered once updates exist (task 15).
+        updates.install();
         return;
       case "quit":
         app.quit();
@@ -238,6 +256,7 @@ function start(): void {
     else hub.connect(next);
     for (const surface of windows.surfaces().filter(mayReadSession)) windows.sendTo(surface, PUSH.session, next);
     windows.broadcast(PUSH.paired, next !== null);
+    updates.setServer(next?.serverUrl ?? null);
     applyHolo();
     refreshTray();
   }
@@ -271,6 +290,7 @@ function start(): void {
     presence,
     settings,
     discovery,
+    updates,
   });
 
   windows.createMain({ show: !startHidden });
@@ -281,6 +301,7 @@ function start(): void {
     windows.showMain();
   });
   settings.start();
+  updates.setServer(current?.serverUrl ?? null);
   if (current !== null) hub.connect(current);
 
   // A second launch brings Alicia forward, unless it is Windows starting her at login.

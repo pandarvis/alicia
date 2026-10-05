@@ -4,8 +4,10 @@
   import { DEFAULT_SHORTCUT } from "../../../shared/accelerator.ts";
   import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
   import type { StoredSession } from "../../../shared/session.ts";
+  import type { UpdateStatus } from "../../../shared/updates.ts";
   import type { BrainApi } from "../lib/brain-client.ts";
   import { readKeyboardLayout } from "../lib/keyboard-layout.ts";
+  import { mirror } from "../lib/mirror.ts";
   import { motion } from "../lib/motion.ts";
   import { SettingsScreen } from "../lib/settings-screen.svelte.ts";
 
@@ -28,6 +30,7 @@
   let deviceName = $state("…");
   let appVersion = $state("…");
   let brainVersion = $state<string | null>(null);
+  let update = $state<UpdateStatus>({ state: "disabled" });
   let captureButton = $state<HTMLButtonElement | null>(null);
   let confirming = $state(false);
   let signOutButton = $state<HTMLButtonElement | null>(null);
@@ -53,7 +56,28 @@
         brainVersion = null;
       },
     );
+    return mirror(() => window.alicia.updates.status(), (listener) => window.alicia.updates.onChange(listener), (status) => {
+      update = status;
+    });
   });
+
+  function updateLabel(status: UpdateStatus): string {
+    switch (status.state) {
+      case "disabled":
+        return "Les mises à jour automatiques fonctionnent dans l'app installée, une fois appairée.";
+      case "idle":
+      case "up_to_date":
+        return `Alicia est à jour (version ${appVersion}).`;
+      case "checking":
+        return "Recherche d'une mise à jour…";
+      case "downloading":
+        return `Téléchargement de la mise à jour… ${status.percent} %`;
+      case "ready":
+        return `La version ${status.version} est prête.`;
+      case "error":
+        return "Impossible de vérifier les mises à jour pour l'instant.";
+    }
+  }
   onDestroy(() => {
     screen.stop();
   });
@@ -168,6 +192,16 @@
           </div>
         {:else}
           <button class="danger" bind:this={signOutButton} onclick={askSignOut} data-testid="sign-out" in:fade={{ duration: motion(150) }}>Déconnecter cet appareil</button>
+        {/if}
+      </div>
+    </section>
+
+    <section aria-labelledby="{uid}-updates">
+      <h2 id="{uid}-updates">Mises à jour</h2>
+      <div class="row">
+        <p class="label hint" data-testid="settings-updates">{updateLabel(update)}</p>
+        {#if update.state === "ready"}
+          <button class="link" onclick={() => void window.alicia.updates.install()} data-testid="settings-update-install" transition:fade={{ duration: motion(150) }}>Redémarrer pour installer</button>
         {/if}
       </div>
     </section>

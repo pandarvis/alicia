@@ -3,6 +3,8 @@ packages:
   - "apps/*"
 allowBuilds:
   better-sqlite3: true
+  # Squirrel.Windows only (electron-builder dependency); the NSIS installer does not need its install script.
+  electron-winstaller: false
   esbuild: true
   onnxruntime-node: true
   protobufjs: true

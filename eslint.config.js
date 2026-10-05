@@ -9,7 +9,7 @@ function bannedBuiltins(message) {
 }
 
 export default tseslint.config(
-  { ignores: ["**/node_modules/**", "**/drizzle/**", "**/out/**", ".superpowers/**"] },
+  { ignores: ["**/node_modules/**", "**/drizzle/**", "**/out/**", "**/dist/**", ".superpowers/**"] },
   ...tseslint.configs.strictTypeChecked,
   ...svelte.configs.recommended,
   {

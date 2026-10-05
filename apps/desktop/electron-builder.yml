@@ -1,0 +1,40 @@
+# Windows installer: NSIS, per user (no admin rights), no code signing. Updates come from the paired brain.
+appId: fr.pandarvis.alicia # same id as app.setAppUserModelId: notifications show as « Alicia »
+productName: Alicia
+copyright: Copyright © 2026 pandarvis
+# The installed app is named « Alicia » (profile %APPDATA%\Alicia, its own single-instance lock),
+# separate from the development build (@alicia/desktop).
+extraMetadata:
+  name: alicia
+  productName: Alicia
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - build/icon.png
+  - build/icon.ico
+  - package.json
+asar: true
+npmRebuild: false # no native module in the desktop app
+electronLanguages:
+  - fr
+  - en-US
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+  artifactName: Alicia-Setup-${version}.${ext}
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Alicia
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+# Required for latest.yml and app-update.yml; the real feed (the paired brain) is set at run time.
+publish:
+  - provider: generic
+    url: http://alicia.invalid/updates/

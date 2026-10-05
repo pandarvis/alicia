@@ -8,6 +8,7 @@ import { SettingsPatch, type SettingsUpdateResult } from "../shared/settings.ts"
 import type { Surface } from "../shared/surface.ts";
 import type { BrainHub } from "./brain-hub.ts";
 import type { BrainDiscovery } from "./discovery.ts";
+import type { UpdateController } from "./updater.ts";
 import { mayReadSession } from "./event-routing.ts";
 import type { Presence } from "./presence.ts";
 import type { SettingsController } from "./settings-controller.ts";
@@ -22,6 +23,7 @@ export interface IpcDependencies {
   presence: Presence;
   settings: SettingsController;
   discovery: BrainDiscovery;
+  updates: UpdateController;
 }
 
 const NONE = z.undefined();
@@ -108,6 +110,10 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.discoveryStop, NONE, (_none, sender) => {
     mainOnly(sender);
     deps.discovery.stop();
+  });
+  handle(INVOKE.updatesStatus, NONE, () => deps.updates.status);
+  handle(INVOKE.updatesInstall, NONE, () => {
+    deps.updates.install();
   });
   handle(INVOKE.showMain, NONE, () => {
     deps.windows.showMain();
