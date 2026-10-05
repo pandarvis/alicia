@@ -62,11 +62,8 @@ const CONNECT_FAILURES: Readonly<Record<GoogleConnectFailure, GoogleConnectFailu
   google_unreachable: "unavailable",
   google_unavailable: "unavailable",
 };
-/** Without the brain's word (a proxy page): the status. */
+/** Without the brain's word (a proxy page): only a gateway that cannot reach the brain or Google says something. */
 const CONNECT_FAILURES_BY_STATUS: Readonly<Record<number, GoogleConnectFailureReason>> = {
-  400: "exchange_failed",
-  409: "already_connected",
-  422: "missing_scopes",
   502: "unavailable",
   503: "unavailable",
 };

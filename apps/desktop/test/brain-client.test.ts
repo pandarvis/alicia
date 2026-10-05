@@ -455,11 +455,12 @@ describe("Google accounts", () => {
     ] as const) {
       expect(await api(status, { error }).connectGoogleAccount(CONNECT)).toEqual({ ok: false, reason });
     }
-    // Without it (a proxy page), the status.
-    for (const [status, reason] of [
-      [400, "exchange_failed"], [409, "already_connected"], [422, "missing_scopes"], [502, "unavailable"], [503, "unavailable"],
-    ] as const) {
-      expect(await api(status, { error: "x" }).connectGoogleAccount(CONNECT)).toEqual({ ok: false, reason });
+    // Without it (a proxy page), only an unreachable gateway is said; anything else is an error.
+    for (const status of [502, 503]) {
+      expect(await api(status, { error: "x" }).connectGoogleAccount(CONNECT)).toEqual({ ok: false, reason: "unavailable" });
+    }
+    for (const status of [400, 409, 422]) {
+      await expect(api(status, { error: "x" }).connectGoogleAccount(CONNECT)).rejects.toThrow(String(status));
     }
   });
 

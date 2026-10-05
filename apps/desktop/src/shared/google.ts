@@ -1,10 +1,12 @@
-import { GoogleScope, LoopbackRedirectUri, PkceVerifier } from "@alicia/protocol";
+import { LoopbackRedirectUri, PkceVerifier } from "@alicia/protocol";
 import { z } from "zod";
 
-/** What the main window may ask the main process: never a URL, only what goes into Google's consent URL. */
+/**
+ * What the main window may ask the main process: never a URL, nor the permissions (the main process always asks for
+ * GOOGLE_SCOPES), only the client and the address to suggest.
+ */
 export const GoogleAuthorizeRequest = z.strictObject({
   clientId: z.string().regex(/^[\w.-]+\.apps\.googleusercontent\.com$/),
-  scopes: z.array(GoogleScope).min(1),
   /** The address to suggest in Google's account chooser (reconnecting an account). */
   loginHint: z.email().optional(),
 });

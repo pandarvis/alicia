@@ -1,9 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { GOOGLE_SCOPES } from "@alicia/protocol";
 import { type GoogleAuthorizeRequest, GoogleAuthorizeResult } from "../shared/google.ts";
 
 /** Google's consent page: the only place the consent URL ever points to (built here, never by a page). */
 export const GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_ACCOUNTS_ORIGIN = "https://accounts.google.com";
 /** How long the browser has to come back to the app. */
 export const CONSENT_TIMEOUT_MS = 5 * 60_000;
 const LOOPBACK_HOST = "127.0.0.1";
@@ -79,7 +81,13 @@ function single(params: URLSearchParams, name: string): string | null {
  * Google's consent in the system browser, its answer caught on http://127.0.0.1:<random port> (RFC 8252). Only
  * `GET /` on that exact host is heard; the state is compared in constant time, and a request with a wrong state is
  * answered without ending the flow (another local program cannot cancel it). The server is closed whatever the
- * outcome. The code and the verifier are never logged.
+ * outcome. The code and the verifier are never logged. The permissions asked are always GOOGLE_SCOPES.
+ *
+ * Accepted risks: another program of the same Windows user could race the browser to the loopback with a code of its
+ * own, or read the code on the way — PKCE makes a code useless without the verifier, which never leaves this process
+ * but for the brain. The code, verifier and redirect then travel to the brain like everything else the app sends it
+ * (with the device token, over Tailscale or the home network). Someone on the network swapping the client id would
+ * have to sit between the app and the brain, which the same channel already trusts.
  */
 export function authorizeWithLoopback(request: GoogleAuthorizeRequest, options: LoopbackOptions): Promise<GoogleAuthorizeResult> {
   if (options.signal?.aborted === true) return Promise.resolve({ ok: false, reason: "cancelled" });
@@ -156,7 +164,7 @@ export function authorizeWithLoopback(request: GoogleAuthorizeRequest, options: 
         client_id: request.clientId,
         redirect_uri: redirectUri,
         response_type: "code",
-        scope: request.scopes.join(" "),
+        scope: GOOGLE_SCOPES.join(" "),
         code_challenge: challenge,
         code_challenge_method: "S256",
         state,
@@ -165,6 +173,11 @@ export function authorizeWithLoopback(request: GoogleAuthorizeRequest, options: 
         prompt: "consent",
         ...(request.loginHint !== undefined ? { login_hint: request.loginHint } : {}),
       }).toString();
+      // Only ever Google's own page in the person's browser.
+      if (consent.origin !== GOOGLE_ACCOUNTS_ORIGIN) {
+        finish({ ok: false, reason: "failed" });
+        return;
+      }
       timer = setTimeout(() => {
         finish({ ok: false, reason: "timeout" });
       }, options.timeoutMs ?? CONSENT_TIMEOUT_MS);

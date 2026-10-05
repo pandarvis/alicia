@@ -3,7 +3,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import type { GoogleAccountSummary, GoogleOwner } from "@alicia/protocol";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
   import { fade, slide } from "svelte/transition";
   import type { AccountsScreen } from "../lib/accounts-screen.svelte.ts";
@@ -34,13 +34,47 @@
     },
   ]);
 
-  // Every visit shows the accounts as they are now (a turn may have flagged one meanwhile).
+  let view = $state<HTMLElement | null>(null);
+  /** The « Non » of the open « Retirer ? » question: the safe answer gets the focus. */
+  let keepButton = $state<HTMLButtonElement | null>(null);
+
+  $effect(() => {
+    if (screen.removingId !== null) keepButton?.focus();
+  });
+
+  /** Focuses a button of the view once the screen has drawn the change. */
+  async function focusLater(selector: string): Promise<void> {
+    await tick();
+    view?.querySelector<HTMLButtonElement>(selector)?.focus();
+  }
+
+  /** « Non »: the question closes and the focus goes back to that row's trash. */
+  function keep(accountId: string): void {
+    screen.keep();
+    void focusLater(`button[data-remove-account="${CSS.escape(accountId)}"]`);
+  }
+
+  /** « Oui »: once the account is gone, the focus goes to its section's « Ajouter… » (the row no longer exists). */
+  async function confirmRemove(owner: GoogleOwner): Promise<void> {
+    await screen.confirmRemove();
+    if (screen.removingId === null) await focusLater(`button[data-testid="accounts-add-${owner}"]`);
+  }
+
+  function handleAskKeydown(event: KeyboardEvent, accountId: string): void {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    keep(accountId);
+  }
+
+  // Every visit shows the accounts as they are now (a turn may have flagged one meanwhile), without the last
+  // visit's success message.
   onMount(() => {
+    screen.clearInfo();
     void screen.load();
   });
 </script>
 
-<section class="accounts" data-testid="accounts-view">
+<section class="accounts" data-testid="accounts-view" bind:this={view}>
   <header>
     <h1>Comptes Google</h1>
     <p class="lead">Alicia lit les agendas et les mails de ces comptes, et y prépare des brouillons. Elle n'envoie jamais de mail.</p>
@@ -53,7 +87,13 @@
     </div>
   {/if}
   {#if screen.message}
-    <p class="banner message" class:error={screen.message.tone === "error"} role="status" data-testid="accounts-message" transition:slide={{ duration: motion(150) }}>
+    <p
+      class="banner message"
+      class:error={screen.message.tone === "error"}
+      role={screen.message.tone === "error" ? "alert" : "status"}
+      data-testid="accounts-message"
+      transition:slide={{ duration: motion(150) }}
+    >
       {screen.message.text}
     </p>
   {/if}
@@ -89,8 +129,21 @@
                     {#if screen.removingId === account.id}
                       <span class="ask" role="group" aria-label="Retirer {account.email} ?" in:fade={{ duration: motion(150) }}>
                         <span class="question">Retirer ?</span>
-                        <button class="yes" onclick={() => void screen.confirmRemove()} disabled={screen.removing} data-testid="account-remove-yes">Oui</button>
-                        <button class="no" onclick={() => { screen.keep(); }} disabled={screen.removing} data-testid="account-remove-no">Non</button>
+                        <button
+                          class="yes"
+                          onclick={() => void confirmRemove(section.owner)}
+                          onkeydown={(event) => { handleAskKeydown(event, account.id); }}
+                          disabled={screen.removing}
+                          data-testid="account-remove-yes"
+                        >Oui</button>
+                        <button
+                          class="no"
+                          bind:this={keepButton}
+                          onclick={() => { keep(account.id); }}
+                          onkeydown={(event) => { handleAskKeydown(event, account.id); }}
+                          disabled={screen.removing}
+                          data-testid="account-remove-no"
+                        >Non</button>
                       </span>
                     {:else}
                       <span class="actions" in:fade={{ duration: motion(150) }}>
@@ -99,7 +152,15 @@
                             <RefreshCw size={14} aria-hidden="true" />Reconnecter
                           </button>
                         {/if}
-                        <button class="remove" onclick={() => { screen.askRemove(account.id); }} disabled={screen.connecting !== null} title="Retirer" aria-label="Retirer {account.email}" data-testid="account-remove">
+                        <button
+                          class="remove"
+                          onclick={() => { screen.askRemove(account.id); }}
+                          disabled={screen.connecting !== null}
+                          title="Retirer"
+                          aria-label="Retirer {account.email}"
+                          data-remove-account={account.id}
+                          data-testid="account-remove"
+                        >
                           <Trash2 size={15} aria-hidden="true" />
                         </button>
                       </span>

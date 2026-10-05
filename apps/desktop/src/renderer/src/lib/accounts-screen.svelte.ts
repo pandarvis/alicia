@@ -32,7 +32,7 @@ const AUTHORIZE_ERRORS: Readonly<Record<Exclude<GoogleAuthorizeFailure, "cancell
 const CONNECT_ERRORS: Readonly<Record<GoogleConnectFailureReason, string>> = {
   exchange_failed: "Google n'a pas validé la connexion : recommence.",
   missing_scopes: "Il faut cocher toutes les autorisations (agenda, lecture des mails, brouillons).",
-  already_connected: "Ce compte Google est déjà connecté dans Alicia par quelqu'un d'autre.",
+  already_connected: "Ce compte Google est déjà connecté dans Alicia (en Famille ou par quelqu'un d'autre).",
   unavailable: "Google est injoignable pour l'instant : réessaie plus tard.",
 };
 /** When a call fails (brain unreachable or answering oddly): what could not be done, in a neutral voice. */
@@ -104,6 +104,11 @@ export class AccountsScreen {
     this.#ports.cancel().catch(() => undefined);
   }
 
+  /** A screen opened again starts without the last success message (errors stay until something else happens). */
+  clearInfo(): void {
+    if (this.message?.tone === "info") this.message = null;
+  }
+
   askRemove(id: string): void {
     this.message = null;
     this.removingId = id;
@@ -120,6 +125,8 @@ export class AccountsScreen {
     try {
       // false: already removed elsewhere — gone either way.
       await this.#ports.remove(id);
+      // A list asked before the removal must not bring the account back.
+      this.#loadToken++;
       this.accounts = this.accounts.filter((a) => a.id !== id);
       this.removingId = null;
       this.message = { tone: "info", text: "Compte retiré." };
@@ -138,7 +145,7 @@ export class AccountsScreen {
     try {
       const client = await this.#ports.client();
       const grant = await this.#ports.authorize({
-        clientId: client.clientId, scopes: client.scopes, ...(loginHint !== undefined ? { loginHint } : {}),
+        clientId: client.clientId, ...(loginHint !== undefined ? { loginHint } : {}),
       });
       if (!grant.ok) {
         this.message = grant.reason === "cancelled" ? null : { tone: "error", text: AUTHORIZE_ERRORS[grant.reason] };
@@ -151,6 +158,8 @@ export class AccountsScreen {
         this.message = { tone: "error", text: CONNECT_ERRORS[result.reason] };
         return;
       }
+      // A list asked before the connection must not hide the account again.
+      this.#loadToken++;
       this.accounts = [...this.accounts.filter((a) => a.id !== result.account.id), result.account];
       this.phase = "ready";
       const other = accountId !== null && result.account.id !== accountId;

@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { authorizeWithLoopback, GoogleConsent, pkcePair } from "../src/main/google-oauth.ts";
 import type { GoogleAuthorizeResult } from "../src/shared/google.ts";
 
-const REQUEST = { clientId: "123-abc.apps.googleusercontent.com", scopes: [...GOOGLE_SCOPES] };
+const REQUEST = { clientId: "123-abc.apps.googleusercontent.com" };
 
 /** The loopback the consent URL sends the browser back to. */
 function redirectOf(consentUrl: string): URL {
@@ -97,9 +97,11 @@ describe("loopback authorization", () => {
     expect(page?.headers.get("content-security-policy")).toMatch(/^default-src 'none'; style-src 'sha256-[A-Za-z0-9+/=]+'/);
     expect(page?.headers.get("referrer-policy")).toBe("no-referrer");
     expect(page?.headers.get("cache-control")).toBe("no-store");
+    expect(page?.headers.get("x-content-type-options")).toBe("nosniff");
     expect(page?.body).not.toContain("4/0Acode");
-    // The loopback is closed once the flow is over.
+    // The loopback is closed once the flow is over, whatever the request.
     await expect(fetch(result.redirectUri)).rejects.toThrow();
+    await expect(rawRequest(new URL(result.redirectUri), { host: "evil.example:80" })).rejects.toThrow();
   });
 
   test("the style block matches the hash the page allows", async () => {

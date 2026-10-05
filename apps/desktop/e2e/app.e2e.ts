@@ -370,12 +370,22 @@ test("Comptes: a Famille account connected through the browser, a flow cancelled
   await page.getByTestId("accounts-waiting").waitFor({ state: "detached" });
   expect(await page.getByTestId("accounts-message").count()).toBe(0);
 
-  // Removing asks first; Alicia's access is then revoked at Google.
+  // Removing asks first, the safe answer focused; « Non » or Escape gives the focus back to the trash. Then Alicia's
+  // access is revoked at Google, and the focus goes to « Ajouter… » (the row is gone).
+  const focused = (): Promise<string | null> => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
   await row.getByTestId("account-remove").click();
+  await expect.poll(focused, POLL).toBe("account-remove-no");
   await row.getByTestId("account-remove-no").click();
+  await expect.poll(focused, POLL).toBe("account-remove");
+  await row.getByTestId("account-remove").click();
+  await expect.poll(focused, POLL).toBe("account-remove-no");
+  await page.keyboard.press("Escape");
+  await expect.poll(focused, POLL).toBe("account-remove");
+  expect(await row.getByTestId("account-remove-yes").count()).toBe(0);
   await row.getByTestId("account-remove").click();
   await row.getByTestId("account-remove-yes").click();
   await expect.poll(() => page.getByTestId("account-row").count(), POLL).toBe(0);
+  await expect.poll(focused, POLL).toBe("accounts-add-common");
   await page.getByTestId("accounts-message").filter({ hasText: "Compte retiré." }).waitFor();
   expect(google.revoked).toHaveLength(1);
   expect((await recorded(app)).browser).toHaveLength(2);

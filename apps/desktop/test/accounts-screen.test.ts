@@ -95,6 +95,51 @@ describe("AccountsScreen", () => {
     expect(screen.accounts).toEqual([FAMILLE]);
   });
 
+  test("a list asked before an addition or a removal does not undo it", async () => {
+    const answers: (() => void)[] = [];
+    let listed: GoogleAccountSummary[] = [FAMILLE];
+    const { screen } = setup({
+      list: () => {
+        const snapshot = listed;
+        return new Promise((resolve) => {
+          answers.push(() => {
+            resolve({ available: true, accounts: snapshot });
+          });
+        });
+      },
+      connect: () => Promise.resolve({ ok: true, account: { ...KEVIN, status: "connected" } }),
+    });
+    const first = screen.load();
+    answers[0]?.();
+    await first;
+    // Asked before the addition, answered after it.
+    const stale = screen.load();
+    await screen.add("personal");
+    answers[1]?.();
+    await stale;
+    expect(screen.personal.map((a) => a.email)).toEqual(["kevin@example.com"]);
+
+    listed = [FAMILLE, { ...KEVIN, status: "connected" }];
+    const staleAgain = screen.load();
+    screen.askRemove(KEVIN.id);
+    await screen.confirmRemove();
+    answers[2]?.();
+    await staleAgain;
+    expect(screen.personal).toEqual([]);
+  });
+
+  test("opening the screen again forgets the last success, not an error", async () => {
+    const { screen } = setup();
+    await screen.add("common");
+    expect(screen.message?.tone).toBe("info");
+    screen.clearInfo();
+    expect(screen.message).toBeNull();
+    const failing = setup({ client: () => Promise.reject(new Error("offline")) });
+    await failing.screen.add("common");
+    failing.screen.clearInfo();
+    expect(failing.screen.message?.tone).toBe("error");
+  });
+
   test("add a Famille account: browser flow, then the brain exchanges the code", async () => {
     const { screen, calls } = setup({
       connect: (input) => {
@@ -104,7 +149,8 @@ describe("AccountsScreen", () => {
     });
     await screen.load();
     await screen.add("common");
-    expect(calls.authorize).toEqual([{ clientId: CLIENT.clientId, scopes: CLIENT.scopes }]);
+    // The permissions are the main process's to set: only the client goes there.
+    expect(calls.authorize).toEqual([{ clientId: CLIENT.clientId }]);
     expect(calls.connect).toEqual([{ owner: "common", code: "4/0A", codeVerifier: GRANT.codeVerifier, redirectUri: GRANT.redirectUri }]);
     expect(screen.common.map((a) => a.email)).toEqual(["autre@example.com", "famille@example.com"]);
     expect(screen.message).toEqual({ tone: "info", text: "autre@example.com est connecté." });
@@ -114,7 +160,7 @@ describe("AccountsScreen", () => {
   test("reconnect suggests the same address and keeps the owner", async () => {
     const { screen, calls } = setup();
     await screen.reconnect(KEVIN.id);
-    expect(calls.authorize).toEqual([{ clientId: CLIENT.clientId, scopes: CLIENT.scopes, loginHint: "kevin@example.com" }]);
+    expect(calls.authorize).toEqual([{ clientId: CLIENT.clientId, loginHint: "kevin@example.com" }]);
     expect(calls.connect).toMatchObject([{ owner: "personal" }]);
     expect(screen.personal[0]?.status).toBe("connected");
     expect(screen.needsAttention).toBe(false);
