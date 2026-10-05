@@ -68,6 +68,16 @@ describe("confirmationSurface", () => {
     expect(eventRecipients(TURN_EVENTS[1] ?? DONE, "spotlight", OPEN)).toEqual(["spotlight"]);
   });
 
+  test("an account to reconnect goes where the turn's cards show (the main window for a Spotlight turn)", () => {
+    const reconnect: ServerEvent = {
+      type: "account_reconnect", conversationId: CONV, accounts: [{ id: REQUEST, email: "famille@example.com" }],
+    };
+    expect(eventRecipients(reconnect, "holo", OPEN)).toEqual(["holo"]);
+    expect(eventRecipients(reconnect, "spotlight", OPEN)).toEqual(["main"]);
+    expect(eventRecipients(reconnect, undefined, OPEN)).toEqual([]);
+    expect(eventRecipients(reconnect, "spotlight", ["spotlight"])).toEqual([]);
+  });
+
   test("a Spotlight turn that fails in a conversation also tells the main window (its cards there are over)", () => {
     const failed: ServerEvent = { type: "error", requestId: REQUEST, conversationId: CONV, code: "engine", message: "Raté." };
     expect(eventRecipients(failed, "spotlight", OPEN)).toEqual(["spotlight", "main"]);

@@ -231,6 +231,9 @@ async function chat(url: string, code: string | undefined): Promise<void> {
           cards.clear();
           endTurn?.();
           break;
+        case "account_reconnect":
+          process.stdout.write(`\n  [compte à reconnecter dans l'app : ${e.accounts.map((a) => a.email).join(", ")}]\n`);
+          break;
         case "error":
           // "busy": a turn is already running; print it and hand back control like any other error.
           console.log(`\n  [erreur ${e.code}] ${e.message}`);

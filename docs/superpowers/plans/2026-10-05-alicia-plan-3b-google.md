@@ -43,21 +43,25 @@
 
 | Concept | Nom (plan 3a) | Fichier |
 |---|---|---|
-| Définition d'un outil | `ToolDefinition` + `label` (français), `confirmation?(args): Promise<string \| null>`, `untrustedOutput?: boolean` ; `defineTool` | `apps/brain/src/engine/tools.ts` |
-| Famille d'outils d'un tour | `ToolProvider = (scope: ToolScope) => ToolDefinition[]`, `ToolScope { person, conversationId }`, `ToolCatalog.forTurn(turn)` | `apps/brain/src/tools/catalog.ts` |
-| Liste des fournisseurs du cerveau | `toolProviders(config, parts)` | `apps/brain/src/application.ts` |
-| Confirmation + marquage « non fiable » | `guardTool(definition, turn)` (appliqué par le catalogue) | `apps/brain/src/tools/guard-tool.ts` |
-| Contexte du tour | `TurnContext` (`untrusted`, `markUntrusted()`, `confirm()`, `userUrls`) | `apps/brain/src/tools/turn.ts` |
-| Garde-fou `WebFetch` | `createNativeGuard(turn)` ; refus : « Page non ouverte : la personne a refusé… » | `apps/brain/src/tools/native-guard.ts` |
-| Encadrement du contenu extérieur | `frameUntrusted(source, content)`, `UNTRUSTED_REMINDER` | `apps/brain/src/tools/untrusted.ts` |
+| Définition d'un outil | `ToolDefinition` + `label` (français), `confirmation?(args): Promise<ConfirmationAsk \| null>` avec `ConfirmationAsk { summary, snapshot }`, `run(args, confirmed?: Confirmed { snapshot })`, `untrustedOutput?: boolean` ; `defineTool` | `apps/brain/src/engine/tools.ts` |
+| Famille d'outils d'un tour | `ToolProvider = (scope: ToolScope) => ToolDefinition[]`, `ToolScope { person, conversationId, readonly untrusted, readonly signal }`, `ToolCatalog.forTurn(turn)`, `checkNames()` au démarrage | `apps/brain/src/tools/catalog.ts` |
+| Liste des fournisseurs du cerveau | `toolProviders(config, parts: { memory, attachments, fetch })` | `apps/brain/src/application.ts` |
+| Confirmation + marquage « non fiable » | `guardTool(definition, turn)` (appliqué par le catalogue) : rien après la fin du tour, confirmation, puis `run(args, { snapshot })` dans un budget (`TOOL_RUN_BUDGET_MS`), marquage si `untrustedOutput` | `apps/brain/src/tools/guard-tool.ts` |
+| Contexte du tour | `TurnContext` (`untrusted`, `markUntrusted()` persisté dans `conversations.untrusted_at`, `confirm()`, `userUrls`, `knowsUrl()`, `signal`, `ended`) | `apps/brain/src/tools/turn.ts` |
+| Garde-fou `WebFetch` | `createNativeGuard(turn)` ; refus : « Page non ouverte : la personne a refusé. Ne réessaie pas sans qu'elle le demande. » ; adresses locales : toujours une question ; `WebSearch` demande aussi dans une conversation non fiable | `apps/brain/src/tools/native-guard.ts` |
+| Encadrement du contenu extérieur | `frameUntrusted(source, content)` (identifiant aléatoire par appel, répété sur la balise fermante), `UNTRUSTED_REMINDER` | `apps/brain/src/tools/untrusted.ts` |
+| Caractères invisibles | `hasHiddenCharacters(text)` (ce qu'une carte de confirmation ne peut pas montrer) | `apps/brain/src/text.ts` |
 | Tour | `handleSend(deps, person, message, signal, ports: TurnPorts)`, `ChatDependencies.tools` | `apps/brain/src/conversations/chat-service.ts` |
-| Aides de test | `createChatDeps(db, clock, engine, extraTools)`, `createTestTurn(person, conv, outcome)`, `answeringPorts(outcome)` ; `callTool`, `callNative` | `apps/brain/test/helpers.ts`, `apps/brain/src/engine/fake-engine.ts` |
+| Aides de test | `createChatDeps(db, clock, engine, extraTools)`, `createTestTurn(person, conv, outcome, paths?)` → `{ turn, asked, end }`, `answeringPorts(outcome)` → `{ ports, asked }` ; `callTool`, `callNative` | `apps/brain/test/helpers.ts`, `apps/brain/src/engine/fake-engine.ts` |
 | Protocole | `tool_call.label`, `confirm_request` / `confirm` / `confirm_result` | `packages/protocol/src/server.ts`, `client.ts` |
 | HTTP des outils en ligne | `ApplicationOptions.fetch` | `apps/brain/src/application.ts` |
 | Météo | outil `weather` (seulement si `home` est configuré) | `apps/brain/src/tools/weather.ts` |
-| Skills | `SKILLS_DIR` = `workspace/.claude/skills`, `listSkills()` → option `skills` du SDK | `apps/brain/src/application.ts`, `apps/brain/src/tools/skills.ts` |
-| Migrations | `0003_attachments.sql` → celle de 3b sera la `0004` | `apps/brain/drizzle/` |
-| App | `tool-labels.ts` **supprimé** (le libellé vient du cerveau) ; cartes de confirmation dans le fil (`ChatStore`, `ConfirmCard.svelte`) | `apps/desktop/src/renderer/src/` |
+| Consigne | `buildSystemPrompt(person, sheet, toolNames)` ; `toolsGuide(toolNames)` n'écrit une ligne que pour les outils présents | `apps/brain/src/agent/system-prompt.ts` |
+| Skills | `SKILLS_DIR` = `workspace/.claude/skills`, `listSkills()` → option `skills` du SDK ; `workspace.test.ts` vérifie la liste **exacte** des skills et un frontmatter strict (`name`, `description` seulement : ni `allowed-tools` ni `hooks`) | `apps/brain/src/application.ts`, `apps/brain/src/tools/skills.ts` |
+| Migrations | dernière : `0005_untrusted_conversations.sql` → celle de 3b sera la `0006` | `apps/brain/drizzle/` |
+| Environnement du SDK | `buildEnv` : liste blanche + **un seul** secret (jeton d'abonnement ou clé API) | `apps/brain/src/engine/sdk-engine.ts` |
+| App | `tool-labels.ts` **supprimé** (le libellé vient du cerveau) ; cartes de confirmation dans le fil (`ChatStore.messages` : `ChatItem[]`, cartes `role: "confirmation"`, `ConfirmCard.svelte`) ; les événements passent par la connexion unique du processus principal (plan 4b, `hub-client.ts`) | `apps/desktop/src/renderer/src/` |
+| E2E | `startBrain(...scenarios)`, `launch(...)`, `appEnv(userData, extra)` dans `apps/desktop/e2e/support.ts` | `apps/desktop/e2e/` |
 
 ## Décisions (et alternatives écartées)
 
@@ -81,7 +85,7 @@ packages/protocol/src/google.ts                 scopes, comptes, connexion, erre
 packages/protocol/src/server.ts                 + événement account_reconnect
 apps/brain/src/
 ├─ config.ts                                    + google.clientSecretFile, readSecretKey()
-├─ db/schema.ts, drizzle/0004_*.sql             + table google_accounts
+├─ db/schema.ts, drizzle/0006_*.sql             + table google_accounts
 ├─ google/
 │  ├─ client-secret.ts                          lecture du google_client_secret.json (type « installed »)
 │  ├─ token-cipher.ts                           AES-256-GCM lié à la ligne
@@ -142,6 +146,14 @@ Si un nom ou une signature diffère du plan 3a : remplacer dans **toutes** les t
 Run: `pnpm install --frozen-lockfile && pnpm test && pnpm typecheck && pnpm lint`
 Expected: tout vert. Sinon, s'arrêter (on ne démarre pas sur une base rouge).
 
+**Résultat (2026-10-05, branche `feat/google-3b` sur 3a @43157bf) :** 3a fusionné ; base verte (protocole 47, app 449, cerveau 680 + 2 ignorés). Le tableau ci-dessus est corrigé d'après le code réel. Écarts qui changent des tâches (chacune porte une note « Alignement ») :
+- `confirmation()` renvoie `{ summary, snapshot }` (pas une chaîne) et `run` reçoit `{ snapshot }` : ce qui s'exécute doit être ce qui a été approuvé (tâche 10).
+- `ToolScope` porte aussi `untrusted` et `signal` (le tour qui finit annule les appels réseau de ses outils) (tâches 6, 11).
+- La consigne prend la liste des outils du tour (`buildSystemPrompt(person, sheet, toolNames)`) : le guide Google suit la présence des outils, comme la météo (tâche 12).
+- Le marquage « non fiable » est **persisté** dans la conversation (`untrusted_at`) : les tours suivants commencent non fiables (tâche 12, rien à changer aux tests).
+- Migration de 3b : `0006` (tâche 4). Liste exacte des skills dans `workspace.test.ts` (tâche 14). E2E : `startBrain`/`launch` vivent dans `e2e/support.ts` (tâche 20). Les événements du chat passent par le processus principal (4b) (tâches 1, 19).
+- Scopes vérifiés sur la documentation publique (tâche 1, étape 1) : les quatre existent, `calendar.calendarlist.readonly` compris.
+
 ---
 
 ### Task 1: Types partagés Google
@@ -156,6 +168,10 @@ Expected: tout vert. Sinon, s'arrêter (on ne démarre pas sur une base rouge).
 Ouvrir https://developers.google.com/workspace/calendar/api/auth et https://developers.google.com/workspace/gmail/api/auth/scopes (lecture de documentation publique uniquement). Vérifier que ces quatre scopes existent tels quels :
 `https://www.googleapis.com/auth/calendar.events`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`, `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.compose`.
 Si `calendar.calendarlist.readonly` n'existe pas (ou plus), le remplacer par `https://www.googleapis.com/auth/calendar.readonly` partout dans ce plan, et le signaler dans le compte rendu.
+
+**Résultat (2026-10-05) :** les quatre scopes existent tels quels (`calendar.events` : voir et modifier les événements ; `calendar.calendarlist.readonly` : voir la liste des agendas abonnés ; `gmail.readonly` ; `gmail.compose` : brouillons, et envoi possible — d'où la garantie structurelle de la décision 6). Rien à remplacer.
+
+> **Alignement (tâche 0) :** depuis le plan 4b, le processus principal de l'app consomme aussi `ServerEvent` (`apps/desktop/src/main/`, connexion unique). `account_reconnect` y est rattaché au tour qui l'a trouvé (`brain-hub.ts`, comme `tool_call`) et envoyé à la fenêtre qui montre les cartes de ce tour (`event-routing.ts`, comme `confirm_request` : la fenêtre principale pour un tour de la Spotlight), tests à l'appui (`brain-hub.test.ts`, `event-routing.test.ts`). L'app a changé : lancer aussi `pnpm --filter @alicia/desktop test:e2e` avant le commit, et ajouter ces quatre fichiers au `git add`.
 
 - [ ] **Step 2: Écrire les tests (échouent)**
 
@@ -420,6 +436,8 @@ Ajouter à `apps/brain/test/sdk-engine.test.ts`, dans le `describe` qui teste `b
 Run: `pnpm --filter @alicia/brain test -- config google-client-secret sdk-engine`
 Expected: FAIL (`readSecretKey`, `parseClientSecret` absents). Le test `buildEnv` passe déjà (liste blanche) : c'est voulu, il protège contre une régression.
 
+> **Alignement (tâche 0) :** le `describe("buildEnv")` de 3a a une constante `PARENT` et une liste `ABSENT` de variables qui ne doivent jamais passer (dont `GOOGLE_CLIENT_SECRET`) ; le test ajouté vérifie les **deux** modes (abonnement et clé API), avec la vraie forme de la clé (32 octets en base64).
+
 - [ ] **Step 2: Implémenter la config**
 
 Dans `apps/brain/src/config.ts` (conserver les CRLF), ajouter au `ConfigSchema` après `models` :
@@ -652,7 +670,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `apps/brain/src/db/schema.ts`
-- Create (généré) : `apps/brain/drizzle/0004_*.sql` (+ `meta/`)
+- Create (généré) : `apps/brain/drizzle/0006_*.sql` (+ `meta/`)
 - Create: `apps/brain/src/google/account-store.ts`
 - Modify: `apps/brain/test/helpers.ts`
 - Test: `apps/brain/test/google-accounts.test.ts`
@@ -682,7 +700,7 @@ export const googleAccounts = sqliteTable(
 ```
 
 Run: `pnpm --filter @alicia/brain migrations`
-Expected: un nouveau fichier `apps/brain/drizzle/0004_<nom>.sql` contenant `CREATE TABLE \`google_accounts\`` et l'index unique sur `email`, plus `meta/0004_snapshot.json` et `_journal.json` mis à jour. Relire le SQL : aucune autre table ne doit changer.
+Expected: un nouveau fichier `apps/brain/drizzle/0006_<nom>.sql` contenant `CREATE TABLE \`google_accounts\`` et l'index unique sur `email`, plus `meta/0006_snapshot.json` et `_journal.json` mis à jour. Relire le SQL : aucune autre table ne doit changer.
 
 - [ ] **Step 2: Aide de test**
 
@@ -1633,6 +1651,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `apps/brain/test/google-client.test.ts`
 
 `GoogleClient` vit le temps du cerveau (connexion, retrait, cache des jetons d'accès en mémoire) ; `GoogleAccess` est créé **par tour, pour la personne qui parle**. `GoogleClient.send` revérifie la portée de la personne **à chaque appel**, même quand le jeton d'accès est en cache.
+
+> **Alignement (tâche 0) :** le `ToolScope` de 3a porte un `signal` qui s'interrompt à la fin du tour (comme `weather.ts` : `AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), signal])`). `GoogleAccess` accepte donc un `signal` optionnel (`forPerson(person, signal?)`), combiné au délai de chaque appel Google : un tour annulé n'attend plus Google. Un appel interrompu ainsi est une `GoogleApiError` « unavailable » (jamais « reconnect »). Le budget d'un outil après confirmation est `TOOL_RUN_BUDGET_MS` = 60 s (3a) : garder `TIMEOUT_MS` (20 s) par appel.
 
 - [ ] **Step 1: Montage de test commun**
 
@@ -2938,6 +2958,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Les contenus extérieurs sont encadrés par `frameUntrusted` de 3a (`apps/brain/src/tools/untrusted.ts`), et le tour est marqué « non fiable » par `guardTool` de 3a dès qu'un outil déclare `untrustedOutput: true` : les outils Google n'ont **rien** à câbler eux-mêmes pour le garde-fou.
 
+> **Alignement (tâche 0) :** `frameUntrusted` de 3a ajoute un identifiant aléatoire par appel (`<donnees_exterieures id="…" source="…">`) : les tests vérifient le cadre par motif (`/<donnees_exterieures id="[0-9a-f]{16}" source="…">/`), jamais par égalité exacte. `runTool` appelle la définition brute (sans `guardTool`) : `run(args)` sans `confirmed` ; pour un outil à confirmation, les tests passent par `guardTool(tool, createTestTurn(...).turn)` ou appellent `confirmation()` puis `run(args, { snapshot })` (tâche 10).
+
 - [ ] **Step 1: Aides de test pour les outils**
 
 Ajouter à `apps/brain/test/google-fixture.ts` :
@@ -3084,6 +3106,11 @@ git commit -m "feat(brain): shared helpers for Google tools (reach, French failu
 - Test: `apps/brain/test/calendar-tools.test.ts`
 
 Chaque outil a son libellé français (`label`, affiché par l'app pendant l'appel — 3a). `calendar_list` déclare `untrustedOutput: true` ; `calendar_update` et `calendar_delete` déclarent `confirmation(args)`, qui renvoie la question de la carte Oui / Non ou `null` quand il n'y a rien à confirmer (compte hors de portée, événement introuvable : `run` le dira, **sans** révéler le titre de quoi que ce soit hors de portée).
+
+> **Alignement (tâche 0) — la confirmation de 3a renvoie `{ summary, snapshot }`, et `run(args, confirmed)` doit exécuter exactement ce qui a été approuvé.** Partout dans cette tâche :
+> - `confirmation()` renvoie `{ summary: "Supprimer « Piscine » (…) ?", snapshot }` ou `null` ; les tests lisent `(await tool.confirmation?.(args))?.summary`.
+> - `snapshot` = l'`etag` de l'événement lu pour la question (chaîne vide quand Google n'a pas répondu : « cet événement »). Dans `run`, si `confirmed` est présent : relire l'événement et, si son `etag` diffère du snapshot (non vide), ne **rien** faire et répondre « L'événement a changé depuis la question : rien n'a été fait. Relis-le et redemande. » (`isError: true`) ; avec un snapshot vide (Google muet pendant la question), relire et poser la question n'est plus possible : ne rien faire non plus et demander de réessayer. En plus, la modification / suppression part avec `If-Match: <etag>` (Calendar v3 répond `412` si l'événement a changé entre-temps → même message). Tests ajoutés : un événement modifié dans `FakeGoogle` entre la question et le oui n'est ni modifié ni supprimé ; un `412` de Google donne le même refus.
+> - La question de `calendar_update` nomme l'événement **et** les changements (nouveau titre, horaires, lieu ; « description modifiée » sans la recopier) : la personne approuve ce qui sera écrit. Un nouveau titre ou lieu qui contient un caractère invisible (`hasHiddenCharacters` de `text.ts`) est refusé avant toute question (« Texte refusé : il contient des caractères invisibles. Réécris-le en clair. »). La question est coupée à 500 caractères par `TurnContext.confirm` : les changements viennent après le nom de l'événement, en une ligne chacun.
 
 - [ ] **Step 1: Écrire les tests (échouent)**
 
@@ -3625,6 +3652,8 @@ git commit -m "feat(brain): calendar tools — list, create without attendees, u
 
 `googleTools(client, timeZone)` est un `ToolProvider` de 3a : à chaque tour, il crée un `GoogleAccess` pour la personne du tour (`client.forTurn(scope)`) et le garde sous l'identifiant de la conversation, pour que le cerveau sache à la fin du tour quels comptes sont à reconnecter (`client.endTurn(conversationId)`, tâche 12). Un seul tour à la fois par conversation (verrous du serveur) : la clé est sûre.
 
+> **Alignement (tâche 0) :** `client.forTurn(scope)` reçoit le `ToolScope` réel de 3a (`person`, `conversationId`, `untrusted`, `signal`) et passe `scope.signal` au `GoogleAccess` (voir la note de la tâche 6). `ToolCatalog.checkNames()` construit une fois tous les fournisseurs au démarrage avec un identifiant de conversation aléatoire, sans `endTurn` : `forTurn` ne doit donc **rien** retenir tant qu'aucun appel Google n'a été fait : l'accès n'est enregistré sous la conversation qu'à son premier appel (test dédié : « building the tools without a turn leaves nothing behind » ; `endTurn` d'un identifiant inconnu rend `[]`).
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 Ajouter à `apps/brain/test/google-client.test.ts` :
@@ -4023,6 +4052,8 @@ git commit -m "feat(brain): Gmail tools (search, read as outside data, drafts on
 - Modify: `apps/brain/src/application.ts` (`toolProviders`), `apps/brain/src/conversations/chat-service.ts`, `apps/brain/src/agent/system-prompt.ts`
 - Test: `apps/brain/test/chat-google.test.ts`, `apps/brain/test/application.test.ts` (test des fournisseurs de 3a)
 
+> **Alignement (tâche 0) :** la consigne de 3a est `buildSystemPrompt(person, sheet, toolNames)` et son `toolsGuide(toolNames)` n'écrit que les lignes des outils présents (la météo). Le guide Google suit la même règle : **pas** d'option `{ google }` ; `buildSystemPrompt` ajoute `GOOGLE_GUIDE` après le guide des outils quand `toolNames` contient `calendar_list` (les outils Google n'existent que si le client est donné). L'appel dans `chat-service.ts` ne change pas. `ChatDependencies.google` reste nécessaire, mais seulement pour `endTurn` (carte « Reconnecter »). Le refus `WebFetch` et les aides de test (`createChatDeps`, `answeringPorts`, `callTool`, `callNative`) sont ceux du code de 3a, à l'identique. Le marquage « non fiable » de 3a est persisté dans la conversation : chaque test de garde-fou crée sa propre conversation (c'est déjà le cas, `send` sans `conversationId`). Le test de 3a des fournisseurs s'appelle « tool providers: documents always, weather only when the home is configured, through the given fetch » et construit les outils par `new ToolCatalog(toolProviders(...)).forTurn(createTestTurn(...).turn)` : y passer `google: undefined`.
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 `apps/brain/test/chat-google.test.ts` :
@@ -4228,6 +4259,8 @@ git commit -m "feat(brain): Google tools in Alicia's turn — guide, reconnect c
 - Create: `apps/brain/src/server/google-routes.ts`
 - Modify: `apps/brain/src/server/server.ts`, `apps/brain/src/application.ts` (CRLF), `apps/brain/src/cli.ts` (CRLF)
 - Test: `apps/brain/test/server-google.test.ts`, `apps/brain/test/application.test.ts`
+
+> **Alignement (tâche 0) :** `server-memories.test.ts` construit bien le serveur par `createChatDeps(...)` puis `createServer({ pairing, repository, version, chat })` : le `createContext` ci-dessous est conforme. `buildApplication` passe déjà `options.fetch ?? fetch` à `toolProviders` et appelle `tools.checkNames(...)` au démarrage : y insérer `google` sans retirer ce contrôle. `cli.ts` appelle aussi `toolProviders` dans la commande de **vérification d'isolement** (`openMemory` + `cliTurn`) : y passer le client Google quand la config a une section `google` (clé lue par `readSecretKey(process.env)`, base ouverte par `openMemory`), pour que la vérification porte sur le vrai jeu d'outils ; sinon `google: undefined`. Le test d'environnement du SDK (`ALICIA_SECRET_KEY` jamais transmise) est déjà posé à la tâche 2.
 
 - [ ] **Step 1: Écrire les tests des routes (échouent)**
 
@@ -4549,6 +4582,8 @@ git commit -m "feat(brain): /google routes (connect, list, remove) and Google wi
 - Create: `apps/brain/test/google-skills.test.ts`
 
 Instructions seules, en français, **aucun script**, **pas d'`allowed-tools`** (règles de 3a, déjà testées pour tout le dossier). `listSkills(SKILLS_DIR)` de 3a les découvre au démarrage et les passe au SDK (`skills: [...]`) : rien à câbler.
+
+> **Alignement (tâche 0) :** `apps/brain/test/workspace.test.ts` (3a) fige la liste **exacte** des skills (`SKILLS = ["lire-un-document", "ranger-un-souvenir", "verifier-avant-d-agir"]`) et vérifie pour chacun un frontmatter strict (`name` + `description` de 40 à 1 024 caractères sans `<>`, rien d'autre : ni `allowed-tools`, ni `hooks`), un corps de plus de 300 caractères et un dossier qui ne contient que `SKILL.md`. Ajouter `preparer-la-semaine` et `tri-des-mails` à cette liste (ordre alphabétique de `listSkills`) et renommer le test « exactly Alicia's three skills » en « exactly Alicia's skills » ; `google-skills.test.ts` ne garde que ce qui est propre à Google (outils nommés connus, étapes attendues), sans répéter les contrôles de frontmatter. Le cerveau refuse au démarrage un skill avec `allowed-tools` ou `hooks` : ne jamais en écrire.
 
 - [ ] **Step 1: Écrire le test (échoue)**
 
@@ -5693,6 +5728,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Après 3a, le fil du chat est une liste d'items (messages et cartes de confirmation). La carte « Reconnecter » est un **état à part** (`reconnect`), affiché sous le fil : ne pas la mêler aux items (elle survit à la fin du tour, contrairement aux cartes de confirmation).
 
+> **Alignement (tâche 0) :** dans le code de 3a, les items du fil sont `ChatStore.messages: ChatItem[]` (cartes `role: "confirmation"` placées par `placeCard`) ; `handle(event)` filtre par `#isCurrentTurn(conversationId)`. Depuis le plan 4b, les événements arrivent par la connexion unique du processus principal (`hub-client.ts`, routage des tours par fenêtre) : vérifier que `account_reconnect` est routé vers la fenêtre qui a lancé le tour comme `confirm_request` (test du hub si le routage filtre par type), et que la Holo / Spotlight l'ignorent sans erreur (`switch` exhaustifs).
+
 **Files:**
 - Modify: `apps/desktop/src/renderer/src/lib/chat-store.svelte.ts`, `apps/desktop/src/renderer/src/components/ChatView.svelte`
 - Test: `apps/desktop/test/chat-store.test.ts`
@@ -5808,6 +5845,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Aucun navigateur ne s'ouvre : l'app non empaquetée lit `ALICIA_E2E_GOOGLE_AUTH_URL` et « ouvre » la page de consentement avec `fetch` ; une fausse page locale redirige aussitôt vers la boucle locale avec un code émis par `FakeGoogle`, que le cerveau de test échange avec le même `FakeGoogle`. Jamais de clics souris système (Playwright pilote la page).
 
 `startBrain` et `launch` sont ceux de l'e2e **après 3a** (qui a pu y ajouter des options) : n'ajouter que ce qui suit, sans retirer l'existant.
+
+> **Alignement (tâche 0) :** ces aides vivent dans `apps/desktop/e2e/support.ts` (pas dans `app.e2e.ts`) : `startBrain(...scenarios: Scenario[])` (scénarios successifs, pas d'objet d'options), `launch(userData, …)` et `appEnv(userData, extra)` qui accepte déjà des variables en plus. Ajouter une fonction à part `startGoogleBrain(google: FakeGoogle, ...scenarios)` dans `support.ts` (même construction que `startBrain`, plus la section `google`, `fetch` et `google: { secretKey }`) plutôt que de changer la signature de `startBrain` ; passer `ALICIA_E2E_GOOGLE_AUTH_URL` par `appEnv(userData, { … })`.
 
 - [ ] **Step 1: Cerveau de test avec Google**
 

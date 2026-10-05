@@ -2,8 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   ClientMessage,
   ConversationSummary,
+  GOOGLE_SCOPES,
+  GoogleAccountSummary,
+  GoogleConnectRequest,
   HistoryMessage,
   HttpErrorBody,
+  LoopbackRedirectUri,
   MEMORY_KINDS,
   MemoryPatch,
   MemorySummary,
@@ -249,5 +253,57 @@ describe("send with attachments", () => {
     expect(ClientMessage.safeParse({ ...base, text: "x", attachments: Array.from({ length: 11 }, () => id) }).success).toBe(false);
     expect(ClientMessage.safeParse({ ...base, text: "x", attachments: ["pas-un-uuid"] }).success).toBe(false);
     expect(ClientMessage.safeParse({ ...base, text: "x", attachments: [{ path: "C:/Windows/win.ini" }] }).success).toBe(false);
+  });
+});
+
+describe("google", () => {
+  const ACCOUNT_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
+  const CONVERSATION_ID = "7a2d9c4e-1b3f-4e5a-8c6d-0f1e2d3c4b5a";
+
+  test("asks for calendars, mail reading and drafts — nothing that sends by itself", () => {
+    expect(GOOGLE_SCOPES).toEqual([
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+    ]);
+    expect(GOOGLE_SCOPES.some((scope) => scope.endsWith("gmail.send") || scope.endsWith("mail.google.com/"))).toBe(false);
+  });
+
+  test("account summary", () => {
+    expect(GoogleAccountSummary.safeParse({
+      id: ACCOUNT_ID, owner: "common", email: "famille@example.com", status: "reconnect",
+      connectedAt: "2026-10-05T08:00:00.000Z",
+    }).success).toBe(true);
+    expect(GoogleAccountSummary.safeParse({
+      id: ACCOUNT_ID, owner: "kevin", email: "famille@example.com", status: "connected",
+      connectedAt: "2026-10-05T08:00:00.000Z",
+    }).success).toBe(false);
+  });
+
+  test("only a loopback redirect is accepted", () => {
+    expect(LoopbackRedirectUri.safeParse("http://127.0.0.1:53682").success).toBe(true);
+    for (const uri of ["http://localhost:53682", "https://127.0.0.1:1", "http://127.0.0.1:1/x", "http://evil.example"]) {
+      expect(LoopbackRedirectUri.safeParse(uri).success).toBe(false);
+    }
+  });
+
+  test("connect request is strict", () => {
+    const valid = {
+      owner: "personal", code: "4/0AQ-code", codeVerifier: "a".repeat(43), redirectUri: "http://127.0.0.1:4000",
+    };
+    expect(GoogleConnectRequest.safeParse(valid).success).toBe(true);
+    expect(GoogleConnectRequest.safeParse({ ...valid, owner: "elodie" }).success).toBe(false);
+    expect(GoogleConnectRequest.safeParse({ ...valid, codeVerifier: "short" }).success).toBe(false);
+    expect(GoogleConnectRequest.safeParse({ ...valid, personId: "elodie" }).success).toBe(false);
+  });
+
+  test("account_reconnect event", () => {
+    expect(ServerEvent.safeParse({
+      type: "account_reconnect", conversationId: CONVERSATION_ID,
+      accounts: [{ id: ACCOUNT_ID, email: "famille@example.com" }],
+    }).success).toBe(true);
+    expect(ServerEvent.safeParse({ type: "account_reconnect", conversationId: CONVERSATION_ID, accounts: [] }).success)
+      .toBe(false);
   });
 });

@@ -147,6 +147,7 @@ export class BrainHub {
       }
       case "tool_call":
       case "tool_result":
+      case "account_reconnect":
         requestId = this.#find(event.conversationId);
         break;
       case "confirm_request":

@@ -51,6 +51,12 @@ export const ServerEvent = z.discriminatedUnion("type", [
     outputTokens: count,
     durationMs: count,
   }),
+  /** Accounts that need reconnecting, found during the turn (the app shows a « Reconnecter » card). */
+  z.object({
+    type: z.literal("account_reconnect"),
+    conversationId: z.uuid(),
+    accounts: z.array(z.object({ id: z.uuid(), email: z.email() })).min(1),
+  }),
   z.object({
     type: z.literal("error"),
     requestId: z.uuid().optional(),

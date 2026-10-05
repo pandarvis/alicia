@@ -357,6 +357,9 @@ export class ChatStore {
         return;
       case "tool_result":
         return;
+      // The « Reconnecter » card comes with plan 3b's chat card (task 19).
+      case "account_reconnect":
+        return;
       case "done":
         this.#endTurn();
         this.#setMascot("success", SUCCESS_MS);

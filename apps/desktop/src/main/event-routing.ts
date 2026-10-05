@@ -30,7 +30,9 @@ export function eventRecipients(event: ServerEvent, owner: Surface | undefined, 
     case "done":
       return [...open];
     case "confirm_request":
-    case "confirm_result": {
+    case "confirm_result":
+    // A « Reconnecter » card shows where the turn's cards show.
+    case "account_reconnect": {
       if (owner === undefined) return [];
       const surface = confirmationSurface(owner);
       return open.includes(surface) ? [surface] : [];
