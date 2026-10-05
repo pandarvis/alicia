@@ -39,6 +39,7 @@
         title="Retirer"
         onclick={() => { onremove(draft.localId); }}
         data-testid="attachment-remove"
+        data-local-id={draft.localId}
       ><X size={12} aria-hidden="true" /></button>
     </li>
   {/each}

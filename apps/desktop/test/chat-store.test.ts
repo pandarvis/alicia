@@ -800,6 +800,46 @@ describe("attachments", () => {
     expect(store.notice).toBe("10 pièces jointes au maximum par message.");
   });
 
+  test("a failed chip does not take one of the ten places", async () => {
+    const { store, uploads } = setup();
+    store.addFiles(Array.from({ length: 10 }, (_, i) => fileOf(`f${i}.pdf`)));
+    uploads[0]?.answer.resolve({ ok: false, reason: "failed" });
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("failed"); });
+    store.addFiles([fileOf("onze.pdf")]);
+    expect(store.drafts.map((d) => d.name)).toContain("onze.pdf");
+    store.addFiles([fileOf("douze.pdf")]);
+    expect(store.drafts.map((d) => d.name)).not.toContain("douze.pdf");
+  });
+
+  test("files the brain no longer has: the message is refused, its files come back and upload again", async () => {
+    const { store, uploads, sent, discarded } = setup();
+    store.addFiles([fileOf("facture.pdf")]);
+    uploads[0]?.answer.resolve(SUMMARY(A1, "facture.pdf"));
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("ready"); });
+    store.send("Combien ?");
+    expect(store.drafts).toEqual([]);
+    store.handle({
+      type: "error", requestId: sent[0]?.requestId ?? "", code: "invalid_request",
+      message: "Pièce jointe introuvable ou expirée : joins-la à nouveau.",
+    });
+    expect(store.busy).toBe(false);
+    expect(store.drafts).toMatchObject([{ name: "facture.pdf", status: "uploading" }]);
+    expect(uploads[1]?.file.name).toBe("facture.pdf");
+    expect(discarded).toEqual([A1]);
+    expect(store.notice).toBe("Une pièce jointe n'était plus disponible : les fichiers sont renvoyés, envoie à nouveau ton message.");
+  });
+
+  test("once the turn went through, the sent files are forgotten (another error brings nothing back)", async () => {
+    const { store, uploads, sent } = setup();
+    store.addFiles([fileOf("facture.pdf")]);
+    uploads[0]?.answer.resolve(SUMMARY(A1, "facture.pdf"));
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("ready"); });
+    store.send("Combien ?");
+    store.handle({ type: "error", requestId: sent[0]?.requestId ?? "", code: "engine", message: "Raté." });
+    expect(store.drafts).toEqual([]);
+    expect(store.notice).toBe("Raté.");
+  });
+
   test("files wait in the composer across conversations (a pending upload belongs to none)", async () => {
     const { store } = setup();
     store.addFiles([fileOf("a.pdf")]);

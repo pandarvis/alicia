@@ -304,7 +304,29 @@ test("attachments: a file dropped on the window becomes a chip, and can be remov
   await expect.poll(() => chip.getAttribute("data-status"), POLL).toBe("ready");
   await chip.getByTestId("attachment-remove").click();
   await expect.poll(() => page.getByTestId("attachment-chip").count(), POLL).toBe(0);
+  // No chip left: the focus goes back to the message field.
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-testid")), POLL).toBe("composer-input");
   // The brain forgot the upload too.
   const pendingDir = join(dirname(brain.app.attachments.dirOf("11111111-1111-4111-8111-111111111111")), "pending");
   await expect.poll(() => readdirSync(pendingDir), POLL).toEqual([]);
+});
+
+test("attachments: a pasted picture becomes a chip; text copied from Office (text and picture) stays text", async () => {
+  const brain = await startBrain();
+  const { page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  /** Pastes into the message field; true when the app took the paste over (default prevented). */
+  const paste = (withText: boolean): Promise<boolean> => page.evaluate((text) => {
+    const data = new DataTransfer();
+    if (text) data.setData("text/plain", "Total : 420 €");
+    data.items.add(new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0])], "image.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    document.querySelector("[data-testid=composer-input]")?.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, withText);
+  expect(await paste(true)).toBe(false);
+  expect(await page.getByTestId("attachment-chip").count()).toBe(0);
+  expect(await paste(false)).toBe(true);
+  const chip = page.getByTestId("attachment-chip").filter({ hasText: "image.png" });
+  await expect.poll(() => chip.getAttribute("data-status"), POLL).toBe("ready");
 });

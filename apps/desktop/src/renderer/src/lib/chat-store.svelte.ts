@@ -2,6 +2,7 @@ import {
   type AttachmentKind, checkAttachment, type ConfirmationOutcome, type ConfirmMessage, type ConversationSummary,
   type HistoryMessage, MAX_ATTACHMENTS_PER_MESSAGE, type SendMessage, type ServerEvent,
 } from "@alicia/protocol";
+import { SvelteMap } from "svelte/reactivity";
 import { MASCOT_ON_ERROR, type MascotState } from "../../../shared/mascot.ts";
 import { refusalText, TOO_MANY } from "./attachment-labels.ts";
 import type { UploadResult } from "./brain-client.ts";
@@ -82,6 +83,7 @@ function placeCard(items: ChatItem[], card: ConfirmationCard): void {
 }
 
 const SUCCESS_MS = 1500;
+const FILES_RESENT = "Une pièce jointe n'était plus disponible : les fichiers sont renvoyés, envoie à nouveau ton message.";
 const ALERT_MS = 2000;
 
 type TurnEvent = Extract<ServerEvent, { type: "text_delta" | "tool_call" | "tool_result" | "done" }>;
@@ -110,6 +112,10 @@ export class ChatStore {
   drafts = $state<DraftAttachment[]>([]);
 
   readonly #ports: ChatPorts;
+  /** The file behind each draft (by localId): kept to upload it again if the brain lost it before the message. */
+  readonly #files = new SvelteMap<string, File>();
+  /** The files the pending message carries (with the upload id the brain knew them by). */
+  #sentFiles: { id: string; file: File }[] = [];
   #pendingRequestId: string | null = null;
   /** The conversation of this window's running turn, from its own `conversation` event. */
   #turnConversationId: string | null = null;
@@ -215,7 +221,8 @@ export class ChatStore {
   addFiles(files: readonly File[]): void {
     const refusals: string[] = [];
     for (const file of files) {
-      if (this.drafts.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+      // A failed chip will not be sent: it does not take a place.
+      if (this.drafts.filter((d) => d.status !== "failed").length >= MAX_ATTACHMENTS_PER_MESSAGE) {
         refusals.push(TOO_MANY);
         break;
       }
@@ -226,6 +233,7 @@ export class ChatStore {
       }
       const localId = this.#ports.newId();
       this.drafts.push({ localId, name: file.name, size: file.size, kind: check.type.kind, status: "uploading" });
+      this.#files.set(localId, file);
       void this.#upload(localId, file);
     }
     if (refusals.length > 0) this.notice = refusals.join(" ");
@@ -236,6 +244,7 @@ export class ChatStore {
     const draft = this.drafts.find((d) => d.localId === localId);
     if (draft === undefined) return;
     this.drafts = this.drafts.filter((d) => d.localId !== localId);
+    this.#files.delete(localId);
     if (draft.status === "ready") this.#discard(draft.id);
   }
 
@@ -262,6 +271,11 @@ export class ChatStore {
     this.notice = null;
     this.activity = null;
     // Sent: the ready files now belong to the message; failed ones are dropped with them.
+    this.#sentFiles = ready.flatMap((d) => {
+      const file = this.#files.get(d.localId);
+      return file === undefined ? [] : [{ id: d.id, file }];
+    });
+    this.#files.clear();
     this.drafts = [];
     this.messages.push({
       id: this.#ports.newId(), role: "user", text, streaming: false,
@@ -348,16 +362,20 @@ export class ChatStore {
         this.#setMascot("success", SUCCESS_MS);
         void this.refreshConversations();
         return;
-      case "error":
+      case "error": {
         if (event.requestId !== undefined && event.requestId !== this.#pendingRequestId) {
           // Another window's turn failed in a conversation (routed here for its cards): over, like a `done`.
           if (event.conversationId !== undefined) this.#otherTurnDone(event.conversationId);
           return;
         }
+        const sentFiles = this.#sentFiles;
         this.#endTurn();
         this.notice = event.message;
         this.#setMascot(MASCOT_ON_ERROR[event.code] ?? "alert", event.code === "busy" ? ALERT_MS : undefined);
+        // Refused before it started (a file expired or already gone): the files come back and upload again.
+        if (event.code === "invalid_request" && sentFiles.length > 0) this.#resend(sentFiles);
         return;
+      }
     }
   }
 
@@ -498,6 +516,12 @@ export class ChatStore {
     }
   }
 
+  #resend(sentFiles: readonly { id: string; file: File }[]): void {
+    for (const { id } of sentFiles) this.#discard(id);
+    this.addFiles(sentFiles.map(({ file }) => file));
+    this.notice = FILES_RESENT;
+  }
+
   #discard(id: string): void {
     this.#ports.discardAttachment(id).catch(() => {
       // Unsent uploads are dropped by the brain after a day anyway.
@@ -510,6 +534,7 @@ export class ChatStore {
     this.busy = false;
     this.activity = null;
     this.#pendingRequestId = null;
+    this.#sentFiles = [];
     this.#turnConversationId = null;
     const next = this.#openAfterTurn;
     this.#openAfterTurn = null;

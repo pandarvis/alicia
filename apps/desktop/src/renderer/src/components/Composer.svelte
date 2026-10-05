@@ -1,7 +1,7 @@
 <script lang="ts">
   import Paperclip from "@lucide/svelte/icons/paperclip";
   import Sparkles from "@lucide/svelte/icons/sparkles";
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { fade, slide } from "svelte/transition";
   import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
   import { ACCEPTED_FILES } from "../lib/attachment-labels.ts";
@@ -21,6 +21,7 @@
   const canSend = $derived(ready && store.canSend(text));
   let textarea = $state<HTMLTextAreaElement | null>(null);
   let picker = $state<HTMLInputElement | null>(null);
+  let form = $state<HTMLFormElement | null>(null);
   /** Drag enter/leave pairs still open over the window: the drop hint shows while it is above 0. */
   let dragDepth = $state(0);
   let previousStatus = untrack(() => status);
@@ -99,12 +100,28 @@
     attach([...(event.dataTransfer?.files ?? [])]);
   }
 
-  /** A pasted file (a screenshot, a file copied in the explorer) is attached; pasted text stays a normal paste. */
+  /**
+   * A pasted file (a screenshot, a file copied in the explorer) is attached. Pasted text stays a normal paste, even
+   * when the clipboard also holds a picture of it (a selection copied from Word or Excel).
+   */
   function handlePaste(event: ClipboardEvent): void {
+    if ((event.clipboardData?.getData("text/plain") ?? "") !== "") return;
     const files = [...(event.clipboardData?.files ?? [])];
     if (files.length === 0) return;
     event.preventDefault();
     attach(files);
+  }
+
+  /** Removes a chip; the focus goes to the chip now in its place (or the one before), else to the message field. */
+  async function removeDraft(localId: string): Promise<void> {
+    const index = store.drafts.findIndex((d) => d.localId === localId);
+    store.removeDraft(localId);
+    await tick();
+    const next = store.drafts[index] ?? store.drafts[index - 1];
+    const button = next === undefined
+      ? null
+      : form?.querySelector<HTMLButtonElement>(`[data-testid="attachment-remove"][data-local-id="${next.localId}"]`);
+    (button ?? textarea)?.focus();
   }
 
   function handlePick(): void {
@@ -117,10 +134,10 @@
 
 <svelte:window ondragenter={handleDragenter} ondragover={handleDragover} ondragleave={handleDragleave} ondrop={handleDrop} />
 
-<form class="composer" class:dragging={dragDepth > 0} onsubmit={handleSubmit} data-testid="composer">
+<form bind:this={form} class="composer" class:dragging={dragDepth > 0} onsubmit={handleSubmit} data-testid="composer">
   {#if store.drafts.length > 0}
     <div transition:slide={{ duration: motion(160) }}>
-      <AttachmentChips drafts={store.drafts} onremove={(localId: string) => { store.removeDraft(localId); }} />
+      <AttachmentChips drafts={store.drafts} onremove={(localId: string) => { void removeDraft(localId); }} />
     </div>
   {/if}
   <div class="row">
@@ -163,7 +180,7 @@
     </button>
   </div>
   {#if dragDepth > 0}
-    <p class="drop-hint" transition:fade={{ duration: motion(120) }}>Lâche le fichier pour le joindre à ton message</p>
+    <p class="drop-hint" role="status" transition:fade={{ duration: motion(120) }}>Lâche le fichier pour le joindre à ton message</p>
   {/if}
 </form>
 
