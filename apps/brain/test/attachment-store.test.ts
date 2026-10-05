@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { eq, inArray } from "drizzle-orm";
 import { describe, expect, test, vi } from "vitest";
-import { AttachmentStore, cleanName, PENDING_TTL_MS, toSummary } from "../src/attachments/store.ts";
+import { AttachmentStore, cleanName, PENDING_MAX_BYTES, PENDING_TTL_MS, toSummary } from "../src/attachments/store.ts";
 import { ConversationRepository } from "../src/conversations/repository.ts";
+import { attachments } from "../src/db/schema.ts";
 import { createTempDir, createTestClock, createTestDb, PDF_BYTES, PNG_BYTES } from "./helpers.ts";
 
 function setup() {
@@ -267,12 +269,17 @@ describe("AttachmentStore", () => {
     });
 
     test("at most 250 MB waiting", () => {
-      const { store } = setup();
-      const big = new Uint8Array(24 * 1024 * 1024);
-      big.set(PDF_BYTES);
-      for (let i = 0; i < 10; i++) stored(store, "kevin", `gros${i}.pdf`, big);
-      expect(store.upload("kevin", "un-de-trop.pdf", big)).toEqual({ status: "refused", reason: "too_many" });
-      expect(store.upload("kevin", "petit.pdf", PDF_BYTES).status).toBe("stored");
+      const { db, store } = setup();
+      // The cap adds up the recorded sizes: they are raised in the table rather than writing 250 MB to disk.
+      const ids = Array.from({ length: 10 }, (_, i) => stored(store, "kevin", `gros${i}.pdf`).id);
+      const mib24 = 24 * 1024 * 1024;
+      const [first = "", ...others] = ids;
+      db.update(attachments).set({ size: mib24 }).where(inArray(attachments.id, others)).run();
+      db.update(attachments).set({ size: PENDING_MAX_BYTES - PDF_BYTES.byteLength - others.length * mib24 })
+        .where(eq(attachments.id, first)).run();
+      expect(store.upload("kevin", "tout-juste.pdf", PDF_BYTES).status).toBe("stored");
+      expect(store.upload("kevin", "un-de-trop.pdf", PDF_BYTES)).toEqual({ status: "refused", reason: "too_many" });
+      expect(store.upload("elodie", "a.pdf", PDF_BYTES).status).toBe("stored");
     });
 
     test("sent or expired uploads no longer count", async () => {
