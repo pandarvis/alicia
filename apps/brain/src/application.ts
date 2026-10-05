@@ -18,8 +18,9 @@ import { MemoryStore } from "./memory/store.ts";
 import { memoryTools } from "./memory/tools.ts";
 import { TransformersEmbedder } from "./memory/transformers-embedder.ts";
 import { createServer } from "./server/server.ts";
-import { ToolCatalog } from "./tools/catalog.ts";
+import { ToolCatalog, type ToolProvider } from "./tools/catalog.ts";
 import { listSkills } from "./tools/skills.ts";
+import { weatherTools } from "./tools/weather.ts";
 import { VERSION } from "./version.ts";
 
 /** cwd of the SDK process. */
@@ -32,6 +33,8 @@ export interface ApplicationOptions {
   logging?: boolean;
   /** Memory embedder (default: the local multilingual model, loaded lazily on first use). */
   embedder?: Embedder;
+  /** HTTP client of the tools that go online (default: the global fetch). */
+  fetch?: typeof fetch;
 }
 
 export interface Application {
@@ -71,6 +74,17 @@ function openCore(config: Config, embedder?: Embedder) {
   }
 }
 
+/** Every tool family of the brain (plan 3b adds Google here). The weather only exists once the home is known. */
+export function toolProviders(
+  config: Config,
+  parts: { memory: MemoryStore; attachments: AttachmentStore; fetch: typeof fetch },
+): ToolProvider[] {
+  return [
+    memoryTools(parts.memory),
+    ...(config.home !== undefined ? [weatherTools({ home: config.home, timezone: config.timezone, fetch: parts.fetch })] : []),
+  ];
+}
+
 /** Opens the database and the memory store without starting the HTTP server. */
 export function openMemory(config: Config, embedder?: Embedder): { memory: MemoryStore; close: () => void } {
   const { db, memory } = openCore(config, embedder);
@@ -104,7 +118,7 @@ export async function buildApplication(
       timezone: config.timezone,
       clock: systemClock,
     });
-    const tools = new ToolCatalog([memoryTools(memory)]);
+    const tools = new ToolCatalog(toolProviders(config, { memory, attachments, fetch: options.fetch ?? fetch }));
     // Two tools with one name would only fail on the first turn: refuse to start instead.
     const someone = config.people[0];
     if (someone !== undefined) tools.checkNames({ person: someone, conversationId: randomUUID() });

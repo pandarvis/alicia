@@ -16,3 +16,8 @@ models:
 # Pages web autorisées à appeler le cerveau en plus de l'app de bureau (future PWA).
 # Origines exactes, en minuscules, sans port par défaut, sans chemin ni barre finale, ex. "https://alicia.mon-tailnet.ts.net".
 allowedOrigins: []
+
+# Coordonnées de la maison pour la météo (facultatif ; sans elles, pas d'outil météo).
+# home:
+#   latitude: 48.85
+#   longitude: 2.35

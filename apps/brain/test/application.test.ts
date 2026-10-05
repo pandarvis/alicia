@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, expect, test } from "vitest";
-import { buildApplication } from "../src/application.ts";
+import { AttachmentStore } from "../src/attachments/store.ts";
+import { buildApplication, toolProviders } from "../src/application.ts";
 import { parseConfig } from "../src/config.ts";
-import { FakeEngine } from "../src/engine/fake-engine.ts";
+import { callTool, FakeEngine } from "../src/engine/fake-engine.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
+import { ToolCatalog } from "../src/tools/catalog.ts";
+import { createTempDir, createTestClock, createTestDb, createTestMemory, createTestTurn, KEVIN, testRequest } from "./helpers.ts";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -99,4 +102,23 @@ engine: { mode: subscription }
   await app.close();
   expect(res.statusCode).toBe(200);
   expect(res.body).toContain("version: 0.2.0");
+});
+
+test("tool providers: weather only when the home is configured, through the given fetch", async () => {
+  const db = createTestDb();
+  const clock = createTestClock().clock;
+  const urls: string[] = [];
+  const fakeFetch: typeof fetch = (input) => {
+    urls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    return Promise.reject(new Error("offline"));
+  };
+  const parts = { memory: createTestMemory(db, clock), attachments: new AttachmentStore(db, createTempDir(), clock), fetch: fakeFetch };
+  const tools = (yaml: string) =>
+    new ToolCatalog(toolProviders(parseConfig(yaml), parts)).forTurn(createTestTurn(KEVIN, "11111111-1111-4111-8111-111111111111").turn);
+  const base = "people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }\n";
+  expect(tools(base).map((t) => t.name)).not.toContain("weather");
+  const withHome = tools(`${base}home: { latitude: 48.85, longitude: 2.35 }\n`);
+  expect(withHome.map((t) => t.name)).toContain("weather");
+  await callTool(testRequest({ tools: withHome }), "weather", {});
+  expect(urls).toHaveLength(1);
 });

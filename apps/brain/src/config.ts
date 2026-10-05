@@ -49,6 +49,10 @@ export const ConfigSchema = z.object({
         "Origine invalide : écrire schéma://hôte[:port] en minuscules, sans port par défaut, sans chemin ni barre finale.",
     }))
     .default([]),
+  /** Home coordinates for the weather (optional: without them, no weather tool). */
+  home: z
+    .object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) })
+    .optional(),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 export type EngineMode = Config["engine"]["mode"];

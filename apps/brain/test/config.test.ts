@@ -23,6 +23,13 @@ describe("parseConfig", () => {
     expect(c.models).toEqual({ sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" });
     expect(c.people.map((p) => p.id)).toEqual(["kevin", "elodie"]);
   });
+  test("home coordinates: optional, checked", () => {
+    expect(parseConfig(MINIMAL_YAML).home).toBeUndefined();
+    expect(parseConfig(`${MINIMAL_YAML}home: { latitude: 48.85, longitude: 2.35 }\n`).home).toEqual({ latitude: 48.85, longitude: 2.35 });
+    for (const home of ["{ latitude: 120, longitude: 2.35 }", "{ latitude: 48.85, longitude: -181 }", "{ latitude: 48.85 }", "Paris"]) {
+      expect(() => parseConfig(`${MINIMAL_YAML}home: ${home}\n`), home).toThrow();
+    }
+  });
   test("discovery can be turned off", () => {
     expect(parseConfig(`${MINIMAL_YAML}discovery: false\n`).discovery).toBe(false);
   });
