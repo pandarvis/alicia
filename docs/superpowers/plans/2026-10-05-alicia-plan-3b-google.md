@@ -1018,6 +1018,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 `FakeGoogle` vit dans `src/` comme `FakeEngine` et `FakeEmbedder` : l'e2e de l'app l'importe aussi. Il implémente tout ce que les tâches suivantes utilisent (OAuth, Calendar, Gmail) et **refuse toute URL d'envoi**.
 
+> **Alignement (tâche 0) :** pour la confirmation de 3a (ce qui s'exécute est ce qui a été approuvé, tâche 10), chaque événement du faux porte un `etag` qui change à chaque écriture, et `PATCH` / `DELETE` avec `If-Match` sur un `etag` périmé répondent `412 conditionNotMet` sans rien changer, comme Calendar v3. Comme le vrai `fetch`, une requête dont le `signal` est déjà interrompu est rejetée sans être vue (tâche 6). Tests dédiés : `apps/brain/test/fake-google.test.ts` (envoi refusé, etag, `If-Match`, requête interrompue).
+
 - [ ] **Step 1: Le faux Google**
 
 `apps/brain/src/google/fake-google.ts` :
