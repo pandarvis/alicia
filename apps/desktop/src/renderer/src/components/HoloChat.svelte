@@ -1,6 +1,7 @@
 <script lang="ts">
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Plus from "@lucide/svelte/icons/plus";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import X from "@lucide/svelte/icons/x";
   import { onMount, untrack } from "svelte";
   import { fade } from "svelte/transition";
@@ -16,10 +17,11 @@
   let list = $state<HTMLDivElement | null>(null);
   const store = $derived(chat.store);
   const ready = $derived(chat.status === "ready");
-  /** Changes whenever a message is added, grows, or a card is settled: the list then follows its end. */
+  /** Changes whenever a message is added, grows, or a card is settled or shown: the list then follows its end. */
   const tail = $derived.by(() => {
     const last = store.messages.at(-1);
-    return `${store.messages.length}:${last?.role === "confirmation" ? last.status : (last?.text.length ?? 0)}`;
+    const grown = last?.role === "confirmation" ? last.status : (last?.text.length ?? 0);
+    return `${store.messages.length}:${grown}:${store.reconnectCards.length}`;
   });
   let seenTail = "";
   /** Typing is reported a few times a second at most, not on every key. */
@@ -94,6 +96,14 @@
       <p class="empty" in:fade={{ duration: motion(150) }}>Une question rapide ? Je t'écoute.</p>
     {/each}
     {#if store.activity}<p class="activity" transition:fade={{ duration: motion(150) }}>{store.activity}</p>{/if}
+    {#each store.reconnectCards as account (account.id)}
+      <div class="reconnect" role="status" data-testid="holo-reconnect-card" transition:fade={{ duration: motion(150) }}>
+        <span>Le compte <strong>{account.email}</strong> doit être reconnecté.</span>
+        <button onclick={() => { chat.reconnect(account.id); }} data-testid="holo-reconnect-button">
+          <RefreshCw size={13} aria-hidden="true" />Reconnecter le compte
+        </button>
+      </div>
+    {/each}
   </div>
   {#if store.notice}<p class="notice" role="status" transition:fade={{ duration: motion(150) }}>{store.notice}</p>{/if}
   <textarea
@@ -129,6 +139,15 @@
   @keyframes blink { 50% { opacity: 0; } }
   .empty, .activity { margin: auto 0 0; color: var(--muted); font-size: 13px; }
   .notice { margin: 0; color: var(--amber); font-size: 13px; }
+  .reconnect {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px 10px; border-radius: 12px;
+    border: 1px solid var(--amber); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere;
+  }
+  .reconnect button {
+    display: flex; align-items: center; gap: 5px; padding: 3px 9px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--surface-raised); color: var(--amber); font-weight: 700; transition: background var(--duration) ease;
+  }
+  .reconnect button:hover { background: var(--surface); }
   textarea { resize: none; border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; background: var(--surface); transition: border-color var(--duration) ease; }
   textarea:focus { outline: none; border-color: var(--sage); }
 </style>

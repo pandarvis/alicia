@@ -42,6 +42,10 @@ export interface AppBridge {
   openConversation(conversationId: string): Promise<void>;
   /** A notification (or another window) asks the main window to show a conversation. */
   onOpenConversation(listener: (conversationId: string) => void): Unsubscribe;
+  /** From the Holo's « Reconnecter le compte » card: the main window shows Comptes and reconnects this account. */
+  reconnectAccount(accountId: string): Promise<void>;
+  /** The main window is asked to reconnect a Google account (Comptes, then Google's consent). */
+  onReconnectAccount(listener: (accountId: string) => void): Unsubscribe;
 }
 
 /** For the floating windows (Holo, Spotlight): entrance and exit animations around show/hide. */
@@ -144,6 +148,7 @@ export const INVOKE = {
   appVersion: "app:version",
   showMain: "app:show-main",
   openConversation: "app:open-conversation",
+  reconnectAccount: "app:reconnect-account",
   hideSelf: "window:hide-self",
   holoDragStart: "holo:drag-start",
   holoDragMove: "holo:drag-move",
@@ -168,6 +173,7 @@ export const PUSH = {
   brainStatus: "push:brain-status",
   presence: "push:presence",
   openConversation: "push:open-conversation",
+  reconnectAccount: "push:reconnect-account",
   shown: "push:shown",
   hideRequest: "push:hide-request",
   holoView: "push:holo-view",

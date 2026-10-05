@@ -21,7 +21,8 @@ export function confirmationSurface(owner: Surface): Surface {
 /**
  * Which windows receive a brain event. A turn's events go only to the window that asked for it (another
  * window starting a conversation must never show them, nor answer its confirmations; a Spotlight turn's cards go to the main window); its end (`done`) reaches every window, which refresh
- * their conversation lists; connection events reach every window.
+ * their conversation lists; connection events reach every window. An account to reconnect also reaches the main
+ * window, whichever window's turn found it: its Comptes screen and menu dot follow, and it keeps the card.
  */
 export function eventRecipients(event: ServerEvent, owner: Surface | undefined, open: readonly Surface[]): Surface[] {
   switch (event.type) {
@@ -30,12 +31,16 @@ export function eventRecipients(event: ServerEvent, owner: Surface | undefined, 
     case "done":
       return [...open];
     case "confirm_request":
-    case "confirm_result":
-    // A « Reconnecter » card shows where the turn's cards show.
-    case "account_reconnect": {
+    case "confirm_result": {
       if (owner === undefined) return [];
       const surface = confirmationSurface(owner);
       return open.includes(surface) ? [surface] : [];
+    }
+    // A « Reconnecter le compte » card shows where the turn's cards show, and in the main window.
+    case "account_reconnect": {
+      if (owner === undefined) return [];
+      const to = new Set<Surface>([confirmationSurface(owner), "main"]);
+      return [...to].filter((surface) => open.includes(surface));
     }
     case "error": {
       if (owner === undefined) return [];

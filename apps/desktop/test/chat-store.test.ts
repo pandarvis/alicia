@@ -894,11 +894,8 @@ describe("reconnect cards", () => {
     expect(store.reconnect).toEqual([]);
   });
 
-  test("ignored outside this window's turn; cleared by the next message, a new conversation or another one", async () => {
+  test("this window's own card is cleared by the next message, a new conversation or another one", async () => {
     const { store, sent } = setup();
-    store.handle(CARD);
-    expect(store.reconnect).toEqual([]);
-
     turn(store, sent, "On a quoi samedi ?");
     store.handle(CARD);
     store.handle(DONE);
@@ -917,5 +914,60 @@ describe("reconnect cards", () => {
     store.handle(DONE);
     await store.open(CONV_B);
     expect(store.reconnect).toEqual([]);
+  });
+
+  test("another window's turn (Holo, Spotlight): a card in its conversation, a banner elsewhere, kept until reconnected", async () => {
+    const { store, sent } = setup();
+    store.handle(CARD);
+    // Not this window's turn: kept apart from its own cards.
+    expect(store.reconnect).toEqual([]);
+    expect(store.reconnectCards).toEqual([]);
+    expect(store.reconnectElsewhere).toEqual([{ id: ACCOUNT_ID, email: "famille@example.com" }]);
+
+    await store.open(CONV);
+    expect(store.reconnectCards).toEqual([{ id: ACCOUNT_ID, email: "famille@example.com" }]);
+    expect(store.reconnectElsewhere).toEqual([]);
+    // Sending, switching or the connection dropping leave it: the account still needs reconnecting.
+    turn(store, sent, "Et dimanche ?");
+    store.handle(DONE);
+    store.connectionLost();
+    expect(store.reconnectCards).toHaveLength(1);
+    store.startNew();
+    expect(store.reconnectCards).toEqual([]);
+    expect(store.reconnectElsewhere).toHaveLength(1);
+
+    store.dismissReconnect(ACCOUNT_ID);
+    expect(store.reconnectElsewhere).toEqual([]);
+    await store.open(CONV);
+    expect(store.reconnectCards).toEqual([]);
+  });
+
+  test("an account found again, by this window or another one, shows once", async () => {
+    const { store, sent } = setup();
+    store.handle({ ...CARD, conversationId: CONV_B });
+    store.handle(CARD);
+    expect(store.reconnectElsewhere).toEqual([{ id: ACCOUNT_ID, email: "famille@example.com" }]);
+    await store.open(CONV);
+    expect(store.reconnectElsewhere).toEqual([]);
+    turn(store, sent, "On a quoi samedi ?");
+    store.handle(CARD);
+    expect(store.reconnectCards).toEqual([{ id: ACCOUNT_ID, email: "famille@example.com" }]);
+  });
+
+  test("the Comptes list showing the account connected again takes its cards along; a stale list does not", () => {
+    const { store, sent } = setup();
+    turn(store, sent, "On a quoi samedi ?");
+    store.handle(CARD);
+    store.handle(DONE);
+    store.handle({ ...CARD, conversationId: CONV_B });
+    // A list fetched before Google refused the account still says it is connected: the cards stay.
+    store.accountsListed([{ id: ACCOUNT_ID, status: "connected" }]);
+    expect(store.reconnectCards).toHaveLength(1);
+    store.accountsListed([{ id: ACCOUNT_ID, status: "reconnect" }]);
+    expect(store.reconnectCards).toHaveLength(1);
+    // Reconnected from Comptes (here or on another device).
+    store.accountsListed([{ id: ACCOUNT_ID, status: "connected" }]);
+    expect(store.reconnectCards).toEqual([]);
+    expect(store.reconnectElsewhere).toEqual([]);
   });
 });

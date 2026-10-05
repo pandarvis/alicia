@@ -1,6 +1,6 @@
 import {
   ATTACHMENT_GONE_MESSAGE, type AttachmentKind, checkAttachment, type ConfirmationOutcome, type ConfirmMessage, type ConversationSummary,
-  type HistoryMessage, MAX_ATTACHMENTS_PER_MESSAGE, type SendMessage, type ServerEvent,
+  type GoogleAccountStatus, type HistoryMessage, MAX_ATTACHMENTS_PER_MESSAGE, type SendMessage, type ServerEvent,
 } from "@alicia/protocol";
 import { SvelteMap } from "svelte/reactivity";
 import { MASCOT_ON_ERROR, type MascotState } from "../../../shared/mascot.ts";
@@ -45,6 +45,17 @@ export interface ConfirmationCard {
 }
 
 export type ChatItem = ChatMessage | ConfirmationCard;
+
+/** A Google account Google stopped accepting (« Reconnecter le compte » card). */
+export interface AccountToReconnect {
+  id: string;
+  email: string;
+}
+
+/** Each account once, the first one kept. */
+function oncePerAccount<T extends AccountToReconnect>(accounts: readonly T[]): T[] {
+  return accounts.filter((account, index) => accounts.findIndex((a) => a.id === account.id) === index);
+}
 
 export function isSettled(status: ConfirmationCard["status"]): status is ConfirmationOutcome {
   return status !== "pending" && status !== "answering";
@@ -105,8 +116,8 @@ export class ChatStore {
   opus = $state(false);
   activity = $state<string | null>(null);
   notice = $state<string | null>(null);
-  /** Google accounts to reconnect, reported by the last turn (« Reconnecter le compte » cards, under the thread). */
-  reconnect = $state<{ id: string; email: string }[]>([]);
+  /** Google accounts to reconnect, reported by this window's last turn (« Reconnecter le compte » cards, under the thread). */
+  reconnect = $state<AccountToReconnect[]>([]);
   mascot = $state<MascotState>("idle");
   /**
    * Files waiting in the composer. They survive switching conversations: a pending upload belongs to none until a
@@ -137,6 +148,13 @@ export class ChatStore {
    * (then they join the open conversation's cards, or are forgotten) or the connection is lost.
    */
   #adopted = $state<ConfirmationCard[]>([]);
+  /**
+   * Accounts to reconnect found by other windows' turns (Holo, Spotlight), with their conversation. Not dropped by
+   * switching conversation or sending: kept until the account is back (or its card is dismissed).
+   */
+  #reconnectAdopted = $state<(AccountToReconnect & { conversationId: string })[]>([]);
+  /** The accounts the last list of Comptes showed as to reconnect: one connected again takes its cards along. */
+  #listedToReconnect: string[] = [];
   #loadToken = 0;
   #refreshToken = 0;
 
@@ -216,9 +234,34 @@ export class ChatStore {
     this.#setMascot("idle");
   }
 
-  /** The account is connected again: its card goes. */
+  /** The account is connected again: its cards go (this window's turn's, and other windows'). */
   dismissReconnect(accountId: string): void {
     this.reconnect = this.reconnect.filter((account) => account.id !== accountId);
+    this.#reconnectAdopted = this.#reconnectAdopted.filter((account) => account.id !== accountId);
+  }
+
+  /**
+   * The Comptes list was (re)loaded: an account it showed as to reconnect and now shows connected (reconnected from
+   * Comptes, here or on another device) takes its cards along.
+   */
+  accountsListed(accounts: readonly { id: string; status: GoogleAccountStatus }[]): void {
+    for (const account of accounts) {
+      if (account.status === "connected" && this.#listedToReconnect.includes(account.id)) this.dismissReconnect(account.id);
+    }
+    this.#listedToReconnect = accounts.filter((account) => account.status === "reconnect").map((account) => account.id);
+  }
+
+  /** The « Reconnecter le compte » cards under the thread: this window's last turn's, and other windows' turns' here. */
+  get reconnectCards(): AccountToReconnect[] {
+    const here = this.#reconnectAdopted.filter((account) => account.conversationId === this.activeId);
+    return oncePerAccount([...this.reconnect, ...here]).map(({ id, email }) => ({ id, email }));
+  }
+
+  /** Accounts to reconnect found by another window's turn in a conversation not open here (none: empty). */
+  get reconnectElsewhere(): AccountToReconnect[] {
+    const shown = this.reconnectCards.map((account) => account.id);
+    const elsewhere = this.#reconnectAdopted.filter((account) => !shown.includes(account.id));
+    return oncePerAccount(elsewhere).map(({ id, email }) => ({ id, email }));
   }
 
   /** Something to send (text or a ready file), no file still uploading, Alicia free. */
@@ -336,6 +379,13 @@ export class ChatStore {
     if (event.type === "confirm_result") {
       this.#setCardStatus(event.confirmationId, event.outcome);
       if (this.#isCurrentTurn(event.conversationId)) this.#setMascot("thinking");
+      return;
+    }
+    // Another window's turn found an account to reconnect (the main process routes them here too): kept apart.
+    if (event.type === "account_reconnect" && !this.#isCurrentTurn(event.conversationId)) {
+      const found = event.accounts.map(({ id, email }) => ({ id, email, conversationId: event.conversationId }));
+      const ids = found.map((account) => account.id);
+      this.#reconnectAdopted = [...this.#reconnectAdopted.filter((account) => !ids.includes(account.id)), ...found];
       return;
     }
     // Another window's turn (Holo, Spotlight) ended: the list may have changed, and maybe the open conversation.

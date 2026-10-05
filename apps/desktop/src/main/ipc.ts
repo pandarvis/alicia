@@ -140,6 +140,12 @@ export function registerIpc(deps: IpcDependencies): void {
     deps.windows.showMain();
     deps.windows.openConversation(conversationId);
   });
+  // The Holo's « Reconnecter le compte » card: Google's consent runs from the main window's Comptes screen only.
+  handle(INVOKE.reconnectAccount, z.uuid(), (accountId, sender) => {
+    holoOnly(sender);
+    deps.windows.showMain();
+    deps.windows.reconnectAccount(accountId);
+  });
   // Google accounts are connected from the Comptes screen only; the main process builds the consent URL itself.
   handle(INVOKE.googleAuthorize, GoogleAuthorizeRequest, (request, sender) => {
     mainOnly(sender);

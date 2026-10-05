@@ -5,7 +5,8 @@ import { expect, test } from "vitest";
 import { callTool, type Scenario } from "../../brain/src/engine/fake-engine.ts";
 import { FakeGoogle } from "../../brain/src/google/fake-google.ts";
 import {
-  answered, launch, pair, playGoogleConsent, POLL, recorded, RUNNING, send, startBrain, startForgettingBrain, startGoogleBrain, tempDir,
+  answered, callHook, launch, pair, playGoogleConsent, POLL, recorded, RUNNING, send, startBrain, startForgettingBrain, startGoogleBrain,
+  surfacePage, tempDir, windowVisible,
 } from "./support.ts";
 
 test("pair, chat with streaming, use Opus, then find the conversation again after a restart", async () => {
@@ -444,6 +445,83 @@ test("chat: an account Google stopped accepting gets a « Reconnecter le compte 
   // Reconnected, not added twice; and nothing was ever sent.
   await page.getByTestId("nav-accounts").click();
   await expect.poll(() => page.getByTestId("account-row").count(), POLL).toBe(1);
+  expect(google.requests.some((r) => r.url.pathname.endsWith("/send"))).toBe(false);
+  expect(google.refusedRoutes).toEqual([]);
+});
+
+test("Holo and Spotlight: an account to reconnect gets its card there too, and the main window knows at once", async () => {
+  const google = new FakeGoogle();
+  google.addCalendar("famille@example.com", {
+    id: "famille@example.com", summary: "Famille", accessRole: "owner", primary: true, selected: true,
+  });
+  const brain = await startGoogleBrain(google, async (request) => {
+    await callTool(request, "calendar_list", { from: "2026-10-10", to: "2026-10-10" });
+    return [
+      { type: "session", sessionId: "s1" },
+      { type: "text", text: "Je n'arrive plus à lire l'agenda Famille." },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ];
+  });
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await page.getByTestId("nav-accounts").click();
+  await page.getByTestId("accounts-add-common").click();
+  await playGoogleConsent(app, google, "famille@example.com", 0);
+  const row = page.getByTestId("account-row").filter({ hasText: "famille@example.com" });
+  await row.filter({ hasText: "Connecté" }).waitFor();
+  await page.getByTestId("nav-chat").click();
+
+  // A question in the Holo's mini-chat, after Kévin removed Alicia from the Google account.
+  google.revokeGrant("famille@example.com");
+  google.expireAccessTokens();
+  const holo = await surfacePage(app, "holo");
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+  await holo.getByTestId("holo-mascot").click();
+  await holo.getByTestId("holo-chat").waitFor();
+  await expect.poll(() => holo.getByTestId("holo-input").isEnabled(), POLL).toBe(true);
+  await holo.getByTestId("holo-input").fill("On a quoi samedi ?");
+  await holo.getByTestId("holo-input").press("Enter");
+  const holoCard = holo.getByTestId("holo-reconnect-card").filter({ hasText: "famille@example.com" });
+  await holoCard.waitFor();
+  // The main window knows too: the menu's dot, and a banner (the Holo's conversation is not the one shown).
+  await page.getByTestId("nav-accounts-attention").waitFor();
+  await page.getByTestId("reconnect-banner").filter({ hasText: "Un compte Google doit être reconnecté" }).waitFor();
+  expect(await page.getByTestId("reconnect-card").count()).toBe(0);
+
+  // One click in the Holo: the main window opens on Comptes and Google's page opens in the browser (recorded here).
+  await holoCard.getByTestId("holo-reconnect-button").click();
+  await expect.poll(() => holo.getByTestId("holo-reconnect-card").count(), POLL).toBe(0);
+  await page.getByTestId("accounts-view").waitFor();
+  await page.getByTestId("accounts-waiting").waitFor();
+  await expect.poll(async () => (await recorded(app)).browser.length, POLL).toBe(2);
+  expect(new URL((await recorded(app)).browser[1] ?? "").searchParams.get("login_hint")).toBe("famille@example.com");
+  await playGoogleConsent(app, google, "famille@example.com", 1);
+  await row.filter({ hasText: "Connecté" }).waitFor();
+  await expect.poll(() => page.getByTestId("nav-accounts-attention").count(), POLL).toBe(0);
+  await page.getByTestId("nav-chat").click();
+  await expect.poll(() => page.getByTestId("reconnect-banner").count(), POLL).toBe(0);
+
+  // The same from the Spotlight bar, which closes once it asked: the main window keeps the card.
+  google.revokeGrant("famille@example.com");
+  google.expireAccessTokens();
+  await callHook(app, "triggerShortcut");
+  const bar = await surfacePage(app, "spotlight");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  await bar.getByTestId("spotlight-input").fill("Et dimanche ?");
+  await bar.getByTestId("spotlight-input").press("Enter");
+  const banner = page.getByTestId("reconnect-banner");
+  await banner.waitFor();
+  await page.getByTestId("nav-accounts-attention").waitFor();
+  // « Ouvrir Comptes » leads to the account's row; back in the chat, its conversation shows the card itself.
+  await banner.getByTestId("reconnect-banner-open").click();
+  await page.getByTestId("accounts-view").waitFor();
+  await row.filter({ hasText: "À reconnecter" }).waitFor();
+  await expect.poll(() => banner.count(), POLL).toBe(0);
+  await page.getByTestId("nav-chat").click();
+  await banner.waitFor();
+  await page.getByTestId("conversation-list").getByText("Et dimanche ?").click();
+  await page.getByTestId("reconnect-card").filter({ hasText: "famille@example.com" }).waitFor();
+  await expect.poll(() => banner.count(), POLL).toBe(0);
   expect(google.requests.some((r) => r.url.pathname.endsWith("/send"))).toBe(false);
   expect(google.refusedRoutes).toEqual([]);
 });

@@ -86,6 +86,8 @@ const bridge: AliciaBridge = {
     showMain: () => call(z.undefined(), INVOKE.showMain),
     openConversation: (conversationId) => call(z.undefined(), INVOKE.openConversation, conversationId),
     onOpenConversation: (listener) => subscribe(PUSH.openConversation, z.uuid(), listener),
+    reconnectAccount: (accountId) => call(z.undefined(), INVOKE.reconnectAccount, accountId),
+    onReconnectAccount: (listener) => subscribe(PUSH.reconnectAccount, z.uuid(), listener),
   },
   surface: {
     onShown: (listener) => subscribe(PUSH.shown, z.number().int().nonnegative(), () => {

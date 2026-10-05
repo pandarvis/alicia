@@ -94,7 +94,7 @@
     if (token === null) return;
     const current = untrack(() => session);
     if (current === null) return;
-    const created = new MiniChat(current, window.alicia.brain, fetch);
+    const created = new MiniChat(current, window.alicia.brain, window.alicia.app, fetch);
     created.start();
     chat = created;
     return () => {

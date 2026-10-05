@@ -68,12 +68,14 @@ describe("confirmationSurface", () => {
     expect(eventRecipients(TURN_EVENTS[1] ?? DONE, "spotlight", OPEN)).toEqual(["spotlight"]);
   });
 
-  test("an account to reconnect goes where the turn's cards show (the main window for a Spotlight turn)", () => {
+  test("an account to reconnect goes where the turn's cards show, and always to the main window (once)", () => {
     const reconnect: ServerEvent = {
       type: "account_reconnect", conversationId: CONV, accounts: [{ id: REQUEST, email: "famille@example.com" }],
     };
-    expect(eventRecipients(reconnect, "holo", OPEN)).toEqual(["holo"]);
+    expect(eventRecipients(reconnect, "holo", OPEN)).toEqual(["holo", "main"]);
     expect(eventRecipients(reconnect, "spotlight", OPEN)).toEqual(["main"]);
+    expect(eventRecipients(reconnect, "main", OPEN)).toEqual(["main"]);
+    expect(eventRecipients(reconnect, "holo", ["holo", "spotlight"])).toEqual(["holo"]);
     expect(eventRecipients(reconnect, undefined, OPEN)).toEqual([]);
     expect(eventRecipients(reconnect, "spotlight", ["spotlight"])).toEqual([]);
   });

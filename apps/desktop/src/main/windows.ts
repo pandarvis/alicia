@@ -195,6 +195,11 @@ export class WindowManager {
     this.sendTo("main", PUSH.openConversation, conversationId);
   }
 
+  /** Asks the main window to reconnect a Google account from Comptes (a page still loading gets it once loaded). */
+  reconnectAccount(accountId: string): void {
+    this.sendToWhenLoaded("main", PUSH.reconnectAccount, accountId);
+  }
+
   /** What the person can see right now (decides notifications). */
   visibility(): Visibility {
     const holo = this.#holo;

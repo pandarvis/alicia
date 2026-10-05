@@ -72,7 +72,7 @@
     if (list === null || spacer === null) return;
     const last = store.messages.at(-1);
     const growth = last?.role === "confirmation" ? last.status : (last?.text.length ?? 0);
-    const layout = `${store.messages.length}:${growth}:${waiting}:${store.activity ?? ""}:${viewportHeight}:${store.reconnect.length}`;
+    const layout = `${store.messages.length}:${growth}:${waiting}:${store.activity ?? ""}:${viewportHeight}:${store.reconnectCards.length}`;
     const fresh = list !== seenList;
     if (!fresh && layout === seenLayout) return;
     seenList = list;
@@ -186,7 +186,7 @@
         </div>
       {/if}
       {#if store.activity}<p class="activity" transition:fade={{ duration: motion(150) }}>{store.activity}</p>{/if}
-      {#each store.reconnect as account (account.id)}
+      {#each store.reconnectCards as account (account.id)}
         <div class="reconnect" role="status" data-testid="reconnect-card" transition:fade={{ duration: motion(180) }}>
           <span>Le compte <strong>{account.email}</strong> doit être reconnecté pour qu'Alicia y accède.</span>
           <button onclick={() => { onReconnect(account.id); }} data-testid="reconnect-card-button">

@@ -1,4 +1,4 @@
-import type { BrainBridge } from "../../../shared/bridge.ts";
+import type { AppBridge, BrainBridge } from "../../../shared/bridge.ts";
 import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
 import type { StoredSession } from "../../../shared/session.ts";
 import { BrainApi } from "./brain-client.ts";
@@ -18,10 +18,11 @@ export class MiniChat {
   readonly store: ChatStore;
   readonly #hub: HubClient;
   readonly #bridge: BrainBridge;
+  readonly #app: Pick<AppBridge, "reconnectAccount">;
   #offConversations: (() => void) | null = null;
   #wasOffline = false;
 
-  constructor(session: StoredSession, bridge: BrainBridge, fetchFn: typeof fetch) {
+  constructor(session: StoredSession, bridge: BrainBridge, app: Pick<AppBridge, "reconnectAccount">, fetchFn: typeof fetch) {
     const api = new BrainApi(fetchFn, session);
     const hub = new HubClient(bridge, {
       onEvent: (event) => {
@@ -48,6 +49,16 @@ export class MiniChat {
     });
     this.#hub = hub;
     this.#bridge = bridge;
+    this.#app = app;
+  }
+
+  /**
+   * « Reconnecter le compte »: Google's consent only runs from the main window, which opens on Comptes and takes it
+   * from there (its own card and menu dot follow the account); this card has done its part.
+   */
+  reconnect(accountId: string): void {
+    this.store.dismissReconnect(accountId);
+    this.#app.reconnectAccount(accountId).catch(() => undefined);
   }
 
   start(): void {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import ShieldQuestionMark from "@lucide/svelte/icons/shield-question-mark";
   import { onDestroy, onMount, untrack } from "svelte";
   import { fade, slide } from "svelte/transition";
@@ -93,8 +94,16 @@
     });
   }
 
+  // An account Comptes showed to reconnect and now shows connected (from Comptes, here or elsewhere): its cards go.
+  $effect(() => {
+    const listed = accounts.accounts;
+    untrack(() => {
+      store.accountsListed(listed);
+    });
+  });
+
   function handleEvent(event: ServerEvent): void {
-    // Google refused an account during the turn: the menu's dot follows.
+    // Google refused an account during a turn (this window's, the Holo's or the Spotlight's): the menu's dot follows.
     if (event.type === "account_reconnect") void accounts.load();
     store.handle(event);
   }
@@ -170,6 +179,12 @@
    */
   const awaiting = $derived(store.awaitingElsewhere ?? (view !== "chat" ? store.awaitingAnywhere : null));
 
+  /**
+   * Another window's turn (Holo, Spotlight) found an account to reconnect, in a conversation not shown here: a banner
+   * leads to Comptes (not on Comptes itself, where the account's row says it).
+   */
+  const reconnectWaiting = $derived(view !== "accounts" && store.reconnectElsewhere.length > 0);
+
   /** Shows that question: back to the chat, on its conversation (opened once this window's answer ended). */
   function showAwaiting(conversationId: string): void {
     view = "chat";
@@ -197,6 +212,10 @@
       window.alicia.app.onOpenConversation((conversationId) => {
         view = "chat";
         store.openWhenIdle(conversationId);
+      }),
+      // The Holo's « Reconnecter le compte » card: Comptes, and Google's consent for that account.
+      window.alicia.app.onReconnectAccount((accountId) => {
+        reconnectAccount(accountId);
       }),
       // Another window's turn failed after creating its conversation.
       window.alicia.brain.onConversationsChanged(() => {
@@ -228,6 +247,13 @@
       <ShieldQuestionMark size={16} aria-hidden="true" />
       <span>Alicia attend ta réponse {here ? "dans cette conversation" : "dans une autre conversation"}.</span>
       <button type="button" onclick={() => { showAwaiting(where); }} data-testid="awaiting-open">{store.busy && !here ? "Voir après cette réponse" : "Voir la question"}</button>
+    </div>
+  {/if}
+  {#if reconnectWaiting}
+    <div class="awaiting" role="status" transition:slide={{ duration: motion(180) }} data-testid="reconnect-banner">
+      <RefreshCw size={16} aria-hidden="true" />
+      <span>Un compte Google doit être reconnecté.</span>
+      <button type="button" onclick={() => { showView("accounts"); }} data-testid="reconnect-banner-open">Ouvrir Comptes</button>
     </div>
   {/if}
   <div class="body">
