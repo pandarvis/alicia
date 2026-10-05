@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import { expect, test } from "vitest";
 import { callTool, type Scenario } from "../../brain/src/engine/fake-engine.ts";
-import { answered, launch, pair, POLL, send, startBrain, tempDir } from "./support.ts";
+import { answered, launch, pair, POLL, RUNNING, send, startBrain, startForgettingBrain, tempDir } from "./support.ts";
 
 test("pair, chat with streaming, use Opus, then find the conversation again after a restart", async () => {
   const brain = await startBrain();
@@ -109,6 +109,31 @@ test("a window cannot answer a confirmation it was never asked; a malformed answ
   await expect(
     page.evaluate((answer) => window.alicia.brain.confirm(answer), { ...unknown, confirmationId: "pas-un-uuid" }),
   ).rejects.toThrow();
+});
+
+test("a confirmation card in the chat: Non keeps the memory, Oui forgets it", async () => {
+  const { brain, memoryId } = await startForgettingBrain();
+  const { page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+
+  await send(page, "Oublie que je cours");
+  const first = page.getByTestId("confirm-card").filter({ hasText: RUNNING }).first();
+  await expect.poll(() => first.getAttribute("data-status"), POLL).toBe("pending");
+  // While the card waits, no typing dots: the card is what Alicia waits for.
+  expect(await page.getByRole("status", { name: "Alicia réfléchit" }).count()).toBe(0);
+  await first.getByTestId("confirm-no").click();
+  await page.getByTestId("message-assistant").filter({ hasText: "Je le garde." }).waitFor();
+  await expect.poll(() => first.getAttribute("data-status"), POLL).toBe("refused");
+  await first.getByTestId("confirm-outcome").filter({ hasText: "Alicia ne l'a pas fait" }).waitFor();
+  expect(brain.app.memory.get("kevin", memoryId)).toBeDefined();
+
+  await send(page, "Si, oublie-le");
+  const second = page.getByTestId("confirm-card").nth(1);
+  await expect.poll(() => second.getAttribute("data-status"), POLL).toBe("pending");
+  await second.getByTestId("confirm-yes").click();
+  await page.getByTestId("message-assistant").filter({ hasText: "C'est oublié." }).waitFor();
+  await expect.poll(() => second.getAttribute("data-status"), POLL).toBe("approved");
+  expect(brain.app.memory.get("kevin", memoryId)).toBeUndefined();
 });
 
 /** Alicia remembers « Kévin adore les lasagnes » when asked to, like the model would with its tool. */

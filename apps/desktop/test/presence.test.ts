@@ -57,6 +57,17 @@ describe("Presence", () => {
     expect(moods).toEqual(["thinking", "idea", "thinking"]);
   });
 
+  test("waiting for a yes or no: alert; once answered, back to thinking", () => {
+    const { presence, moods } = setup();
+    presence.sent(1);
+    presence.event({
+      type: "confirm_request", conversationId: CONV, confirmationId: CONV, tool: "memory_forget",
+      summary: "Oublier ?", expiresAt: "2026-10-05T10:05:00.000Z",
+    });
+    presence.event({ type: "confirm_result", conversationId: CONV, confirmationId: CONV, outcome: "refused" });
+    expect(moods).toEqual(["thinking", "alert", "thinking"]);
+  });
+
   test("a second message while Alicia answers neither interrupts her speech nor ends the first turn when refused", () => {
     const { presence, moods } = setup();
     presence.sent(1);

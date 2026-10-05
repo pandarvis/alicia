@@ -1,4 +1,6 @@
+import type { Surface } from "../shared/surface.ts";
 import type { FinishedTurn } from "./brain-hub.ts";
+import { confirmationSurface } from "./event-routing.ts";
 
 /** Which surfaces the person can see right now. */
 export interface Visibility {
@@ -63,4 +65,27 @@ export function notificationFor(turn: FinishedTurn, visible: Visibility): TurnNo
     conversationId: turn.conversationId,
     openConversation: elsewhere && turn.conversationId !== undefined,
   };
+}
+
+export interface ConfirmationNotification {
+  title: string;
+  body: string;
+  conversationId: string;
+  /** The window that shows the card: a click brings it forward. */
+  surface: Surface;
+}
+
+/**
+ * A Windows notification when Alicia waits for a yes or no the person cannot see: the card's window is hidden (or
+ * the Holo's mini-chat closed), or the question came from the Spotlight bar (its card waits in the main window).
+ */
+export function confirmationNotification(
+  request: { conversationId: string; summary: string },
+  owner: Surface,
+  visible: Visibility,
+): ConfirmationNotification | null {
+  const surface = confirmationSurface(owner);
+  const unseen = owner === "spotlight" || (surface === "main" && !visible.main) || (surface === "holo" && !visible.holoChat);
+  if (!unseen) return null;
+  return { title: "Alicia a besoin de ta réponse", body: notificationBody(request.summary), conversationId: request.conversationId, surface };
 }

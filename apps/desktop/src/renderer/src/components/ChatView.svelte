@@ -2,6 +2,7 @@
   import { fade, fly } from "svelte/transition";
   import { motion, scrollBehavior } from "../lib/motion.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
+  import ConfirmCard from "./ConfirmCard.svelte";
   import Mascot from "./Mascot.svelte";
 
   let { store, personName }: { store: ChatStore; personName: string } = $props();
@@ -18,8 +19,9 @@
   };
 
   let list = $state<HTMLDivElement | null>(null);
-  const lastAssistantId = $derived(store.messages.findLast((m) => m.role === "assistant")?.id);
-  const waiting = $derived(store.busy && store.messages.at(-1)?.role === "user");
+  /** Alicia's last item (answer or card): her mascot sits next to it. */
+  const lastAliciaId = $derived(store.messages.findLast((m) => m.role !== "user")?.id);
+  const waiting = $derived(store.waiting);
 
   /*
    * Scrolling, like the ChatGPT/Claude apps:
@@ -60,7 +62,8 @@
   $effect(() => {
     if (list === null || spacer === null) return;
     const last = store.messages.at(-1);
-    const layout = `${store.messages.length}:${last?.text.length ?? 0}:${waiting}:${store.activity ?? ""}:${viewportHeight}`;
+    const growth = last?.role === "confirmation" ? last.status : (last?.text.length ?? 0);
+    const layout = `${store.messages.length}:${growth}:${waiting}:${store.activity ?? ""}:${viewportHeight}`;
     const fresh = list !== seenList;
     if (!fresh && layout === seenLayout) return;
     seenList = list;
@@ -136,19 +139,30 @@
   {:else}
     <div class="messages" bind:this={list} bind:clientHeight={viewportHeight} onscroll={handleScroll} data-testid="messages" in:fade={{ duration: motion(200) }}>
       {#each store.messages as message (message.id)}
-        <div class="row {message.role}" data-message-id={message.id} in:fly={{ y: 8, duration: motion(180) }}>
-          {#if message.role === "assistant"}
+        {#if message.role === "confirmation"}
+          <div class="row assistant" data-message-id={message.id} in:fly={{ y: 8, duration: motion(180) }}>
             <div class="avatar">
-              <!-- Only one mascot at a time: it moves to the typing row while Alicia thinks about the next answer. -->
-              {#if message.id === lastAssistantId && !waiting}
+              {#if message.id === lastAliciaId && !waiting}
                 <div transition:fade={{ duration: motion(150) }}><Mascot mood={store.mascot} size={44} /></div>
               {/if}
             </div>
-          {/if}
-          <div class="bubble" data-testid="message-{message.role}">
-            {message.text}{#if message.streaming}<span class="caret"></span>{/if}
+            <ConfirmCard card={message} onanswer={(approved: boolean) => { store.respond(message.confirmationId, approved); }} />
           </div>
-        </div>
+        {:else}
+          <div class="row {message.role}" data-message-id={message.id} in:fly={{ y: 8, duration: motion(180) }}>
+            {#if message.role === "assistant"}
+              <div class="avatar">
+                <!-- Only one mascot at a time: it moves to the typing row while Alicia thinks about the next answer. -->
+                {#if message.id === lastAliciaId && !waiting}
+                  <div transition:fade={{ duration: motion(150) }}><Mascot mood={store.mascot} size={44} /></div>
+                {/if}
+              </div>
+            {/if}
+            <div class="bubble" data-testid="message-{message.role}">
+              {message.text}{#if message.streaming}<span class="caret"></span>{/if}
+            </div>
+          </div>
+        {/if}
       {/each}
       {#if waiting}
         <div class="row assistant" in:fade={{ duration: motion(150) }}>

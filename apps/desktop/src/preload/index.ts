@@ -91,6 +91,9 @@ const bridge: AliciaBridge = {
     dragEnd: () => call(z.undefined(), INVOKE.holoDragEnd),
     setExpanded: (expanded) => call(HoloView, INVOKE.holoSetExpanded, expanded),
     onView: (listener) => subscribe(PUSH.holoView, HoloView, listener),
+    onOpenChat: (listener) => subscribe(PUSH.holoOpenChat, z.undefined(), () => {
+      listener();
+    }),
   },
   settings: {
     get: () => call(SettingsSnapshot, INVOKE.settingsGet),

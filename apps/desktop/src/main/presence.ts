@@ -51,6 +51,9 @@ export class Presence {
     if (!this.#running) return;
     if (event.type === "text_delta") this.#set("speaking");
     else if (event.type === "tool_call") this.#set(event.tool === "memory_remember" ? "idea" : "thinking");
+    // Waiting for a yes or no: she needs the person; once answered, she goes on.
+    else if (event.type === "confirm_request") this.#set("alert");
+    else if (event.type === "confirm_result") this.#set("thinking");
   }
 
   /** A turn ended; `pendingTurns`: those still running (a refused second message leaves the first one going). */

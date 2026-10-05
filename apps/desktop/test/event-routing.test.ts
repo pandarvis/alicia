@@ -1,6 +1,6 @@
 import type { ServerEvent } from "@alicia/protocol";
 import { describe, expect, test } from "vitest";
-import { eventRecipients, mayReadSession } from "../src/main/event-routing.ts";
+import { confirmationSurface, eventRecipients, mayReadSession } from "../src/main/event-routing.ts";
 import type { Surface } from "../src/shared/surface.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
@@ -51,5 +51,20 @@ describe("eventRecipients", () => {
 
   test("a window that is not open receives nothing", () => {
     expect(eventRecipients(TURN_EVENTS[1] ?? DONE, "spotlight", ["main"])).toEqual([]);
+  });
+});
+
+describe("confirmationSurface", () => {
+  test("a card shows in the window whose turn asked; the Spotlight bar cannot show one: the main window does", () => {
+    expect(confirmationSurface("main")).toBe("main");
+    expect(confirmationSurface("holo")).toBe("holo");
+    expect(confirmationSurface("spotlight")).toBe("main");
+  });
+
+  test("a Spotlight turn's confirmation events go to the main window", () => {
+    for (const event of TURN_EVENTS.filter((e) => e.type === "confirm_request" || e.type === "confirm_result")) {
+      expect(eventRecipients(event, "spotlight", OPEN), event.type).toEqual(["main"]);
+    }
+    expect(eventRecipients(TURN_EVENTS[1] ?? DONE, "spotlight", OPEN)).toEqual(["spotlight"]);
   });
 });

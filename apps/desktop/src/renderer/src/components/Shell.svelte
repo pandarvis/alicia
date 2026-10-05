@@ -53,6 +53,7 @@
     listConversations: () => guarded(() => api.listConversations()),
     history: (id) => guarded(() => api.history(id)),
     send: (message) => hub.send(message),
+    confirm: (message) => hub.confirm(message),
     deleteConversation: (id) => guarded(() => api.deleteConversation(id)),
     newId: () => crypto.randomUUID(),
     schedule,

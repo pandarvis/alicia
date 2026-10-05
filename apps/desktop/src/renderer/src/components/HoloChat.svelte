@@ -5,6 +5,7 @@
   import { onMount, untrack } from "svelte";
   import { fade } from "svelte/transition";
   import type { MiniChat } from "../lib/mini-chat.svelte.ts";
+  import ConfirmCard from "./ConfirmCard.svelte";
   import { motion, scrollBehavior } from "../lib/motion.ts";
   import { throttle, TYPING_INTERVAL_MS } from "../lib/throttle.ts";
 
@@ -15,8 +16,11 @@
   let list = $state<HTMLDivElement | null>(null);
   const store = $derived(chat.store);
   const ready = $derived(chat.status === "ready");
-  /** Changes whenever a message is added or grows: the list then follows its end. */
-  const tail = $derived(`${store.messages.length}:${store.messages.at(-1)?.text.length ?? 0}`);
+  /** Changes whenever a message is added, grows, or a card is settled: the list then follows its end. */
+  const tail = $derived.by(() => {
+    const last = store.messages.at(-1);
+    return `${store.messages.length}:${last?.role === "confirmation" ? last.status : (last?.text.length ?? 0)}`;
+  });
   let seenTail = "";
   /** Typing is reported a few times a second at most, not on every key. */
   const typing = throttle(() => { window.alicia.presence.typing(); }, TYPING_INTERVAL_MS);
@@ -77,9 +81,15 @@
   </header>
   <div class="messages" bind:this={list}>
     {#each store.messages as message (message.id)}
-      <p class="bubble {message.role}" data-testid="holo-message-{message.role}" in:fade={{ duration: motion(150) }}>
-        {message.text}{#if message.streaming}<span class="caret"></span>{/if}
-      </p>
+      {#if message.role === "confirmation"}
+        <div class="card-row" in:fade={{ duration: motion(150) }}>
+          <ConfirmCard card={message} compact onanswer={(approved: boolean) => { store.respond(message.confirmationId, approved); }} />
+        </div>
+      {:else}
+        <p class="bubble {message.role}" data-testid="holo-message-{message.role}" in:fade={{ duration: motion(150) }}>
+          {message.text}{#if message.streaming}<span class="caret"></span>{/if}
+        </p>
+      {/if}
     {:else}
       <p class="empty" in:fade={{ duration: motion(150) }}>Une question rapide ? Je t'écoute.</p>
     {/each}
@@ -111,6 +121,7 @@
   .icon:hover:not(:disabled) { background: var(--surface); color: var(--cream); }
   .icon:disabled { opacity: 0.5; cursor: default; }
   .messages { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .card-row { display: flex; }
   .bubble { margin: 0; padding: 7px 10px; border-radius: 12px; font-size: 14px; line-height: 1.4; white-space: pre-wrap; max-width: 92%; }
   .bubble.user { align-self: flex-end; background: var(--surface-raised); }
   .bubble.assistant { align-self: flex-start; background: var(--surface); }

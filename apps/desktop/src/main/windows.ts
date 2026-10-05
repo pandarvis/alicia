@@ -252,6 +252,13 @@ export class WindowManager {
     this.#sendWhenLoaded(window, PUSH.shown);
   }
 
+  /** Shows the Holo with its mini-chat open (a notification's click: Alicia waits there for an answer). */
+  openHoloChat(): void {
+    this.setHoloVisible(true);
+    const window = this.#holo;
+    if (isAlive(window)) this.#sendWhenLoaded(window, PUSH.holoOpenChat);
+  }
+
   /**
    * The drag follows the pointer as the main process sees it on the desktop: the page only says that it moved.
    * Its own screen coordinates would be off when the Holo crosses screens with different scales.

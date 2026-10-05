@@ -10,7 +10,7 @@ import { afterEach, expect } from "vitest";
 import { type Application, buildApplication } from "../../brain/src/application.ts";
 import { parseConfig } from "../../brain/src/config.ts";
 import type { EngineEvent } from "../../brain/src/engine/engine.ts";
-import { FakeEngine, type Scenario } from "../../brain/src/engine/fake-engine.ts";
+import { callTool, FakeEngine, type Scenario } from "../../brain/src/engine/fake-engine.ts";
 import { FakeEmbedder } from "../../brain/src/memory/fake-embedder.ts";
 import { RecordedState, TEST_HOOKS_KEY } from "../src/main/recording-os.ts";
 import type { Surface } from "../src/shared/surface.ts";
@@ -58,6 +58,32 @@ export const GREETING_EVENTS: readonly EngineEvent[] = [
   { type: "done", inputTokens: 1, outputTokens: 2 },
 ];
 export const GREETING: Scenario = () => GREETING_EVENTS;
+
+/** The memory a forgetting brain is asked to forget, and the question its card asks. */
+export const RUNNING = "Kévin court le dimanche";
+export const FORGET_QUESTION = `Oublier ce souvenir : « ${RUNNING} » ?`;
+
+/**
+ * A brain that remembers « Kévin court le dimanche » and, on every message, tries to forget it (which asks the
+ * person first), then says how it went: « C'est oublié. » or « Je le garde. ».
+ */
+export async function startForgettingBrain(): Promise<{ brain: Brain; memoryId: string }> {
+  let memoryId = "";
+  const brain = await startBrain(async (request) => {
+    const result = await callTool(request, "memory_forget", { id: memoryId });
+    return [
+      { type: "session", sessionId: "s1" },
+      { type: "tool_call", callId: "t1", tool: "memory_forget" },
+      { type: "tool_result", callId: "t1", success: result.isError !== true },
+      { type: "text", text: result.isError === true ? "Je le garde." : "C'est oublié." },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ];
+  });
+  const saved = await brain.app.memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: RUNNING, source: "manual" });
+  if (saved.status !== "created") throw new Error("not created");
+  memoryId = saved.memory.id;
+  return { brain, memoryId };
+}
 
 /**
  * A real brain on a free local port (never 8780), with a fake engine that answers instantly (by default, a

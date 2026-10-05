@@ -76,6 +76,10 @@
       window.alicia.holo.onView((next) => {
         view = next;
       }),
+      // A notification: Alicia waits in the mini-chat for a yes or no.
+      window.alicia.holo.onOpenChat(() => {
+        if (!chatOpen) void toggleChat();
+      }),
     ];
     void requestView(false);
     // The window only exists to be shown: play the entrance now.

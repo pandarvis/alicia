@@ -38,6 +38,7 @@ export class MiniChat {
       listConversations: () => api.listConversations(),
       history: (id) => api.history(id),
       send: (message) => hub.send(message),
+      confirm: (message) => hub.confirm(message),
       deleteConversation: (id) => api.deleteConversation(id),
       newId: () => crypto.randomUUID(),
       schedule,

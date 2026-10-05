@@ -62,6 +62,8 @@ export interface HoloBridge {
   setExpanded(expanded: boolean): Promise<HoloView>;
   /** The layout changed without the page asking (dragged across the screen, a screen changed). */
   onView(listener: (view: HoloView) => void): Unsubscribe;
+  /** A notification asks to open the mini-chat (Alicia waits there for a yes or no). */
+  onOpenChat(listener: () => void): Unsubscribe;
 }
 
 /** The app's settings, owned by the main process (Réglages screen). */
@@ -151,6 +153,7 @@ export const PUSH = {
   shown: "push:shown",
   hideRequest: "push:hide-request",
   holoView: "push:holo-view",
+  holoOpenChat: "push:holo-open-chat",
   conversationsChanged: "push:conversations-changed",
   settings: "push:settings",
   discovery: "push:discovery",

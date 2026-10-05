@@ -375,4 +375,16 @@ describe("BrainHub confirmations", () => {
     expect(hub.status).toBe("offline");
     expect(hub.confirm(answer(), "holo")).toBe(false);
   });
+
+  test("a Spotlight turn's card is answered from the main window, never from the bar", () => {
+    const { hub, socket, owners, connectReady } = setup();
+    connectReady();
+    hub.send(message(), "spotlight");
+    socket().receive({ type: "conversation", requestId: REQUEST, conversationId: CONV });
+    socket().receive(ASK);
+    expect(owners.at(-1)).toBe("spotlight");
+    expect(hub.confirm(answer(), "spotlight")).toBe(false);
+    expect(hub.confirm(answer(), "holo")).toBe(false);
+    expect(hub.confirm(answer(), "main")).toBe(true);
+  });
 });

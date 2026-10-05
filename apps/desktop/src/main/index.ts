@@ -8,6 +8,7 @@ import { openWebSocket } from "../shared/chat-connection.ts";
 import { DiscoveredBrain } from "../shared/discovery.ts";
 import { type SaveSessionResult, StoredSession } from "../shared/session.ts";
 import type { SettingsPatch } from "../shared/settings.ts";
+import type { Surface } from "../shared/surface.ts";
 import { BrainHub } from "./brain-hub.ts";
 import { type BrainBrowser, BrainDiscovery, bonjourBrowser, staticBrowser } from "./discovery.ts";
 import { electronOs } from "./electron-os.ts";
@@ -22,7 +23,7 @@ import { SettingsController } from "./settings-controller.ts";
 import { SettingsStore } from "./settings-store.ts";
 import { type TrayAction, type TrayItem, trayMenuItems } from "./tray-menu.ts";
 import { isTrustedSenderUrl } from "./trusted-sender.ts";
-import { notificationFor } from "./turn-notifications.ts";
+import { confirmationNotification, notificationFor } from "./turn-notifications.ts";
 import { electronUpdateEngine, UpdateController } from "./updater.ts";
 import { hardenWebContents, WindowManager } from "./windows.ts";
 
@@ -124,6 +125,24 @@ function start(): void {
       windows.broadcast(PUSH.presence, mood);
     },
   });
+  /** Alicia waits for a yes or no the person cannot see: a notification leads to the card. */
+  const notifyConfirmation = (event: { conversationId: string; summary: string }, owner: Surface): void => {
+    const notification = confirmationNotification(event, owner, windows.visibility());
+    if (notification === null) return;
+    os.notify({
+      title: notification.title,
+      body: notification.body,
+      onClick: () => {
+        if (notification.surface === "holo") {
+          windows.openHoloChat();
+          return;
+        }
+        windows.showMain();
+        // A Spotlight question: its card waits in that conversation.
+        if (owner === "spotlight") windows.openConversation(notification.conversationId);
+      },
+    });
+  };
   // The only WebSocket to the brain: Node's has no Origin header, which the brain accepts as a native client.
   const hub = new BrainHub({
     openSocket: openWebSocket,
@@ -132,6 +151,7 @@ function start(): void {
       // A turn's events only reach the window that asked (another one may be starting its own conversation).
       for (const surface of eventRecipients(event, owner, windows.surfaces())) windows.sendTo(surface, PUSH.brainEvent, event);
       presence.event(event);
+      if (event.type === "confirm_request" && owner !== undefined) notifyConfirmation(event, owner);
     },
     onStatus: (status) => {
       windows.broadcast(PUSH.brainStatus, status);

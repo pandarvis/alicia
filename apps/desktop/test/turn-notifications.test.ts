@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { notificationBody, notificationFor } from "../src/main/turn-notifications.ts";
+import { confirmationNotification, notificationBody, notificationFor } from "../src/main/turn-notifications.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 const VISIBLE = { main: true, holoChat: true };
@@ -33,6 +33,27 @@ describe("notificationFor", () => {
   test("an empty answer still says something", () => {
     const turn = { origin: "spotlight", outcome: "answered", conversationId: CONV, text: "  " } as const;
     expect(notificationFor(turn, VISIBLE)?.body).toBe("Alicia a répondu.");
+  });
+});
+
+describe("confirmationNotification", () => {
+  const ASK = { conversationId: CONV, summary: "Oublier ce souvenir : « Kévin court le dimanche » ?" };
+  const NEEDED = "Alicia a besoin de ta réponse";
+
+  test("a card the person can see needs no notification", () => {
+    expect(confirmationNotification(ASK, "main", VISIBLE)).toBeNull();
+    expect(confirmationNotification(ASK, "holo", VISIBLE)).toBeNull();
+  });
+
+  test("an unseen card: a notification with the question, leading to the window that shows the card", () => {
+    expect(confirmationNotification(ASK, "main", HIDDEN)).toEqual({ title: NEEDED, body: ASK.summary, conversationId: CONV, surface: "main" });
+    expect(confirmationNotification(ASK, "holo", { main: true, holoChat: false })).toEqual({
+      title: NEEDED, body: ASK.summary, conversationId: CONV, surface: "holo",
+    });
+  });
+
+  test("a Spotlight question always: its card waits in the main window", () => {
+    expect(confirmationNotification(ASK, "spotlight", VISIBLE)).toEqual({ title: NEEDED, body: ASK.summary, conversationId: CONV, surface: "main" });
   });
 });
 

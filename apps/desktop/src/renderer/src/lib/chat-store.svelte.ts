@@ -1,5 +1,5 @@
 import type {
-  ConversationSummary, HistoryMessage, SendMessage, ServerEvent,
+  ConfirmationOutcome, ConfirmMessage, ConversationSummary, HistoryMessage, SendMessage, ServerEvent,
 } from "@alicia/protocol";
 import { MASCOT_ON_ERROR, type MascotState } from "../../../shared/mascot.ts";
 
@@ -10,12 +10,32 @@ export interface ChatMessage {
   streaming: boolean;
 }
 
+/** A Oui / Non card in the conversation flow. */
+export interface ConfirmationCard {
+  id: string;
+  role: "confirmation";
+  conversationId: string;
+  confirmationId: string;
+  tool: string;
+  summary: string;
+  /** "answering": the answer left, the brain has not settled the card yet. */
+  status: "pending" | "answering" | ConfirmationOutcome;
+}
+
+export type ChatItem = ChatMessage | ConfirmationCard;
+
+export function isSettled(status: ConfirmationCard["status"]): status is ConfirmationOutcome {
+  return status !== "pending" && status !== "answering";
+}
+
 /** Everything the store needs from the outside world (fakes in tests). */
 export interface ChatPorts {
   listConversations(): Promise<ConversationSummary[]>;
   history(conversationId: string): Promise<HistoryMessage[]>;
   send(message: SendMessage): boolean;
   deleteConversation(conversationId: string): Promise<"deleted" | "not_found" | "busy">;
+  /** Sends the answer to a card; false when it could not reach the brain. */
+  confirm(message: ConfirmMessage): Promise<boolean>;
   newId(): string;
   schedule(run: () => void, ms: number): () => void;
 }
@@ -34,7 +54,7 @@ function isTurnEvent(event: ServerEvent): event is TurnEvent {
 export class ChatStore {
   conversations = $state<ConversationSummary[]>([]);
   activeId = $state<string | null>(null);
-  messages = $state<ChatMessage[]>([]);
+  messages = $state<ChatItem[]>([]);
   busy = $state(false);
   /** True while a conversation history is being loaded. */
   loading = $state(false);
@@ -50,6 +70,11 @@ export class ChatStore {
   #cancelMascotReset: (() => void) | null = null;
   /** A conversation asked from outside while this window's turn runs: opened when it ends. */
   #openAfterTurn: string | null = null;
+  /**
+   * Cards of turns this window did not start but must show (a Spotlight question's card waits in the main
+   * window): shown while their conversation stays open (history reloads included), after its last question.
+   */
+  #adopted: ConfirmationCard[] = [];
   #loadToken = 0;
   #refreshToken = 0;
 
@@ -69,6 +94,7 @@ export class ChatStore {
 
   async open(conversationId: string): Promise<void> {
     if (this.busy) return;
+    this.#adopted = this.#adopted.filter((card) => card.conversationId === conversationId);
     this.activeId = conversationId;
     this.notice = null;
     this.messages = [];
@@ -117,6 +143,7 @@ export class ChatStore {
 
   startNew(): void {
     if (this.busy) return;
+    this.#adopted = [];
     this.#loadToken++;
     this.loading = false;
     this.activeId = null;
@@ -141,6 +168,8 @@ export class ChatStore {
     }
     this.#pendingRequestId = requestId;
     this.busy = true;
+    // A new question here: cards adopted from other turns would no longer sit after the last question.
+    this.#adopted = [];
     // « Réfléchir » is for one message: the next one goes back to the default model.
     this.opus = false;
     this.notice = null;
@@ -150,7 +179,38 @@ export class ChatStore {
     return true;
   }
 
+  /** Alicia is working and nothing on screen shows it yet: the typing dots. */
+  get waiting(): boolean {
+    if (!this.busy) return false;
+    const last = this.messages.at(-1);
+    return last?.role === "user" || (last?.role === "confirmation" && isSettled(last.status));
+  }
+
+  /** The person's answer to a card (once: the buttons are off while it travels). */
+  respond(confirmationId: string, approved: boolean): void {
+    const card = this.#card(confirmationId);
+    if (card?.status !== "pending") return;
+    this.#setCardStatus(confirmationId, "answering");
+    void this.#ports.confirm({ type: "confirm", confirmationId, approved }).then(
+      (delivered) => {
+        if (!delivered) this.#undeliveredAnswer(confirmationId);
+      },
+      () => {
+        this.#undeliveredAnswer(confirmationId);
+      },
+    );
+  }
+
   handle(event: ServerEvent): void {
+    if (event.type === "confirm_request") {
+      this.#confirmRequest(event);
+      return;
+    }
+    if (event.type === "confirm_result") {
+      this.#setCardStatus(event.confirmationId, event.outcome);
+      if (this.#isCurrentTurn(event.conversationId)) this.#setMascot("thinking");
+      return;
+    }
     // Another window's turn (Holo, Spotlight) ended: the list may have changed, and maybe the open conversation.
     if (event.type === "done" && !this.#isCurrentTurn(event.conversationId)) {
       this.#otherTurnDone(event.conversationId);
@@ -181,10 +241,6 @@ export class ChatStore {
         return;
       case "tool_result":
         return;
-      case "confirm_request":
-      case "confirm_result":
-        // No confirmation card in this window yet: an unanswered request expires on the brain's side.
-        return;
       case "done":
         this.#endTurn();
         this.#setMascot("success", SUCCESS_MS);
@@ -200,6 +256,11 @@ export class ChatStore {
   }
 
   connectionLost(): void {
+    // The brain cancels every confirmation of a lost connection.
+    for (const item of [...this.messages, ...this.#adopted]) {
+      if (item.role === "confirmation" && !isSettled(item.status)) item.status = "cancelled";
+    }
+    this.#adopted = [];
     if (!this.busy) return;
     this.#endTurn();
     this.notice = "Connexion perdue : la réponse d'Alicia n'est pas arrivée.";
@@ -212,6 +273,46 @@ export class ChatStore {
     this.#endTurn();
     this.notice = "Alicia n'est pas joignable pour l'instant.";
     this.#setMascot("alert");
+  }
+
+  #confirmRequest(event: Extract<ServerEvent, { type: "confirm_request" }>): void {
+    const card: ConfirmationCard = {
+      id: this.#ports.newId(), role: "confirmation", conversationId: event.conversationId,
+      confirmationId: event.confirmationId, tool: event.tool, summary: event.summary, status: "pending",
+    };
+    if (this.#isCurrentTurn(event.conversationId)) {
+      const last = this.messages.at(-1);
+      if (last?.role === "assistant") last.streaming = false;
+      this.activity = null;
+      this.messages.push(card);
+      this.#setMascot("alert");
+      return;
+    }
+    // Another window's turn whose card belongs here (the main process only routes such cards to this window).
+    if (this.busy) return;
+    this.#adopted.push(card);
+    if (this.activeId === event.conversationId && !this.loading) this.messages.push({ ...card });
+  }
+
+  /** The card wherever it shows (its own turn's, or an adopted one open here). */
+  #card(confirmationId: string): ConfirmationCard | undefined {
+    return this.messages.find(
+      (m): m is ConfirmationCard => m.role === "confirmation" && m.confirmationId === confirmationId,
+    );
+  }
+
+  #setCardStatus(confirmationId: string, status: ConfirmationCard["status"]): void {
+    const card = this.#card(confirmationId);
+    if (card !== undefined) card.status = status;
+    const adopted = this.#adopted.find((c) => c.confirmationId === confirmationId);
+    if (adopted !== undefined) adopted.status = status;
+  }
+
+  /** The answer did not reach the brain: the card can be answered again. */
+  #undeliveredAnswer(confirmationId: string): void {
+    if (this.#card(confirmationId)?.status !== "answering") return;
+    this.#setCardStatus(confirmationId, "pending");
+    this.notice = "Alicia n'est pas joignable pour l'instant.";
   }
 
   #otherTurnDone(conversationId: string): void {
@@ -235,7 +336,12 @@ export class ChatStore {
     try {
       const history = await this.#ports.history(conversationId);
       if (token !== this.#loadToken) return;
-      this.messages = history.map((m) => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
+      const items = history.map((m): ChatItem => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
+      // An adopted card goes where it was asked: after the question of its turn (the last one).
+      const cards = this.#adopted.filter((card) => card.conversationId === conversationId).map((card) => ({ ...card }));
+      const after = items.findLastIndex((m) => m.role === "user") + 1;
+      items.splice(after, 0, ...cards);
+      this.messages = items;
     } catch {
       if (token !== this.#loadToken) return;
       this.notice = "Impossible de charger cette conversation pour l'instant.";

@@ -3,10 +3,9 @@ import { join } from "node:path";
 import type { Page } from "playwright";
 import { expect, test } from "vitest";
 import { z } from "zod";
-import { callTool } from "../../brain/src/engine/fake-engine.ts";
 import {
-  callHook, closeWindow, deferred, exited, GREETING_EVENTS, launch, pair, POLL, recorded, secondInstance, send, startBrain,
-  surfacePage, tempDir, windowBounds, windowVisible,
+  callHook, closeWindow, deferred, exited, FORGET_QUESTION, GREETING_EVENTS, launch, pair, POLL, recorded, RUNNING,
+  secondInstance, send, startBrain, startForgettingBrain, surfacePage, tempDir, windowBounds, windowVisible,
 } from "./support.ts";
 
 test("closing the main window hides it in the tray; launching Alicia again brings it back", async () => {
@@ -382,25 +381,12 @@ test("nothing found on the network: the manual address stays, with a hint for Ta
 });
 
 test("a confirmation reaches only the window whose turn asked, and only that window can answer it, once", async () => {
-  let memoryId = "";
-  const brain = await startBrain(async (request) => {
-    const result = await callTool(request, "memory_forget", { id: memoryId });
-    return [
-      { type: "session", sessionId: "s1" },
-      { type: "text", text: result.isError === true ? "Je le garde." : "C'est oublié." },
-      { type: "done", inputTokens: 1, outputTokens: 1 },
-    ];
-  });
-  const saved = await brain.app.memory.remember({
-    personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual",
-  });
-  if (saved.status !== "created") throw new Error("not created");
-  memoryId = saved.memory.id;
+  const { brain, memoryId } = await startForgettingBrain();
   const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
   await pair(page, brain);
   const holo = await surfacePage(app, "holo");
 
-  // Each window notes the confirmation events it receives (no card yet: read through the bridge).
+  // Each window notes the confirmation events it receives (read through the bridge, under the cards).
   for (const surface of [page, holo]) {
     await surface.evaluate(() => {
       window.alicia.brain.onEvent((event) => {
@@ -428,4 +414,60 @@ test("a confirmation reaches only the window whose turn asked, and only that win
   expect(await noted(page, "outcome")).toBe("approved");
   expect(await noted(holo, "outcome")).toBe("");
   expect(brain.app.memory.get("kevin", memoryId)).toBeUndefined();
+});
+
+test("Spotlight: a question that needs a yes notifies; its card waits in the main window", async () => {
+  const { brain, memoryId } = await startForgettingBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await closeWindow(app, "main");
+  await expect.poll(() => windowVisible(app, "main"), POLL).toBe(false);
+
+  await callHook(app, "triggerShortcut");
+  const bar = await surfacePage(app, "spotlight");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  await bar.getByTestId("spotlight-input").fill("Oublie que je cours");
+  await bar.getByTestId("spotlight-input").press("Enter");
+  await expect.poll(async () => (await recorded(app)).notifications, POLL).toEqual([
+    { title: "Alicia a besoin de ta réponse", body: FORGET_QUESTION },
+  ]);
+  expect(brain.app.memory.get("kevin", memoryId)).toBeDefined();
+
+  // The notification opens the main window on that conversation, where the card waits.
+  await callHook(app, "clickNotification", 0);
+  await expect.poll(() => windowVisible(app, "main"), POLL).toBe(true);
+  const card = page.getByTestId("confirm-card").filter({ hasText: RUNNING });
+  await expect.poll(() => card.getAttribute("data-status"), POLL).toBe("pending");
+  await card.getByTestId("confirm-yes").click();
+  await expect.poll(() => card.getAttribute("data-status"), POLL).toBe("approved");
+  expect(brain.app.memory.get("kevin", memoryId)).toBeUndefined();
+  // The answer reaches the conversation (and, as for any Spotlight question, a notification).
+  await page.getByTestId("message-assistant").filter({ hasText: "C'est oublié." }).waitFor();
+});
+
+test("Holo: its mini-chat shows its own card; Alicia waits on alert, then goes on", async () => {
+  const { brain, memoryId } = await startForgettingBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await callHook(app, "pinFocus", "focused");
+  await pair(page, brain);
+  const holo = await surfacePage(app, "holo");
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+  await holo.getByTestId("holo-mascot").click();
+  await holo.getByTestId("holo-chat").waitFor();
+  await expect.poll(() => holo.getByTestId("holo-input").isEnabled(), POLL).toBe(true);
+  await holo.getByTestId("holo-input").fill("Oublie que je cours");
+  await holo.getByTestId("holo-input").press("Enter");
+
+  const card = holo.getByTestId("confirm-card").filter({ hasText: RUNNING });
+  await expect.poll(() => card.getAttribute("data-status"), POLL).toBe("pending");
+  const mood = (): Promise<string | null> => holo.getByTestId("holo-mascot").getByTestId("mascot").getAttribute("data-mood");
+  await expect.poll(mood, POLL).toBe("alert");
+  // Seen in the open mini-chat: no notification, and nothing in the main window.
+  expect((await recorded(app)).notifications).toEqual([]);
+  expect(await page.getByTestId("confirm-card").count()).toBe(0);
+
+  await card.getByTestId("confirm-no").click();
+  await holo.getByTestId("holo-message-assistant").filter({ hasText: "Je le garde." }).waitFor();
+  expect(await card.getAttribute("data-status")).toBe("refused");
+  expect(brain.app.memory.get("kevin", memoryId)).toBeDefined();
 });

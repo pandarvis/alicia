@@ -1,6 +1,7 @@
 import type { ConfirmMessage, ErrorCode, SendMessage, ServerEvent } from "@alicia/protocol";
 import { ChatConnection, type ConnectionStatus, type SocketLike, webSocketUrl } from "../shared/chat-connection.ts";
 import type { Surface } from "../shared/surface.ts";
+import { confirmationSurface } from "./event-routing.ts";
 
 /** How a turn ended, and which window asked for it (the notification depends on both). */
 export type FinishedTurn =
@@ -50,8 +51,8 @@ export class BrainHub {
   #status: ConnectionStatus = "offline";
   /** Turns waiting for their end, by request id, oldest first. */
   readonly #turns = new Map<string, Turn>();
-  /** Confirmation cards waiting for an answer: the request id of the turn that asked. */
-  readonly #confirmations = new Map<string, string>();
+  /** Confirmation cards waiting for an answer: the turn that asked, and the window that shows the card. */
+  readonly #confirmations = new Map<string, { requestId: string; surface: Surface }>();
 
   constructor(ports: BrainHubPorts) {
     this.#ports = ports;
@@ -103,12 +104,12 @@ export class BrainHub {
   }
 
   /**
-   * The answer to a confirmation card. Only the window whose turn asked may answer, once: false for any other
-   * window, an unknown or settled confirmation, or when the answer cannot leave.
+   * The answer to a confirmation card. Only the window that shows the card (see confirmationSurface) may answer,
+   * once: false for any other window, an unknown or settled confirmation, or when the answer cannot leave.
    */
   confirm(message: ConfirmMessage, origin: Surface): boolean {
-    const requestId = this.#confirmations.get(message.confirmationId);
-    if (requestId === undefined || this.#turns.get(requestId)?.origin !== origin) return false;
+    const pending = this.#confirmations.get(message.confirmationId);
+    if (pending === undefined || pending.surface !== origin || !this.#turns.has(pending.requestId)) return false;
     if (this.#connection?.send(message) !== true) return false;
     this.#confirmations.delete(message.confirmationId);
     return true;
@@ -150,7 +151,12 @@ export class BrainHub {
         break;
       case "confirm_request":
         requestId = this.#find(event.conversationId);
-        if (requestId !== undefined) this.#confirmations.set(event.confirmationId, requestId);
+        if (requestId !== undefined) {
+          const turn = this.#turns.get(requestId);
+          if (turn !== undefined) {
+            this.#confirmations.set(event.confirmationId, { requestId, surface: confirmationSurface(turn.origin) });
+          }
+        }
         break;
       case "confirm_result":
         requestId = this.#find(event.conversationId);
@@ -208,8 +214,8 @@ export class BrainHub {
   /** A turn ended: it and its confirmations are forgotten. */
   #forget(requestId: string): void {
     this.#turns.delete(requestId);
-    for (const [confirmationId, owner] of this.#confirmations) {
-      if (owner === requestId) this.#confirmations.delete(confirmationId);
+    for (const [confirmationId, pending] of this.#confirmations) {
+      if (pending.requestId === requestId) this.#confirmations.delete(confirmationId);
     }
   }
 

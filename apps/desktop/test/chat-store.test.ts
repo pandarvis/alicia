@@ -1,6 +1,6 @@
-import type { ConversationSummary, HistoryMessage, SendMessage } from "@alicia/protocol";
+import type { ConfirmMessage, ConversationSummary, HistoryMessage, SendMessage } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { ChatStore, type ChatPorts } from "../src/renderer/src/lib/chat-store.svelte.ts";
+import { type ChatItem, ChatStore, type ChatPorts } from "../src/renderer/src/lib/chat-store.svelte.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 const CONV_B = "7a9d0c3e-1b2f-4e5a-8c6d-9e0f1a2b3c4d";
@@ -15,6 +15,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+/** What an item says: a message's text, a card's question. */
+function textOf(item: ChatItem): string {
+  return item.role === "confirmation" ? item.summary : item.text;
+}
+
 function msg(id: string, text: string): HistoryMessage {
   return { id, role: "user", text, createdAt: "2026-10-04T13:30:00.000Z" };
 }
@@ -22,6 +27,7 @@ function msg(id: string, text: string): HistoryMessage {
 function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {}) {
   let counter = 0;
   const sent: SendMessage[] = [];
+  const confirmed: ConfirmMessage[] = [];
   const timers: { run: () => void; ms: number; cancelled: boolean }[] = [];
   let conversations: ConversationSummary[] = [];
   const store = new ChatStore({
@@ -30,6 +36,10 @@ function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {
     send: (m) => {
       sent.push(m);
       return true;
+    },
+    confirm: (m) => {
+      confirmed.push(m);
+      return Promise.resolve(true);
     },
     deleteConversation: () => Promise.resolve("deleted"),
     newId: () => `00000000-0000-4000-8000-00000000000${counter++}`,
@@ -43,7 +53,7 @@ function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {
     ...overrides,
   });
   return {
-    store, sent, timers,
+    store, sent, confirmed, timers,
     setConversations: (list: ConversationSummary[]) => {
       conversations = list;
     },
@@ -61,7 +71,7 @@ describe("ChatStore", () => {
   test("send: user bubble, request without conversation id, mascot thinking", () => {
     const { store, sent } = setup();
     expect(store.send("Salut")).toBe(true);
-    expect(store.messages.map((m) => [m.role, m.text])).toEqual([["user", "Salut"]]);
+    expect(store.messages.map((m) => [m.role, textOf(m)])).toEqual([["user", "Salut"]]);
     expect(sent[0]).toEqual({ type: "send", requestId: sent[0]?.requestId, text: "Salut" });
     expect(store.busy).toBe(true);
     expect(store.mascot).toBe("thinking");
@@ -111,7 +121,7 @@ describe("ChatStore", () => {
     store.handle({
       type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 2, durationMs: 3,
     });
-    expect(store.messages.at(-1)?.streaming).toBe(false);
+    expect(store.messages.at(-1)).toMatchObject({ streaming: false });
     expect(store.busy).toBe(false);
     expect(store.mascot).toBe("success");
     timers.at(-1)?.run();
@@ -183,7 +193,7 @@ describe("ChatStore", () => {
     ]);
     await store.open(CONV);
     expect(store.activeId).toBe(CONV);
-    expect(store.messages.map((m) => m.text)).toEqual(["Salut", "Coucou !"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Salut", "Coucou !"]);
     store.startNew();
     expect(store.activeId).toBeNull();
     expect(store.messages).toEqual([]);
@@ -223,7 +233,7 @@ describe("ChatStore", () => {
     first.resolve([msg("a", "Première")]);
     await a;
     expect(store.activeId).toBe(CONV_B);
-    expect(store.messages.map((m) => m.text)).toEqual(["Deuxième"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Deuxième"]);
     expect(store.loading).toBe(false);
   });
 
@@ -238,7 +248,7 @@ describe("ChatStore", () => {
     first.reject(new Error("boom"));
     await a;
     expect(store.notice).toBeNull();
-    expect(store.messages.map((m) => m.text)).toEqual(["Deuxième"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Deuxième"]);
   });
 
   test("a failing open sets a notice and ends loading", async () => {
@@ -334,14 +344,14 @@ describe("ChatStore", () => {
     store.handle({ type: "text_delta", conversationId: CONV_B, text: "Intrus" });
     store.handle({ type: "tool_call", conversationId: CONV_B, callId: "t", tool: "weather", label: "Alicia regarde la météo…" });
     store.handle({ type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
-    expect(store.messages.map((m) => m.text)).toEqual(["Nouvelle question"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Nouvelle question"]);
     expect([store.busy, store.activity]).toEqual([true, null]);
     // Its own conversation arrives: from now on, its events count.
     store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
     store.handle({ type: "text_delta", conversationId: CONV_B, text: "Encore" });
     store.handle({ type: "text_delta", conversationId: CONV, text: "Réponse" });
     store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 });
-    expect(store.messages.map((m) => m.text)).toEqual(["Nouvelle question", "Réponse"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Nouvelle question", "Réponse"]);
     expect(store.busy).toBe(false);
   });
 
@@ -353,7 +363,7 @@ describe("ChatStore", () => {
     store.handle({
       type: "done", conversationId: CONV_B, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0,
     });
-    expect(store.messages.map((m) => m.text)).toEqual(["Un"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Un"]);
     expect(store.busy).toBe(true);
   });
 
@@ -380,7 +390,7 @@ describe("ChatStore", () => {
     history.mockResolvedValue([msg("a", "Salut"), { ...msg("b", "Fini !"), role: "assistant" }]);
     await store.resync();
     expect(history).toHaveBeenCalledWith(CONV);
-    expect(store.messages.map((m) => m.text)).toEqual(["Salut", "Fini !"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Salut", "Fini !"]);
     expect(store.loading).toBe(false);
   });
 
@@ -399,7 +409,7 @@ describe("ChatStore", () => {
     await store.open(CONV);
     history.mockRejectedValue(new Error("boom"));
     await store.resync();
-    expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
+    expect(store.messages.map((m) => textOf(m))).toEqual(["Salut"]);
     expect(store.notice).toBe("Impossible de charger cette conversation pour l'instant.");
   });
 
@@ -433,7 +443,7 @@ describe("ChatStore", () => {
       expect(await store.removeConversation(CONV)).toBe("not_found");
       expect(store.conversations.map((c) => c.id)).toEqual([CONV_B]);
       expect(store.activeId).toBe(CONV_B);
-      expect(store.messages.map((m) => m.text)).toEqual(["Salut"]);
+      expect(store.messages.map((m) => textOf(m))).toEqual(["Salut"]);
     });
 
     test("busy: kept, without a chat notice", async () => {
@@ -474,5 +484,100 @@ describe("ChatStore", () => {
       expect(store.conversations).toHaveLength(2);
       expect(store.notice).toBeNull();
     });
+  });
+});
+
+const CONFIRMATION = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
+const ASK = {
+  type: "confirm_request", conversationId: CONV, confirmationId: CONFIRMATION, tool: "memory_forget",
+  summary: "Oublier ce souvenir : « Kévin adore les lasagnes » ?", expiresAt: "2026-10-05T10:05:00.000Z",
+} as const;
+
+describe("confirmations", () => {
+  /** A turn of this window, in conversation CONV. */
+  function asking(overrides: Partial<ChatPorts> = {}) {
+    const context = setup([], overrides);
+    context.store.send("Oublie les lasagnes");
+    context.store.handle({ type: "conversation", requestId: context.sent[0]?.requestId ?? "", conversationId: CONV });
+    return context;
+  }
+
+  test("a request closes the streaming bubble and adds a pending card; no typing dots meanwhile", () => {
+    const { store } = asking();
+    store.handle({ type: "text_delta", conversationId: CONV, text: "Je vérifie." });
+    store.handle({ type: "tool_call", conversationId: CONV, callId: "t1", tool: "memory_forget", label: "Alicia oublie ce souvenir…" });
+    store.handle(ASK);
+    expect(store.messages.at(-2)).toMatchObject({ role: "assistant", text: "Je vérifie.", streaming: false });
+    expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", confirmationId: CONFIRMATION, status: "pending", summary: ASK.summary });
+    expect(store.activity).toBeNull();
+    expect(store.waiting).toBe(false);
+    expect(store.mascot).toBe("alert");
+  });
+
+  test("answering sends confirm; the brain's result settles the card; the answer continues below", async () => {
+    const { store, confirmed } = asking();
+    store.handle(ASK);
+    store.respond(CONFIRMATION, true);
+    expect(confirmed).toEqual([{ type: "confirm", confirmationId: CONFIRMATION, approved: true }]);
+    expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", status: "answering" });
+    store.respond(CONFIRMATION, false);
+    expect(confirmed).toHaveLength(1);
+    await Promise.resolve();
+    store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "approved" });
+    expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", status: "approved" });
+    expect(store.waiting).toBe(true);
+    expect(store.mascot).toBe("thinking");
+    store.handle({ type: "text_delta", conversationId: CONV, text: "C'est oublié." });
+    expect(store.messages.at(-1)).toMatchObject({ role: "assistant", text: "C'est oublié.", streaming: true });
+  });
+
+  test("the answer cannot leave (offline, refused): notice, card pending again", async () => {
+    const { store } = asking({ confirm: () => Promise.resolve(false) });
+    store.handle(ASK);
+    store.respond(CONFIRMATION, true);
+    await vi.waitFor(() => { expect(store.notice).toBe("Alicia n'est pas joignable pour l'instant."); });
+    expect(store.messages.at(-1)).toMatchObject({ status: "pending" });
+  });
+
+  test("connection lost: cards still waiting become cancelled", () => {
+    const { store } = asking();
+    store.handle(ASK);
+    store.connectionLost();
+    expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", status: "cancelled" });
+  });
+
+  test("a request for another conversation, not open here, does not show", () => {
+    const { store } = asking();
+    store.handle({ ...ASK, conversationId: CONV_B });
+    expect(store.messages.some((m) => m.role === "confirmation")).toBe(false);
+  });
+
+  test("another window's card routed here (a Spotlight turn) shows when its conversation is open, and can be answered", async () => {
+    const history = [msg("m1", "Oublie les lasagnes")];
+    const { store, confirmed } = setup(history);
+    store.handle(ASK);
+    expect(store.messages).toEqual([]);
+    await store.open(CONV);
+    expect(store.messages.map((m) => m.role)).toEqual(["user", "confirmation"]);
+    store.respond(CONFIRMATION, false);
+    expect(confirmed).toEqual([{ type: "confirm", confirmationId: CONFIRMATION, approved: false }]);
+    store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "refused" });
+    expect(store.messages.at(-1)).toMatchObject({ status: "refused" });
+    // Its turn ends: the history is reloaded with the answer; the card stays after its question.
+    history.push({ id: "m2", role: "assistant", text: "Je le garde.", createdAt: "2026-10-04T13:31:00.000Z" });
+    store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 });
+    await vi.waitFor(() => { expect(store.messages.map((m) => m.role)).toEqual(["user", "confirmation", "assistant"]); });
+    expect(store.messages[1]).toMatchObject({ status: "refused" });
+    // Leaving the conversation forgets it.
+    store.startNew();
+    await store.open(CONV);
+    expect(store.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("a card routed here while its conversation is already open shows at once", async () => {
+    const { store } = setup([msg("m1", "Oublie les lasagnes")]);
+    await store.open(CONV);
+    store.handle(ASK);
+    expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", status: "pending" });
   });
 });
