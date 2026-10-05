@@ -549,4 +549,56 @@ describe("WebSocket", () => {
     expect(await c.closed).toBe(1011);
     expect(c.received).toEqual([{ type: "error", code: "internal", message: "Erreur interne." }]);
   });
+
+  test("answering an unknown confirmation is refused, without breaking the connection", async () => {
+    const { url, token } = await start();
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "confirm", confirmationId: REQUEST_ID, approved: true }));
+    await c.waitFor((e) => e.type === "error");
+    expect(c.received.at(-1)).toEqual({
+      type: "error", code: "invalid_request", message: "Cette demande de confirmation n'est plus valable.",
+    });
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID_2, text: "Salut" }));
+    await c.waitFor((e) => e.type === "done");
+    c.ws.close();
+  });
+
+  test("an answer during a running turn is not refused as busy", async () => {
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const engine: Engine = {
+      run(): AsyncIterable<EngineEvent> {
+        return (async function* () {
+          yield { type: "text", text: "…" } satisfies EngineEvent;
+          markStarted();
+          await released;
+          yield { type: "done", inputTokens: 1, outputTokens: 1 } satisfies EngineEvent;
+        })();
+      },
+    };
+    const { url, token } = await start({ engine });
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Un" }));
+    await started;
+    c.ws.send(JSON.stringify({ type: "confirm", confirmationId: REQUEST_ID_2, approved: false }));
+    await c.waitFor((e) => e.type === "error");
+    expect(c.received.filter((e) => e.type === "error")).toEqual([
+      { type: "error", code: "invalid_request", message: "Cette demande de confirmation n'est plus valable." },
+    ]);
+    release();
+    await c.waitFor((e) => e.type === "done");
+    c.ws.close();
+  });
 });

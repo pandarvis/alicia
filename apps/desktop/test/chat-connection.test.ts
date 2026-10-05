@@ -119,6 +119,17 @@ describe("ChatConnection", () => {
     expect(sockets[0]?.sent.at(-1)).toBe(JSON.stringify(MESSAGE));
   });
 
+  test("sends a confirm answer once ready", () => {
+    const { connection, sockets } = setup();
+    const answer = { type: "confirm" as const, confirmationId: "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6", approved: false };
+    connection.start();
+    sockets[0]?.onopen?.();
+    expect(connection.send(answer)).toBe(false);
+    sockets[0]?.receive(READY);
+    expect(connection.send(answer)).toBe(true);
+    expect(sockets[0]?.sent.at(-1)).toBe(JSON.stringify(answer));
+  });
+
   test("reconnects with growing delays, capped at 30 s, reset after ready", () => {
     const { connection, sockets, timers, statuses } = setup();
     connection.start();

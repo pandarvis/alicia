@@ -200,6 +200,8 @@ async function chat(url: string, code: string | undefined): Promise<void> {
           break;
         case "tool_result":
         case "heartbeat":
+        case "confirm_request":
+        case "confirm_result":
           break;
         case "done":
           process.stdout.write(`\n  (${e.model}, ${e.inputTokens}→${e.outputTokens} tokens, ${e.durationMs} ms)\n`);

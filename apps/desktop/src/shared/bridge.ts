@@ -1,4 +1,4 @@
-import type { SendMessage, ServerEvent } from "@alicia/protocol";
+import type { ConfirmMessage, SendMessage, ServerEvent } from "@alicia/protocol";
 import type { ConnectionStatus } from "./chat-connection.ts";
 import type { DiscoveredBrain } from "./discovery.ts";
 import type { HoloView } from "./holo.ts";
@@ -14,6 +14,11 @@ export interface BrainBridge {
   status(): Promise<ConnectionStatus>;
   /** True once the main process handed the message to the brain. */
   send(message: SendMessage): Promise<boolean>;
+  /**
+   * The answer to a confirmation card of this window's turn; true once handed to the brain. Refused for a card
+   * another window's turn asked, one already answered or settled, or when the brain cannot be reached.
+   */
+  confirm(message: ConfirmMessage): Promise<boolean>;
   onEvent(listener: (event: ServerEvent) => void): Unsubscribe;
   onStatus(listener: (status: ConnectionStatus) => void): Unsubscribe;
   /** A turn failed after its conversation was created: the conversation lists may have changed. */
@@ -115,6 +120,7 @@ export const INVOKE = {
   deviceName: "device:name",
   brainStatus: "brain:status",
   brainSend: "brain:send",
+  brainConfirm: "brain:confirm",
   presenceGet: "presence:get",
   presenceTyping: "presence:typing",
   appVersion: "app:version",

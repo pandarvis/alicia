@@ -12,6 +12,11 @@ const TURN_EVENTS: ServerEvent[] = [
   { type: "text_delta", conversationId: CONV, text: "Bonjour" },
   { type: "tool_call", conversationId: CONV, callId: "c", tool: "weather", label: "Alicia regarde la météo…" },
   { type: "tool_result", conversationId: CONV, callId: "c", success: true },
+  {
+    type: "confirm_request", conversationId: CONV, confirmationId: REQUEST, tool: "memory_forget",
+    summary: "Oublier ce souvenir ?", expiresAt: "2026-10-05T10:05:00.000Z",
+  },
+  { type: "confirm_result", conversationId: CONV, confirmationId: REQUEST, outcome: "approved" },
   { type: "error", requestId: REQUEST, code: "engine", message: "Raté." },
 ];
 const DONE: ServerEvent = { type: "done", conversationId: CONV, model: "sonnet", inputTokens: 0, outputTokens: 0, durationMs: 0 };

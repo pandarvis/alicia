@@ -1,4 +1,4 @@
-import type { SendMessage, ServerEvent } from "@alicia/protocol";
+import type { ConfirmMessage, SendMessage, ServerEvent } from "@alicia/protocol";
 import type { BrainBridge } from "../../../shared/bridge.ts";
 import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
 import { mirror } from "./mirror.ts";
@@ -62,5 +62,15 @@ export class HubClient {
       },
     );
     return true;
+  }
+
+  /** The answer to a confirmation card; false when not ready, or when the main process could not hand it over. */
+  async confirm(message: ConfirmMessage): Promise<boolean> {
+    if (this.#stopped || this.#status !== "ready") return false;
+    try {
+      return await this.#bridge.confirm(message);
+    } catch {
+      return false;
+    }
   }
 }

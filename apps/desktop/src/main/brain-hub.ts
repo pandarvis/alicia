@@ -1,4 +1,4 @@
-import type { ErrorCode, SendMessage, ServerEvent } from "@alicia/protocol";
+import type { ConfirmMessage, ErrorCode, SendMessage, ServerEvent } from "@alicia/protocol";
 import { ChatConnection, type ConnectionStatus, type SocketLike, webSocketUrl } from "../shared/chat-connection.ts";
 import type { Surface } from "../shared/surface.ts";
 
@@ -50,6 +50,8 @@ export class BrainHub {
   #status: ConnectionStatus = "offline";
   /** Turns waiting for their end, by request id, oldest first. */
   readonly #turns = new Map<string, Turn>();
+  /** Confirmation cards waiting for an answer: the request id of the turn that asked. */
+  readonly #confirmations = new Map<string, string>();
 
   constructor(ports: BrainHubPorts) {
     this.#ports = ports;
@@ -100,6 +102,18 @@ export class BrainHub {
     return true;
   }
 
+  /**
+   * The answer to a confirmation card. Only the window whose turn asked may answer, once: false for any other
+   * window, an unknown or settled confirmation, or when the answer cannot leave.
+   */
+  confirm(message: ConfirmMessage, origin: Surface): boolean {
+    const requestId = this.#confirmations.get(message.confirmationId);
+    if (requestId === undefined || this.#turns.get(requestId)?.origin !== origin) return false;
+    if (this.#connection?.send(message) !== true) return false;
+    this.#confirmations.delete(message.confirmationId);
+    return true;
+  }
+
   /** Stops the current connection and forgets its turns; true when there was one. */
   #teardown(): boolean {
     const connection = this.#connection;
@@ -107,6 +121,7 @@ export class BrainHub {
     this.#connection = null;
     connection.stop();
     this.#turns.clear();
+    this.#confirmations.clear();
     return true;
   }
 
@@ -132,6 +147,14 @@ export class BrainHub {
       case "tool_call":
       case "tool_result":
         requestId = this.#find(event.conversationId);
+        break;
+      case "confirm_request":
+        requestId = this.#find(event.conversationId);
+        if (requestId !== undefined) this.#confirmations.set(event.confirmationId, requestId);
+        break;
+      case "confirm_result":
+        requestId = this.#find(event.conversationId);
+        this.#confirmations.delete(event.confirmationId);
         break;
       case "done": {
         requestId = this.#find(event.conversationId);
@@ -160,7 +183,7 @@ export class BrainHub {
         break;
     }
     const owner = requestId === undefined ? undefined : this.#turns.get(requestId)?.origin;
-    if (finished !== null && requestId !== undefined) this.#turns.delete(requestId);
+    if (finished !== null && requestId !== undefined) this.#forget(requestId);
     const pending = this.#turns.size;
 
     this.#safely("onEvent", () => {
@@ -180,6 +203,14 @@ export class BrainHub {
       if (turn.conversationId === undefined) return requestId;
     }
     return undefined;
+  }
+
+  /** A turn ended: it and its confirmations are forgotten. */
+  #forget(requestId: string): void {
+    this.#turns.delete(requestId);
+    for (const [confirmationId, owner] of this.#confirmations) {
+      if (owner === requestId) this.#confirmations.delete(confirmationId);
+    }
   }
 
   /** The oldest pending turn of a conversation (a refused second send in the same conversation comes after it). */
@@ -202,6 +233,7 @@ export class BrainHub {
     if (status === "offline" || status === "rejected") {
       lost.push(...this.#lostTurns(status === "rejected" ? DEVICE_REFUSED : CONNECTION_LOST));
       this.#turns.clear();
+      this.#confirmations.clear();
     }
     this.#safely("onStatus", () => {
       this.#ports.onStatus(status);

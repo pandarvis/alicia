@@ -53,6 +53,8 @@ export interface ServerDependencies {
   heartbeatMs?: number;
   /** WebSocket backpressure settings (default DEFAULT_DRAIN; adjusted by tests). */
   drain?: DrainOptions;
+  /** Time left to answer a confirmation card (default 5 min; shortened by tests). */
+  confirmationTimeoutMs?: number;
   /** Published versions of the desktop app, served read-only under /updates/ (omitted in most tests). */
   updatesDir?: string;
 }

@@ -6,6 +6,10 @@ export type ErrorCode = z.infer<typeof ErrorCode>;
 
 const count = z.number().int().nonnegative();
 
+/** How a confirmation ended: the tool only runs on "approved". */
+export const ConfirmationOutcome = z.enum(["approved", "refused", "expired", "cancelled"]);
+export type ConfirmationOutcome = z.infer<typeof ConfirmationOutcome>;
+
 /** Everything the brain can send to the app over the WebSocket. */
 export const ServerEvent = z.discriminatedUnion("type", [
   /** Sent every 30 s to authenticated apps: browsers hide protocol pings, this proves the brain is alive. */
@@ -20,6 +24,22 @@ export const ServerEvent = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("tool_result"), conversationId: z.uuid(), callId: z.string(), success: z.boolean(),
+  }),
+  /** Alicia needs a yes before acting; only the connection that started the turn can answer. */
+  z.object({
+    type: z.literal("confirm_request"),
+    conversationId: z.uuid(),
+    confirmationId: z.uuid(),
+    tool: z.string(),
+    /** The French question shown on the card. */
+    summary: z.string().min(1).max(500),
+    expiresAt: z.iso.datetime(),
+  }),
+  z.object({
+    type: z.literal("confirm_result"),
+    conversationId: z.uuid(),
+    confirmationId: z.uuid(),
+    outcome: ConfirmationOutcome,
   }),
   z.object({
     type: z.literal("done"),

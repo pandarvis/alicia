@@ -1,8 +1,11 @@
-import { type SendMessage, ServerEvent } from "@alicia/protocol";
+import { type ConfirmMessage, type SendMessage, ServerEvent } from "@alicia/protocol";
 import { z } from "zod";
 
 export const ConnectionStatus = z.enum(["connecting", "ready", "offline", "rejected"]);
 export type ConnectionStatus = z.infer<typeof ConnectionStatus>;
+
+/** What the app sends once authenticated: a message, or the answer to a confirmation card. */
+export type OutgoingMessage = SendMessage | ConfirmMessage;
 
 /** The few WebSocket features we use, so tests can drive a fake. */
 export interface SocketLike {
@@ -82,7 +85,7 @@ export class ChatConnection {
     this.#open();
   }
 
-  send(message: SendMessage): boolean {
+  send(message: OutgoingMessage): boolean {
     if (!this.#ready || this.#socket === null) return false;
     this.#socket.send(JSON.stringify(message));
     return true;

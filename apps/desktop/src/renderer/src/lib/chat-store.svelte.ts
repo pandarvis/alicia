@@ -181,6 +181,10 @@ export class ChatStore {
         return;
       case "tool_result":
         return;
+      case "confirm_request":
+      case "confirm_result":
+        // No confirmation card in this window yet: an unanswered request expires on the brain's side.
+        return;
       case "done":
         this.#endTurn();
         this.#setMascot("success", SUCCESS_MS);

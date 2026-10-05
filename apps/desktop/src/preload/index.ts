@@ -56,6 +56,7 @@ const bridge: AliciaBridge = {
       return parsed.success ? parsed.data : "offline";
     },
     send: (message) => call(z.boolean(), INVOKE.brainSend, message),
+    confirm: (message) => call(z.boolean(), INVOKE.brainConfirm, message),
     onEvent: (listener) => subscribe(PUSH.brainEvent, ServerEvent, listener),
     onStatus: (listener) => subscribe(PUSH.brainStatus, ConnectionStatus, listener),
     onConversationsChanged: (listener) => subscribe(PUSH.conversationsChanged, z.undefined(), () => {

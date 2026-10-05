@@ -14,6 +14,7 @@ import {
 } from "../src/index.ts";
 
 const UUID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
+const CONFIRMATION = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
 
 describe("identity", () => {
   test("accepts a valid person", () => {
@@ -80,6 +81,13 @@ describe("client messages", () => {
   test("rejects an unknown type", () => {
     expect(ClientMessage.safeParse({ type: "hack" }).success).toBe(false);
   });
+  test("confirm: a strict client message", () => {
+    const message = { type: "confirm", confirmationId: CONFIRMATION, approved: true };
+    expect(ClientMessage.parse(message)).toEqual(message);
+    expect(ClientMessage.safeParse({ ...message, approved: "oui" }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...message, confirmationId: "nope" }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...message, extra: 1 }).success).toBe(false);
+  });
 });
 
 describe("server events", () => {
@@ -97,6 +105,23 @@ describe("server events", () => {
   });
   test("heartbeat", () => {
     expect(ServerEvent.parse({ type: "heartbeat" })).toEqual({ type: "heartbeat" });
+  });
+  test("confirm_request and confirm_result round-trip", () => {
+    const request = {
+      type: "confirm_request", conversationId: UUID, confirmationId: CONFIRMATION,
+      tool: "memory_forget", summary: "Oublier ce souvenir : « Kévin adore les lasagnes » ?",
+      expiresAt: "2026-10-05T10:05:00.000Z",
+    };
+    expect(ServerEvent.parse(request)).toEqual(request);
+    expect(ServerEvent.safeParse({ ...request, summary: "x".repeat(501) }).success).toBe(false);
+    expect(ServerEvent.safeParse({ ...request, summary: "" }).success).toBe(false);
+    for (const outcome of ["approved", "refused", "expired", "cancelled"]) {
+      const result = { type: "confirm_result", conversationId: UUID, confirmationId: CONFIRMATION, outcome };
+      expect(ServerEvent.parse(result)).toEqual(result);
+    }
+    expect(
+      ServerEvent.safeParse({ type: "confirm_result", conversationId: UUID, confirmationId: CONFIRMATION, outcome: "maybe" }).success,
+    ).toBe(false);
   });
   test("tool_call carries a French label", () => {
     const event = { type: "tool_call", conversationId: UUID, callId: "t1", tool: "weather", label: "Alicia regarde la météo…" };

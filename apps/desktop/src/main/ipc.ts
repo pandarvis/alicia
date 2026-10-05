@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { SendMessage } from "@alicia/protocol";
+import { ConfirmMessage, SendMessage } from "@alicia/protocol";
 import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { z } from "zod";
 import { INVOKE } from "../shared/bridge.ts";
@@ -61,6 +61,8 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.deviceName, NONE, () => hostname());
   handle(INVOKE.brainStatus, NONE, () => deps.hub.status);
   handle(INVOKE.brainSend, SendMessage, (message, sender) => deps.hub.send(message, surfaceOf(sender)));
+  // A window may only answer the confirmations of its own turn (the hub checks it).
+  handle(INVOKE.brainConfirm, ConfirmMessage, (message, sender) => deps.hub.confirm(message, surfaceOf(sender)));
   handle(INVOKE.presenceGet, NONE, () => deps.presence.mood);
   handle(INVOKE.presenceTyping, NONE, () => {
     deps.presence.typing();

@@ -310,3 +310,69 @@ describe("BrainHub", () => {
     expect(sockets).toHaveLength(2);
   });
 });
+
+describe("BrainHub confirmations", () => {
+  const CONFIRMATION = "5c3e4d1a-0c6f-4e3a-9d9c-4f7a8b92a314";
+  const ASK = {
+    type: "confirm_request", conversationId: CONV, confirmationId: CONFIRMATION, tool: "memory_forget",
+    summary: "Oublier ce souvenir ?", expiresAt: "2026-10-05T10:05:00.000Z",
+  };
+  const answer = (approved = true) => ({ type: "confirm" as const, confirmationId: CONFIRMATION, approved });
+
+  /** The Holo's turn, waiting for a yes. */
+  function asking() {
+    const context = setup();
+    context.connectReady();
+    context.hub.send(message(), "holo");
+    context.socket().receive({ type: "conversation", requestId: REQUEST, conversationId: CONV });
+    context.socket().receive(ASK);
+    return context;
+  }
+
+  test("the request and its result belong to the window whose turn asks", () => {
+    const { socket, events, owners } = asking();
+    socket().receive({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "approved" });
+    expect(events.slice(-2).map((e) => e.type)).toEqual(["confirm_request", "confirm_result"]);
+    expect(owners.slice(-2)).toEqual(["holo", "holo"]);
+  });
+
+  test("only the window whose turn asked can answer, once", () => {
+    const { hub, socket } = asking();
+    const count = socket().sent.length;
+    expect(hub.confirm(answer(), "main")).toBe(false);
+    expect(hub.confirm(answer(), "spotlight")).toBe(false);
+    expect(socket().sent).toHaveLength(count);
+    expect(hub.confirm(answer(false), "holo")).toBe(true);
+    expect(socket().sent.at(-1)).toBe(JSON.stringify(answer(false)));
+    expect(hub.confirm(answer(), "holo")).toBe(false);
+    expect(socket().sent).toHaveLength(count + 1);
+  });
+
+  test("an unknown confirmation, or one already settled by the brain, is refused", () => {
+    const { hub, socket } = asking();
+    expect(hub.confirm({ ...answer(), confirmationId: OTHER_REQUEST }, "holo")).toBe(false);
+    socket().receive({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "expired" });
+    expect(hub.confirm(answer(), "holo")).toBe(false);
+  });
+
+  test("a request of no known turn cannot be answered", () => {
+    const { hub, socket, owners, connectReady } = setup();
+    connectReady();
+    socket().receive(ASK);
+    expect(owners.at(-1)).toBeUndefined();
+    expect(hub.confirm(answer(), "main")).toBe(false);
+  });
+
+  test("the turn's end forgets its confirmations", () => {
+    const { hub, socket } = asking();
+    socket().receive(DONE);
+    expect(hub.confirm(answer(), "holo")).toBe(false);
+  });
+
+  test("connection lost: the confirmations still waiting are forgotten", () => {
+    const { hub, socket } = asking();
+    socket().onclose?.(1006);
+    expect(hub.status).toBe("offline");
+    expect(hub.confirm(answer(), "holo")).toBe(false);
+  });
+});

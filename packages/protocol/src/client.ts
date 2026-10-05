@@ -16,6 +16,14 @@ export const SendMessage = z.strictObject({
 });
 export type SendMessage = z.infer<typeof SendMessage>;
 
+/** The person's answer to a confirmation card. */
+export const ConfirmMessage = z.strictObject({
+  type: z.literal("confirm"),
+  confirmationId: z.uuid(),
+  approved: z.boolean(),
+});
+export type ConfirmMessage = z.infer<typeof ConfirmMessage>;
+
 /** Everything the app can send to the brain over the WebSocket. */
-export const ClientMessage = z.discriminatedUnion("type", [AuthenticateMessage, SendMessage]);
+export const ClientMessage = z.discriminatedUnion("type", [AuthenticateMessage, SendMessage, ConfirmMessage]);
 export type ClientMessage = z.infer<typeof ClientMessage>;

@@ -100,6 +100,17 @@ test("a revoked device goes back to pairing with an explanation", async () => {
   await page.getByTestId("pairing-notice").filter({ hasText: "déconnecté" }).waitFor();
 });
 
+test("a window cannot answer a confirmation it was never asked; a malformed answer is refused", async () => {
+  const brain = await startBrain();
+  const { page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  const unknown = { type: "confirm", confirmationId: "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6", approved: true } as const;
+  expect(await page.evaluate((answer) => window.alicia.brain.confirm(answer), unknown)).toBe(false);
+  await expect(
+    page.evaluate((answer) => window.alicia.brain.confirm(answer), { ...unknown, confirmationId: "pas-un-uuid" }),
+  ).rejects.toThrow();
+});
+
 /** Alicia remembers « Kévin adore les lasagnes » when asked to, like the model would with its tool. */
 const REMEMBERS_LASAGNES: Scenario = async (request) => {
   if (request.prompt.includes("lasagnes")) {
