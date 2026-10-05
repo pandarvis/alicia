@@ -25,7 +25,7 @@ function setup() {
   };
   const { turn } = createTestTurn(KEVIN, conversation.id);
   const request = testRequest({ tools: new ToolCatalog([documentTools(store)]).forTurn(turn) });
-  return { attach, request, turn, repository, otherId: other.id };
+  return { attach, request, turn, store, repository, conversationId: conversation.id, otherId: other.id };
 }
 
 const UNREADABLE = { text: "Document illisible (abîmé ou protégé). Dis-le et propose d'en joindre une autre version.", isError: true };
@@ -35,6 +35,16 @@ const TOO_BIG = {
 };
 
 describe("document_read", () => {
+  test("the reading stops with the turn: once it ended, no worker reads the document", async () => {
+    const { attach, store, conversationId } = setup();
+    const id = await attach("devis.docx", docx(["Devis n° 42"]));
+    // Unguarded (the guard itself refuses any call once the turn ended): the turn ends while the tool runs.
+    const scope = { person: KEVIN, conversationId, untrusted: false, signal: AbortSignal.abort() };
+    const tool = documentTools(store)(scope).find((t) => t.name === "document_read");
+    expect(await tool?.run({ attachment: id }))
+      .toEqual({ text: "Lecture interrompue : la réponse s'est arrêtée.", isError: true });
+  });
+
   test("Word: the text, framed as outside data; the turn becomes untrusted", async () => {
     const { attach, request, turn } = setup();
     const id = await attach("devis.docx", docx(["Devis n° 42", "Total TTC : 1 250,00 €"]));

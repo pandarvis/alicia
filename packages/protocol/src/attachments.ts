@@ -2,6 +2,11 @@ import { z } from "zod";
 
 export const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+/**
+ * The brain's refusal (an `invalid_request` error) of a message whose files it no longer has (expired, already
+ * sent): the only refusal after which the app uploads the message's files again.
+ */
+export const ATTACHMENT_GONE_MESSAGE = "Pièce jointe introuvable ou expirée : joins-la à nouveau.";
 
 export const ATTACHMENT_KINDS = ["image", "pdf", "word", "excel", "text"] as const;
 export const AttachmentKind = z.enum(ATTACHMENT_KINDS);

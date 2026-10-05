@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, type Dirent, existsSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type AttachmentRefusalReason, type AttachmentSummary, checkAttachment } from "@alicia/protocol";
 import { and, asc, count, eq, gte, inArray, isNull, lt, sql, sum, TransactionRollbackError } from "drizzle-orm";
@@ -246,33 +246,55 @@ export class AttachmentStore {
 
   /**
    * Conversation folders left behind by a deletion whose file removal failed (crash, locked file): removed at
-   * startup. Only UUID-named folders without a conversation row; returns how many.
+   * startup. Only UUID-named folders without a conversation row; returns how many. Never throws: a folder that
+   * cannot go yet (a file still locked) is logged and left for the next startup, the brain starts anyway.
    */
   sweepOrphanFolders(): number {
-    if (!existsSync(this.#root)) return 0;
+    let entries: Dirent[];
+    try {
+      if (!existsSync(this.#root)) return 0;
+      entries = readdirSync(this.#root, { withFileTypes: true });
+    } catch (error) {
+      console.error("Attachments: the folders of deleted conversations could not be listed:", error);
+      return 0;
+    }
     let removed = 0;
-    for (const entry of readdirSync(this.#root, { withFileTypes: true })) {
+    for (const entry of entries) {
       if (!entry.isDirectory() || !UUID.test(entry.name)) continue;
       const row = this.#db.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, entry.name)).get();
       if (row !== undefined) continue;
-      rmSync(join(this.#root, entry.name), { recursive: true, force: true });
-      removed++;
+      try {
+        rmSync(join(this.#root, entry.name), { recursive: true, force: true });
+        removed++;
+      } catch (error) {
+        console.error(`Attachments: folder ${entry.name} could not be removed yet (tried again at next startup):`, error);
+      }
     }
     return removed;
   }
 
-  /** Pending uploads older than a day: rows and files. Returns how many. */
+  /**
+   * Pending uploads older than a day: files, then rows. Returns how many. A locked file is logged and kept with its
+   * row (an expired upload can no longer be sent): it goes at the next purge, and the brain starts anyway.
+   */
   purgePending(): number {
     const expired = this.#db
       .select()
       .from(attachments)
       .where(and(isNull(attachments.conversationId), lt(attachments.createdAt, this.#clock() - PENDING_TTL_MS)))
       .all();
+    let purged = 0;
     for (const a of expired) {
+      try {
+        rmSync(this.#pendingPath(a), { force: true });
+      } catch (error) {
+        console.error(`Attachments: expired upload ${a.id} could not be removed yet (tried again at next purge):`, error);
+        continue;
+      }
       this.#db.delete(attachments).where(eq(attachments.id, a.id)).run();
-      rmSync(this.#pendingPath(a), { force: true });
+      purged++;
     }
-    return expired.length;
+    return purged;
   }
 
   /** The person's own uploads among `ids`, not sent yet, not expired. */

@@ -1,5 +1,5 @@
 import {
-  type AttachmentKind, checkAttachment, type ConfirmationOutcome, type ConfirmMessage, type ConversationSummary,
+  ATTACHMENT_GONE_MESSAGE, type AttachmentKind, checkAttachment, type ConfirmationOutcome, type ConfirmMessage, type ConversationSummary,
   type HistoryMessage, MAX_ATTACHMENTS_PER_MESSAGE, type SendMessage, type ServerEvent,
 } from "@alicia/protocol";
 import { SvelteMap } from "svelte/reactivity";
@@ -372,8 +372,10 @@ export class ChatStore {
         this.#endTurn();
         this.notice = event.message;
         this.#setMascot(MASCOT_ON_ERROR[event.code] ?? "alert", event.code === "busy" ? ALERT_MS : undefined);
-        // Refused before it started (a file expired or already gone): the files come back and upload again.
-        if (event.code === "invalid_request" && sentFiles.length > 0) this.#resend(sentFiles);
+        // Refused before it started because a file expired or is already gone: the files come back and upload
+        // again. Any other refusal (conversation deleted meanwhile…) leaves them: sending again would not help.
+        const filesGone = event.code === "invalid_request" && event.message === ATTACHMENT_GONE_MESSAGE;
+        if (filesGone && sentFiles.length > 0) this.#resend(sentFiles);
         return;
       }
     }

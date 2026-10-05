@@ -829,6 +829,20 @@ describe("attachments", () => {
     expect(store.notice).toBe("Une pièce jointe n'était plus disponible : les fichiers sont renvoyés, envoie à nouveau ton message.");
   });
 
+  test("another refusal of the message brings no file back: only lost files are sent again", async () => {
+    const { store, uploads, sent, discarded } = setup();
+    store.addFiles([fileOf("facture.pdf")]);
+    uploads[0]?.answer.resolve(SUMMARY(A1, "facture.pdf"));
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("ready"); });
+    store.send("Combien ?");
+    store.handle({ type: "error", requestId: sent[0]?.requestId ?? "", code: "invalid_request", message: "Conversation introuvable." });
+    expect(store.busy).toBe(false);
+    expect(store.drafts).toEqual([]);
+    expect(uploads).toHaveLength(1);
+    expect(discarded).toEqual([]);
+    expect(store.notice).toBe("Conversation introuvable.");
+  });
+
   test("once the turn went through, the sent files are forgotten (another error brings nothing back)", async () => {
     const { store, uploads, sent } = setup();
     store.addFiles([fileOf("facture.pdf")]);

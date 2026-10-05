@@ -1,4 +1,4 @@
-import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
+import { ATTACHMENT_GONE_MESSAGE, type Person, type SendMessage, type ServerEvent } from "@alicia/protocol";
 import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
 import { attachmentNote, describeAttachments } from "../attachments/prompt.ts";
@@ -44,7 +44,7 @@ const TITLE_LENGTH = 60;
 const RESUME_MESSAGE_COUNT = 10;
 const RESUME_MESSAGE_CHARS = 1_000;
 const RESUME_TOTAL_CHARS = 8_000;
-const ATTACHMENT_GONE = "Pièce jointe introuvable ou expirée : joins-la à nouveau.";
+const ATTACHMENT_GONE = ATTACHMENT_GONE_MESSAGE;
 const ATTACHMENT_FAILED = "Impossible de joindre les fichiers pour l'instant : réessaie.";
 const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
 

@@ -72,7 +72,7 @@ describe("notificationBody", () => {
   });
 
   test("the cut never splits a character", () => {
-    const family = "👨‍👩‍👧";
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
     // 181 characters as read: cut to 179, then the ellipsis.
     const body = notificationBody(`${"a".repeat(178)}${family}${family}${family}`);
     expect(body).toBe(`${"a".repeat(178)}${family}…`);

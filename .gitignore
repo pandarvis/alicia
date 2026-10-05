@@ -4,6 +4,10 @@ design/mascotte/references/
 .env
 apps/brain/alicia.config.yaml
 apps/brain/data/
+# Test configs and data folders of the manual checks (README); the example config stays versioned
+apps/brain/alicia.*.yaml
+!apps/brain/alicia.config.example.yaml
+apps/brain/data-*/
 apps/desktop/out/
 apps/desktop/dist/
 

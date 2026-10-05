@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { NativeDecision, NativeToolGuard } from "../engine/engine.ts";
+import { hasHiddenCharacters } from "../text.ts";
 import type { ConfirmationOutcome } from "./confirmations.ts";
 import { isReadable } from "./read-access.ts";
 import type { TurnContext } from "./turn.ts";
@@ -18,8 +19,6 @@ export const LONG_SEARCH =
   "Recherche non faite : la requête est trop longue pour être montrée en entier à la personne. Raccourcis-la, puis réessaie.";
 /** The protocol caps a card's question at 500 characters. */
 const CARD_MAX = 500;
-/** Invisible format characters (zero-width, direction marks…): they could carry data the person cannot see. */
-const FORMAT_CHARACTERS = /\p{Cf}/u;
 /** Line breaks (and the spaces around them): the card shows the query on one line. */
 const LINE_BREAKS = /\s*[\r\n\u0085\p{Zl}\p{Zp}]+\s*/gu;
 
@@ -128,7 +127,8 @@ async function checkSearch(turn: TurnContext, input: unknown, signal: AbortSigna
   if (turn.untrusted) {
     // What the person approves must be what leaves: nothing hidden, nothing cut.
     const query = parsed.data.query;
-    if (FORMAT_CHARACTERS.test(query)) return deny(HIDDEN_SEARCH);
+    // Invisible characters (zero-width, variation selectors, blank fillers…) could carry data the person cannot see.
+    if (hasHiddenCharacters(query)) return deny(HIDDEN_SEARCH);
     const summary = `Chercher sur le web : “${query.replace(LINE_BREAKS, " ")}” ? ${OUTSIDE_CONTENT}`;
     if (summary.length > CARD_MAX) return deny(LONG_SEARCH);
     const refused = await ask(turn, "WebSearch", summary, signal, SEARCH_REFUSALS);

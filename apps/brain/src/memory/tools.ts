@@ -1,7 +1,7 @@
 import { MEMORY_KINDS, MemoryScope } from "@alicia/protocol";
 import { z } from "zod";
 import { type ConfirmationAsk, defineTool, type ToolDefinition, type ToolResult } from "../engine/tools.ts";
-import { truncate } from "../text.ts";
+import { hasHiddenCharacters, truncate } from "../text.ts";
 import type { ToolProvider, ToolScope } from "../tools/catalog.ts";
 import { oneLine } from "./sheet.ts";
 import type { Memory, MemoryStore, RefusalReason } from "./store.ts";
@@ -63,10 +63,23 @@ const CHANGED_BEFORE_UPDATE: ToolResult = {
   text: "Le souvenir a changé depuis la question : rien n'a été modifié. Redemande si besoin.", isError: true,
 };
 
-/** The question to remember `text`, or undefined when it cannot be shown whole. */
-function rememberQuestion(text: string, scope: Memory["scope"]): string | undefined {
+/** Invisible characters (zero-width, variation selectors, blank fillers…) could slip unseen text past the card. */
+const HIDDEN_IN_REMEMBER: ToolResult = {
+  text: "Souvenir non retenu : le texte contient des caractères invisibles. Réécris-le en clair, puis redemande.", isError: true,
+};
+const HIDDEN_IN_UPDATE: ToolResult = {
+  text: "Souvenir non modifié : le nouveau texte contient des caractères invisibles. Réécris-le en clair, puis redemande.",
+  isError: true,
+};
+
+/** A card's question, or why the text is refused without asking (it could not be shown whole and as it is). */
+type Card = { question: string } | { refusal: ToolResult };
+
+/** The card to remember `text`. */
+function rememberCard(text: string, scope: Memory["scope"]): Card {
+  if (hasHiddenCharacters(text)) return { refusal: HIDDEN_IN_REMEMBER };
   const question = `Retenir ${scope === "common" ? "pour toute la famille" : "pour toi"} : « ${oneLine(text)} » ?\n${OUTSIDE_NOTE}`;
-  return question.length <= CARD_MAX ? question : undefined;
+  return question.length <= CARD_MAX ? { question } : { refusal: TOO_LONG_TO_REMEMBER };
 }
 
 interface MemoryPatch {
@@ -77,9 +90,16 @@ interface MemoryPatch {
 }
 
 /**
- * The question to change `memory`: the new text whole (the old one is cut first when the card is short of room),
- * then the other changes; undefined when the new text alone cannot be shown.
+ * The card to change `memory`: the new text whole (the old one is cut first when the card is short of room), then
+ * the other changes; refused when the new text cannot be shown whole and as it is.
  */
+function updateCard(memory: Memory, patch: MemoryPatch): Card {
+  if (patch.text !== undefined && hasHiddenCharacters(patch.text)) return { refusal: HIDDEN_IN_UPDATE };
+  const question = updateQuestion(memory, patch);
+  return question === undefined ? { refusal: TOO_LONG_TO_UPDATE } : { question };
+}
+
+/** The question to change `memory`, or undefined when the new text alone cannot be shown. */
 function updateQuestion(memory: Memory, patch: MemoryPatch): string | undefined {
   const details = [
     ...(patch.kind !== undefined ? [`type : ${KIND_LABELS[patch.kind]}`] : []),
@@ -135,13 +155,16 @@ function turnMemoryTools(store: MemoryStore, turn: ToolScope): ToolDefinition[] 
       },
       confirmation({ text, kind, scope, pinned }) {
         if (!turn.untrusted) return Promise.resolve(null);
-        const summary = rememberQuestion(text, scope);
-        // Too long to be shown whole: no question, and `run` refuses.
-        return Promise.resolve(summary === undefined ? null : { summary, snapshot: JSON.stringify([scope, kind, text, pinned]) });
+        const card = rememberCard(text, scope);
+        // Cannot be shown whole and as it is: no question, and `run` refuses.
+        return Promise.resolve(
+          "refusal" in card ? null : { summary: card.question, snapshot: JSON.stringify([scope, kind, text, pinned]) },
+        );
       },
       async run({ text, kind, scope, pinned }, confirmed) {
         if (turn.untrusted && confirmed === undefined) {
-          return rememberQuestion(text, scope) === undefined ? TOO_LONG_TO_REMEMBER : NEEDS_YES;
+          const card = rememberCard(text, scope);
+          return "refusal" in card ? card.refusal : NEEDS_YES;
         }
         const result = await store.remember({
           personId: person.id, scope, kind, text, source: "conversation",
@@ -172,14 +195,19 @@ function turnMemoryTools(store: MemoryStore, turn: ToolScope): ToolDefinition[] 
       // Only a memory this person can reach is worth a question: otherwise `run` says it was not found.
       confirmation({ id, ...patch }): Promise<ConfirmationAsk | null> {
         const memory = turn.untrusted ? store.get(person.id, id) : undefined;
-        const summary = memory === undefined ? undefined : updateQuestion(memory, patch);
-        return Promise.resolve(memory === undefined || summary === undefined ? null : { summary, snapshot: snapshotOf(memory) });
+        const card = memory === undefined ? undefined : updateCard(memory, patch);
+        return Promise.resolve(
+          memory === undefined || card === undefined || "refusal" in card
+            ? null
+            : { summary: card.question, snapshot: snapshotOf(memory) },
+        );
       },
       async run({ id, text, kind, scope, pinned }, confirmed) {
         const memory = store.get(person.id, id);
         if (memory === undefined) return NOT_FOUND;
         if (turn.untrusted && confirmed === undefined) {
-          return updateQuestion(memory, { text, kind, scope, pinned }) === undefined ? TOO_LONG_TO_UPDATE : NEEDS_YES;
+          const card = updateCard(memory, { text, kind, scope, pinned });
+          return "refusal" in card ? card.refusal : NEEDS_YES;
         }
         // What changes is what the person approved, not a memory corrected while the card waited.
         if (confirmed !== undefined && confirmed.snapshot !== snapshotOf(memory)) return CHANGED_BEFORE_UPDATE;

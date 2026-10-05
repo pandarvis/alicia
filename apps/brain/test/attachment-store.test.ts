@@ -38,7 +38,7 @@ describe("cleanName", () => {
 
 describe("cleanName keeps what the person sees", () => {
   test("emoji sequences (ZWJ, variation selectors) survive; direction tricks do not", () => {
-    expect(cleanName("\u{1F468}\u200D\u{1F469}\u200D\u{1F467} famille \u2764\uFE0F.pdf")).toBe("👨‍👩‍👧 famille ❤️.pdf");
+    expect(cleanName("\u{1F468}\u200D\u{1F469}\u200D\u{1F467} famille \u2764\uFE0F.pdf")).toBe("\u{1F468}\u200D\u{1F469}\u200D\u{1F467} famille \u2764\uFE0F.pdf");
     expect(cleanName("fac\u200eture\u2066gpj.exe\u2069\u061c\u200f.pdf")).toBe("facturegpj.exe.pdf");
   });
 
@@ -47,7 +47,7 @@ describe("cleanName keeps what the person sees", () => {
   });
 
   test("a long name is cut between graphemes, never inside one, and stays well-formed", () => {
-    const family = "👨‍👩‍👧";
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
     const long = cleanName(`${family.repeat(60)}.pdf`);
     expect(long.length).toBeLessThanOrEqual(200);
     expect(long.endsWith(`${family}.pdf`)).toBe(true);

@@ -25,6 +25,7 @@ const TOO_SLOW: ToolResult = {
   text: "Document refusé : il est trop lourd à lire (trop long ou trop gros). Dis-le et propose d'en joindre une version plus légère.",
   isError: true,
 };
+const CANCELLED: ToolResult = { text: "Lecture interrompue : la réponse s'est arrêtée.", isError: true };
 const EMPTY = "Le document ne contient aucun texte lisible.";
 
 /**
@@ -62,16 +63,18 @@ function clip(text: string): { kept: string; omitted: number } {
 }
 
 /** The text of a Word, Excel or text attachment, or why there is none. */
-async function readDocument(kind: "word" | "excel" | "text", bytes: Buffer): Promise<string | ToolResult> {
+async function readDocument(kind: "word" | "excel" | "text", bytes: Buffer, signal: AbortSignal): Promise<string | ToolResult> {
   if (kind === "text") return decodeText(bytes);
-  // In a worker thread with its own memory and a deadline; the archive is checked and rebuilt before any parser
-  // opens it (zip bombs, password, disguised formats).
-  const office = await officeTextIsolated(bytes);
+  // In a worker thread with its own memory and a deadline, stopped with the turn; the archive is checked and rebuilt
+  // before any parser opens it (zip bombs, password, disguised formats).
+  const office = await officeTextIsolated(bytes, { signal });
   switch (office.status) {
     case "text":
       return office.text;
     case "too_slow":
       return TOO_SLOW;
+    case "cancelled":
+      return CANCELLED;
     case "protected":
       return PROTECTED;
     case "too_big":
@@ -83,7 +86,7 @@ async function readDocument(kind: "word" | "excel" | "text", bytes: Buffer): Pro
 
 /** document_read, bound to the turn's person and conversation: no other attachment exists for it. */
 export function documentTools(store: AttachmentStore): ToolProvider {
-  return ({ person, conversationId }) => [
+  return ({ person, conversationId, signal }) => [
     defineTool({
       name: "document_read",
       label: "Alicia lit le document…",
@@ -98,7 +101,7 @@ export function documentTools(store: AttachmentStore): ToolProvider {
         if (kind === "image" || kind === "pdf") return USE_READ;
         let text: string | ToolResult;
         try {
-          text = await readDocument(kind, await readFile(found.path));
+          text = await readDocument(kind, await readFile(found.path), signal);
         } catch {
           return UNREADABLE;
         }

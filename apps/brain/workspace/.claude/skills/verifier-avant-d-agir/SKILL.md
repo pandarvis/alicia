@@ -5,8 +5,6 @@ description: Après un conseil qui engage (santé, argent, démarche administrat
 
 # Vérifier avant d'agir
 
-Idée reprise de « discernment nudge » (anthropics/skills), réécrite pour Alicia.
-
 ## Quand
 - Un conseil de santé, d'argent, juridique ou administratif, de sécurité de la maison, ou sur un achat important.
 - Un brouillon (mail, message, courrier) prêt à être envoyé.

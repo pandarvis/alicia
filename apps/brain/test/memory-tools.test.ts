@@ -146,6 +146,25 @@ describe("memory tools once outside content came in", () => {
     expect(store.list("kevin", {})).toEqual([]);
   });
 
+  test("a text with invisible characters is refused without asking: the card must show what is kept", async () => {
+    const { store, request, asked } = untrustedSetup("approved");
+    for (const hidden of ["\u200B", "\u{FE0F}", "\u{E0100}", "\u{3164}", "\u{2800}", "\u{034F}"]) {
+      expect(await callTool(request, "memory_remember", { text: `Le code${hidden} est simple`, kind: "fact", scope: "common" }))
+        .toEqual({
+          text: "Souvenir non retenu : le texte contient des caractères invisibles. Réécris-le en clair, puis redemande.",
+          isError: true,
+        });
+    }
+    const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "habit", text: "Kévin boit du café", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    expect(await callTool(request, "memory_update", { id: saved.memory.id, text: "Kévin boit du th\u{FFA0}é" })).toEqual({
+      text: "Souvenir non modifié : le nouveau texte contient des caractères invisibles. Réécris-le en clair, puis redemande.",
+      isError: true,
+    });
+    expect(asked).toEqual([]);
+    expect(store.list("kevin", {}).map((m) => m.text)).toEqual(["Kévin boit du café"]);
+  });
+
   test("updating asks first, showing the old and the new text; yes → updated, no → unchanged", async () => {
     const yes = untrustedSetup("approved");
     const saved = await yes.store.remember({ personId: "kevin", scope: "personal", kind: "habit", text: "Kévin boit du café", source: "manual" });

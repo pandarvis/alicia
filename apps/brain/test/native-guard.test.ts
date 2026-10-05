@@ -154,6 +154,11 @@ describe("WebSearch", () => {
     expect(asked[0]?.summary.startsWith("Chercher sur le web : “piscine Lyon horaires” ?")).toBe(true);
     // Invisible characters could carry data the person cannot see: refused, not hidden.
     expect(await guard.check("WebSearch", SEARCH("piscine\u200B\u200Clyon"), SIGNAL)).toEqual({ allow: false, reason: HIDDEN_SEARCH });
+    // Not format characters, but just as invisible: variation selectors, the grapheme joiner, blank fillers.
+    for (const hidden of ["\u{FE00}", "\u{FE0F}", "\u{E0100}", "\u{E01EF}", "\u{115F}", "\u{1160}", "\u{3164}", "\u{FFA0}", "\u{2800}", "\u{034F}"]) {
+      expect(await guard.check("WebSearch", SEARCH(`piscine${hidden}lyon`), SIGNAL), hidden.codePointAt(0)?.toString(16))
+        .toEqual({ allow: false, reason: HIDDEN_SEARCH });
+    }
     expect(await guard.check("WebSearch", SEARCH(`piscine ${"a".repeat(450)}`), SIGNAL)).toEqual({ allow: false, reason: LONG_SEARCH });
     expect(asked).toHaveLength(1);
     // A trusted turn asks nothing, so nothing is checked.

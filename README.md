@@ -24,8 +24,8 @@ pnpm --filter @alicia/brain alicia chat --code 123456
 pnpm --filter @alicia/brain alicia devices             # appareils appairés (id, personne, dates)
 pnpm --filter @alicia/brain alicia revoke <id>         # coupe un appareil, même connecté
 pnpm --filter @alicia/brain alicia backup              # sauvegarde la base maintenant
-pnpm --filter @alicia/brain alicia check-engine
-pnpm --filter @alicia/brain alicia check-isolation      # ce que le SDK charge vraiment (un peu de quota)
+(cd apps/brain && pnpm exec tsx --env-file=.env src/cli.ts check-engine)      # le moteur SDK répond (un peu de quota)
+(cd apps/brain && pnpm exec tsx --env-file=.env src/cli.ts check-isolation)   # ce que le SDK charge vraiment (un peu de quota)
 pnpm --filter @alicia/brain alicia import-alice --chroma <chroma.sqlite3> [--rules <regles.json>]
 ```
 Les commandes s'exécutent dans `apps/brain` : la config y est lue
@@ -92,7 +92,9 @@ mémoire… », « Alicia retient ça… »).
   et les fichiers des skills — rien d'autre : ni le reste du disque, ni une autre conversation) et `Skill`. Pas de
   terminal, pas d'écriture de fichiers, pas d'agents.
 - **Skills** (`apps/brain/workspace/.claude/skills/`) : `ranger-un-souvenir`, `lire-un-document`,
-  `verifier-avant-d-agir`, des consignes en français, sans aucun outil propre.
+  `verifier-avant-d-agir`, des consignes en français, sans aucun outil propre. `verifier-avant-d-agir` reprend
+  l'idée du skill « discernment nudge » (anthropics/skills), réécrite pour Alicia (le crédit vit ici : tout ce qui
+  est dans un skill, commentaires compris, part au modèle).
 
 Pendant un tour, l'app affiche ce qu'Alicia fait (« Alicia regarde la météo… », « Alicia lit le document… »).
 
@@ -116,10 +118,17 @@ La marque « contenu extérieur » appartient à la **conversation** et ne s'eff
 la session reprise et dans ce qu'Alicia a pu retenir) : pour repartir de zéro, ouvrir une nouvelle conversation.
 Les contenus extérieurs sont présentés à Alicia comme des données encadrées, jamais comme des consignes.
 
-**Mise à jour d'un cerveau existant** : au premier démarrage avec cette version, la migration
-`0005_untrusted_conversations` marque comme « contenu extérieur » les conversations existantes qui ont déjà eu une
-pièce jointe, une recherche web ou une page web. Dans celles-là, les recherches, les pages inconnues et les
-souvenirs demanderont désormais un « Oui ».
+**Mise à jour d'un cerveau existant** :
+- **Les apps installées d'abord** : une app de bureau 0.1.0 ignore les cartes Oui / Non (`confirm_request`) ;
+  avec elle, tout ce qui demande l'accord resterait sans réponse (rien n'est fait au bout de 5 minutes). Publier
+  l'app **0.2.0** (voir « Installer et publier une version ») et vérifier que les apps installées sont passées en
+  0.2.0 (Réglages → Version de l'app) **avant** de passer le vrai cerveau sur cette version.
+- **Migration `0005_untrusted_conversations`** (au premier démarrage) : elle marque « contenu extérieur » les
+  conversations qui ont déjà eu une pièce jointe, une recherche web ou une page web. Un cerveau venu du plan 4b
+  n'en a aucune (avant cette version, le SDK tournait sans aucun outil natif et sans pièce jointe) : rien n'est
+  marqué, les anciennes conversations restent de confiance. Seul un cerveau qui a fait tourner une version de
+  développement de cette étape avant sa fusion peut avoir des conversations marquées ; dans celles-là, les
+  recherches, les pages inconnues et les souvenirs demandent désormais un « Oui ».
 
 ### Pièces jointes
 
@@ -214,20 +223,34 @@ souvenirs demanderont désormais un « Oui ».
 À faire par Kévin, une fois, sur le vrai moteur. Les tests automatiques couvrent toute la logique avec un faux
 moteur ; ceci vérifie que le vrai SDK se comporte comme prévu.
 
-**Préparer**
-1. Ajouter `home:` (latitude, longitude de la maison) dans `apps/brain/alicia.config.yaml` (voir « Outils et
-   pièces jointes »).
-2. Pour ne pas toucher au vrai cerveau (port 8780) ni à ses données : copier la config en
-   `apps/brain/alicia.test.yaml` avec `port: 8790` et `dataDir: "./data-test"`, puis lancer
-   `cd apps/brain && $env:ALICIA_CONFIG="alicia.test.yaml"; pnpm exec tsx --env-file=.env src/cli.ts start`
-   (PowerShell). Lancer l'app de développement avec son propre profil
-   (`$env:ALICIA_USER_DATA="$env:TEMP\alicia-essai"; pnpm --filter @alicia/desktop dev`) et l'appairer à
-   `http://127.0.0.1:8790` (code : `pnpm exec tsx src/cli.ts pair kevin`, avec le même `ALICIA_CONFIG`).
-3. **Migration 0005** : au premier démarrage de cette version sur les **vraies** données, les conversations
-   existantes qui ont déjà eu une pièce jointe, une recherche ou une page web passent « contenu extérieur » pour
-   de bon. Le vérifier une fois sur une copie de `data/` (ou après une sauvegarde) : rouvrir une ancienne
-   conversation avec une pièce jointe, demander « Cherche la météo marine à Brest » → une carte
-   « Chercher sur le web : “…” ? » doit apparaître ; dans une nouvelle conversation, aucune carte.
+**Préparer** (sur une copie des vraies données : jamais le vrai cerveau, port 8780, ni sa base)
+1. **Avant le `git pull`** qui amène cette version, sauvegarder avec l'**ancienne** version :
+   `pnpm --filter @alicia/brain alicia backup` (le chemin écrit s'affiche, dans `apps/brain/data/backups/`). À
+   défaut, prendre la sauvegarde de la nuit dans `apps/brain/data/backups/`. Pas `alicia backup` avec cette
+   version-ci : la commande migre la base avant de la copier, la copie serait déjà migrée.
+2. Après le `git pull`, préparer la copie de test (PowerShell, depuis `apps/brain`) :
+   ```powershell
+   New-Item -ItemType Directory data-copie
+   Copy-Item data\backups\alicia-AAAA-MM-JJ.db data-copie\alicia.db   # la sauvegarde de l'étape 1
+   Copy-Item alicia.config.yaml alicia.test.yaml
+   ```
+   Toujours partir d'un fichier de `data/backups/`, jamais de `data/alicia.db` : la base vivante est en mode WAL,
+   sa copie brute peut être incomplète. Dans `alicia.test.yaml` : `port: 8790`, `dataDir: "./data-copie"`,
+   `discovery: false` (sinon une deuxième « Alicia sur <machine> » s'annonce sur le réseau) et `home:` (latitude,
+   longitude de la maison, voir « Outils et pièces jointes »). Le modèle de la mémoire (~120 Mo) sera téléchargé
+   une fois dans `data-copie/models`, à la première recherche de souvenir.
+3. **Quitter l'Alicia installée** (zone de notification → « Quitter Alicia ») : sinon `Ctrl+Alt+A` lui appartient
+   et la vérification 15 part chez elle. Lancer le cerveau de test :
+   `$env:ALICIA_CONFIG="alicia.test.yaml"; pnpm exec tsx --env-file=.env src/cli.ts start` (depuis `apps/brain`).
+   Dans un second terminal, l'app de développement avec son propre profil
+   (`$env:ALICIA_USER_DATA="$env:TEMP\alicia-essai"; pnpm --filter @alicia/desktop dev`), appairée à
+   `http://127.0.0.1:8790` (code : `pnpm exec tsx src/cli.ts pair kevin` depuis `apps/brain`, avec le même
+   `ALICIA_CONFIG`).
+4. **Migration 0005, sur la copie** : un cerveau venu du plan 4b n'a ni pièce jointe ni recherche web dans son
+   journal, rien n'est marqué. Rouvrir une ancienne conversation et demander « Cherche la météo marine à Brest » →
+   activité « Alicia cherche sur le web… », **aucune carte**. (Seulement si ce cerveau a fait tourner une version
+   de développement de cette étape avant sa fusion : dans une ancienne conversation qui a eu une pièce jointe, une
+   recherche ou une page web, la même demande affiche la carte « Chercher sur le web : “…” ? ».)
 
 **Vérifier** (chaque fois dans une **nouvelle conversation**, sauf indication)
 1. `check-isolation` (avec le même `ALICIA_CONFIG`) → aucune ligne `ÉCHEC`, dernière ligne
@@ -275,8 +298,8 @@ moteur ; ceci vérifie que le vrai SDK se comporte comme prévu.
     conversation » (ou « dans cette conversation ») ; « Voir la question » ouvre la conversation et sa carte ;
     répondre.
 
-Pour finir : arrêter le cerveau de test, supprimer `apps/brain/data-test/`, `apps/brain/alicia.test.yaml` et le
-profil `%TEMP%\alicia-essai`.
+Pour finir : arrêter le cerveau de test et l'app de développement, supprimer `apps/brain/data-copie/`,
+`apps/brain/alicia.test.yaml` et le profil `%TEMP%\alicia-essai`, puis relancer l'Alicia installée.
 
 ## App de bureau (Windows)
 
@@ -385,8 +408,8 @@ ne peut être vérifié que sur le vrai profil Windows, avec l'installateur `app
    de notification, sans fenêtre ; relancer l'app à la main alors ramène bien la fenêtre. Le désactiver dans
    Paramètres Windows → Applications → Démarrage : au lancement suivant, la case est décochée.
 9. **Fermeture de session / arrêt** avec Alicia ouverte : rien ne bloque la fermeture de Windows.
-10. **Mise à jour réelle** : passer `version` à `0.1.1`, `dist`, copier les trois fichiers dans
-    `<dataDir>/updates/` du cerveau, relancer l'app : Réglages finit par afficher « La version 0.1.1 est
-    prête » ; « Redémarrer pour installer » ; l'app redémarre en 0.1.1 (Réglages → Version de l'app).
+10. **Mise à jour réelle** : passer `version` à la suivante (ex. `0.2.1`), `dist`, copier les trois fichiers dans
+    `<dataDir>/updates/` du cerveau, relancer l'app : Réglages finit par afficher « La version 0.2.1 est
+    prête » ; « Redémarrer pour installer » ; l'app redémarre en 0.2.1 (Réglages → Version de l'app).
 11. **Développement** : `pnpm --filter @alicia/desktop dev` — le rechargement à chaud (HMR) fonctionne
     toujours avec la CSP resserrée (`connect-src 'self' http: https:`, sans `ws:`).
