@@ -5912,6 +5912,8 @@ Aucun navigateur ne s'ouvre : l'app non empaquetée lit `ALICIA_E2E_GOOGLE_AUTH_
 
 > **Alignement (tâche 18) :** `startGoogleBrain(google, ...scenarios)` et `playGoogleConsent(app, google, email, index)` existent déjà dans `e2e/support.ts` (la clé secrète est recopiée à chaque démarrage, le cerveau effaçant celle qu'il reçoit) ; l'ajout, l'annulation et le retrait sont déjà couverts dans `app.e2e.ts`. Le parcours de cette tâche se concentre donc sur la carte « Reconnecter le compte » du chat (révocation, pastille, reconnexion depuis la carte).
 
+> **Alignement (mise en œuvre) :** un parcours, « chat: an account Google stopped accepting gets a « Reconnecter le compte » card, fixed from Comptes in one click » (`app.e2e.ts`) : connexion du compte Famille par l'écran, révocation chez `FakeGoogle`, message → réponse puis carte et pastille ; le bouton de la carte ouvre Comptes et relance le consentement (`login_hint` = l'adresse du compte, URL lue dans l'enregistreur), le compte redevient « Connecté », la pastille et la carte disparaissent, une seule ligne (reconnecté, pas ajouté deux fois) ; aucun envoi, aucune route refusée. Le retrait est déjà couvert par le parcours de la tâche 18.
+
 - [ ] **Step 1: Cerveau de test avec Google**
 
 Dans `apps/desktop/e2e/app.e2e.ts` :

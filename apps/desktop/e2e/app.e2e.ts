@@ -393,3 +393,57 @@ test("Comptes: a Famille account connected through the browser, a flow cancelled
   expect(google.requests.some((request) => request.url.pathname.endsWith("/send"))).toBe(false);
   expect(google.refusedRoutes).toEqual([]);
 });
+
+test("chat: an account Google stopped accepting gets a « Reconnecter le compte » card, fixed from Comptes in one click", async () => {
+  const google = new FakeGoogle();
+  google.addCalendar("famille@example.com", {
+    id: "famille@example.com", summary: "Famille", accessRole: "owner", primary: true, selected: true,
+  });
+  const brain = await startGoogleBrain(google, async (request) => {
+    await callTool(request, "calendar_list", { from: "2026-10-10", to: "2026-10-10" });
+    return [
+      { type: "session", sessionId: "s1" },
+      { type: "text", text: "Je n'arrive plus à lire l'agenda Famille." },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ];
+  });
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+
+  await page.getByTestId("nav-accounts").click();
+  await page.getByTestId("accounts-add-common").click();
+  await playGoogleConsent(app, google, "famille@example.com", 0);
+  const row = page.getByTestId("account-row").filter({ hasText: "famille@example.com" });
+  await row.filter({ hasText: "Connecté" }).waitFor();
+  expect(await page.getByTestId("nav-accounts-attention").count()).toBe(0);
+
+  // Kévin removed Alicia from the Google account: the next use asks, right in the chat, to reconnect.
+  google.revokeGrant("famille@example.com");
+  google.expireAccessTokens();
+  await page.getByTestId("nav-chat").click();
+  await send(page, "On a quoi samedi ?");
+  await answered(page, 1);
+  const card = page.getByTestId("reconnect-card").filter({ hasText: "famille@example.com" });
+  await card.waitFor();
+  await page.getByTestId("nav-accounts-attention").waitFor();
+
+  // One click: Comptes opens, Google's page opens in the browser (recorded here), and the account is back.
+  await card.getByTestId("reconnect-card-button").click();
+  await page.getByTestId("accounts-view").waitFor();
+  await page.getByTestId("accounts-waiting").waitFor();
+  await expect.poll(async () => (await recorded(app)).browser.length, POLL).toBe(2);
+  const consent = new URL((await recorded(app)).browser[1] ?? "");
+  // The same address is suggested to Google.
+  expect(consent.searchParams.get("login_hint")).toBe("famille@example.com");
+  await playGoogleConsent(app, google, "famille@example.com", 1);
+  await row.filter({ hasText: "Connecté" }).waitFor();
+  await expect.poll(() => page.getByTestId("nav-accounts-attention").count(), POLL).toBe(0);
+  await page.getByTestId("nav-chat").click();
+  await expect.poll(() => page.getByTestId("reconnect-card").count(), POLL).toBe(0);
+
+  // Reconnected, not added twice; and nothing was ever sent.
+  await page.getByTestId("nav-accounts").click();
+  await expect.poll(() => page.getByTestId("account-row").count(), POLL).toBe(1);
+  expect(google.requests.some((r) => r.url.pathname.endsWith("/send"))).toBe(false);
+  expect(google.refusedRoutes).toEqual([]);
+});
