@@ -4,6 +4,7 @@ import { z } from "zod";
 import { type AliciaBridge, INVOKE, PUSH } from "../shared/bridge.ts";
 import { ConnectionStatus } from "../shared/chat-connection.ts";
 import { DiscoveredBrain } from "../shared/discovery.ts";
+import { GoogleAuthorizeResult } from "../shared/google.ts";
 import { HoloView } from "../shared/holo.ts";
 import { MascotState } from "../shared/mascot.ts";
 import { SaveSessionResult, StoredSession } from "../shared/session.ts";
@@ -120,6 +121,10 @@ const bridge: AliciaBridge = {
     status: () => call(UpdateStatus, INVOKE.updatesStatus),
     install: () => call(z.undefined(), INVOKE.updatesInstall),
     onChange: (listener) => subscribe(PUSH.updates, UpdateStatus, listener),
+  },
+  google: {
+    authorize: (request) => call(GoogleAuthorizeResult, INVOKE.googleAuthorize, request),
+    cancel: () => call(z.undefined(), INVOKE.googleCancel),
   },
 };
 

@@ -4743,6 +4743,13 @@ git commit -m "feat(brain): preparer-la-semaine and tri-des-mails skills (French
 
 Le main **construit lui-même** l'URL de consentement (uniquement vers `accounts.google.com`) : le rendu ne lui passe que l'identifiant client, les scopes et l'adresse suggérée, validés par Zod. Le code et le vérificateur ne sont jamais journalisés.
 
+> **Alignement (mise en œuvre) :**
+> - **Pont** : `window.alicia.google.authorize(request)` / `window.alicia.google.cancel()` (`GoogleBridge` dans `shared/bridge.ts`, canaux `INVOKE.googleAuthorize` / `INVOKE.googleCancel`), pas dans `shared/session.ts`. Les deux passent par `handle()` d'`ipc.ts` (expéditeur vérifié, Zod) et sont `mainOnly` (écran Comptes) : une requête invalide ou venue d'une autre fenêtre est **rejetée** (exception), pas `failed` ; le preload valide la réponse avec `GoogleAuthorizeResult`.
+> - **Navigateur par le port d'intégration OS** : `OsIntegration.openInBrowser(url)` (`electron-os.ts` : `shell.openExternal`, `https:` seulement ; `RecordingOs` l'enregistre dans `state().browser` sans rien ouvrir). Donc **ni `ALICIA_E2E_GOOGLE_AUTH_URL` ni `authorizationEndpoint`** : l'URL de consentement pointe toujours vers `accounts.google.com`, même en test, et l'e2e lit l'URL enregistrée puis joue le navigateur (appel de la boucle locale avec `code` + `state`).
+> - **`GoogleConsent`** (main) : un consentement à la fois (un nouveau annule celui en cours), annulé aussi à la sortie (`quitCleanup`), à chaque changement de session et au rechargement / à la fermeture de la page principale (`onMainReset`) ; délai `CONSENT_TIMEOUT_MS` = 5 min.
+> - **Boucle locale** : n'entend que `GET /` dont l'origine et l'en-tête `Host` valent exactement `http://127.0.0.1:<port>` (sinon 404, sans finir le flux) ; `state` présent **une seule fois**, comparé en temps constant ; un code hors schéma (> 2 048 caractères) → `failed`. Pages « C'est fait ! » / « Annulé » / « Lien refusé » sans rien venant de la requête, avec une CSP stricte (`default-src 'none'`, bloc de style épinglé par empreinte SHA-256), `referrer-policy: no-referrer`, `cache-control: no-store`, `nosniff`. Le serveur est fermé quelle que soit l'issue.
+> - **Tests** : `google-oauth.test.ts` (ceux du plan, rendus sûrs : le flux peut finir avant que le « navigateur » ait lu la page, `browsed()` l'attend ; plus en-têtes, empreinte du style, chemin / méthode / hôte / `state` répété refusés, `GoogleConsent`), `recording-os.test.ts`, et l'e2e « Google consent… » de `desktop.e2e.ts` (vraie boucle dans l'app, annulation, Spotlight et requête invalide refusées, rien d'ouvert).
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 `apps/desktop/test/google-oauth.test.ts` :
@@ -5882,6 +5889,8 @@ Aucun navigateur ne s'ouvre : l'app non empaquetée lit `ALICIA_E2E_GOOGLE_AUTH_
 `startBrain` et `launch` sont ceux de l'e2e **après 3a** (qui a pu y ajouter des options) : n'ajouter que ce qui suit, sans retirer l'existant.
 
 > **Alignement (tâche 0) :** ces aides vivent dans `apps/desktop/e2e/support.ts` (pas dans `app.e2e.ts`) : `startBrain(...scenarios: Scenario[])` (scénarios successifs, pas d'objet d'options), `launch(userData, …)` et `appEnv(userData, extra)` qui accepte déjà des variables en plus. Ajouter une fonction à part `startGoogleBrain(google: FakeGoogle, ...scenarios)` dans `support.ts` (même construction que `startBrain`, plus la section `google`, `fetch` et `google: { secretKey }`) plutôt que de changer la signature de `startBrain` ; passer `ALICIA_E2E_GOOGLE_AUTH_URL` par `appEnv(userData, { … })`.
+
+> **Alignement (tâche 15) :** il n'y a **pas** de `ALICIA_E2E_GOOGLE_AUTH_URL` ni de fausse page de consentement : le navigateur passe par le port d'intégration OS, que l'app de test remplace par `RecordingOs`. Le parcours lit l'URL enregistrée (`(await recorded(app)).browser`), émet le code avec `FakeGoogle` pour son `code_challenge` et son `redirect_uri`, puis appelle lui-même `redirect_uri?code=…&state=…` (comme l'e2e « Google consent… » de `desktop.e2e.ts`).
 
 - [ ] **Step 1: Cerveau de test avec Google**
 

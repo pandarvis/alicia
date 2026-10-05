@@ -13,6 +13,7 @@ import { BrainHub } from "./brain-hub.ts";
 import { type BrainBrowser, BrainDiscovery, bonjourBrowser, staticBrowser } from "./discovery.ts";
 import { electronOs } from "./electron-os.ts";
 import { eventRecipients, mayReadSession } from "./event-routing.ts";
+import { GoogleConsent } from "./google-oauth.ts";
 import { registerIpc } from "./ipc.ts";
 import { isHiddenLaunch, runOnce } from "./lifecycle.ts";
 import type { OsIntegration, TrayHandle } from "./os-integration.ts";
@@ -90,6 +91,8 @@ function start(): void {
     : null;
   if (recording !== null) Reflect.set(globalThis, TEST_HOOKS_KEY, recording.hooks());
   const os: OsIntegration = recording ?? electronOs({ trayIcon: ICON_ICO, notificationIcon: ICON_PNG });
+  // Google's consent opens in the person's browser (recorded, never opened, in tests).
+  const google = new GoogleConsent((url) => os.openInBrowser(url));
 
   const sessions = new SessionStore(join(app.getPath("userData"), "session.bin"), {
     isAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -117,6 +120,8 @@ function start(): void {
     // A page reloaded or crashed while Réglages captured a new shortcut can never resume it: done here.
     onMainReset: () => {
       settings.resumeShortcut();
+      // Nobody waits for the consent any more: its loopback closes now rather than after the timeout.
+      google.cancel();
     },
   });
   const presence = new Presence({
@@ -229,6 +234,7 @@ function start(): void {
 
   /** Lets go of the brain, the network and the OS (shortcut, tray icon); shared by every way of quitting. */
   const quitCleanup = runOnce(() => {
+    google.cancel();
     discovery.stop();
     updates.stop();
     hub.disconnect();
@@ -287,6 +293,8 @@ function start(): void {
   /** Paired or signed out: (re)connect, and tell every window. */
   function setSession(next: StoredSession | null): void {
     current = next;
+    // A consent started for the previous device session has no one left to hand its code to.
+    google.cancel();
     if (next === null) hub.disconnect();
     else hub.connect(next);
     for (const surface of windows.surfaces().filter(mayReadSession)) windows.sendTo(surface, PUSH.session, next);
@@ -326,6 +334,7 @@ function start(): void {
     settings,
     discovery,
     updates,
+    google,
   });
 
   windows.createMain({ show: !startHidden });

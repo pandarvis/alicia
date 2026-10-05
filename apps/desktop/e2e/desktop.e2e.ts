@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Page } from "playwright";
 import { expect, test } from "vitest";
 import { z } from "zod";
+import type { GoogleAuthorizeRequest } from "../src/shared/google.ts";
 import {
   callHook, closeWindow, deferred, exited, FORGET_QUESTION, GREETING_EVENTS, launch, pair, POLL, recorded, RUNNING,
   secondInstance, send, startBrain, startForgettingBrain, surfacePage, tempDir, windowBounds, windowVisible,
@@ -501,4 +502,43 @@ test("Holo: its mini-chat shows its own card; Alicia waits on alert, then goes o
   await holo.getByTestId("holo-message-assistant").filter({ hasText: "Je le garde." }).waitFor();
   expect(await card.getAttribute("data-status")).toBe("refused");
   expect(brain.app.memory.get("kevin", memoryId)).toBeDefined();
+});
+
+test("Google consent: opened in the browser (only recorded here), answered on the loopback, from the main window only", async () => {
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  const request: GoogleAuthorizeRequest = {
+    clientId: "123-abc.apps.googleusercontent.com", scopes: ["https://www.googleapis.com/auth/calendar.events"],
+  };
+  const consentUrl = async (index: number): Promise<URL> => {
+    await expect.poll(async () => (await recorded(app)).browser.length, POLL).toBe(index + 1);
+    return new URL((await recorded(app)).browser[index] ?? "");
+  };
+
+  // The person goes through Google's page: the browser comes back to the app's loopback with the code.
+  const flow = page.evaluate((asked) => window.alicia.google.authorize(asked), request);
+  const consent = await consentUrl(0);
+  expect(`${consent.origin}${consent.pathname}`).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+  expect(consent.searchParams.get("client_id")).toBe(request.clientId);
+  const back = new URL(consent.searchParams.get("redirect_uri") ?? "");
+  expect(back.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  back.searchParams.set("code", "4/0Ae2e");
+  back.searchParams.set("state", consent.searchParams.get("state") ?? "");
+  expect(await (await fetch(back)).text()).toContain("C'est fait");
+  expect(await flow).toMatchObject({ ok: true, code: "4/0Ae2e", redirectUri: back.origin });
+  // Over: the loopback no longer listens.
+  await expect(fetch(back)).rejects.toThrow();
+
+  // Annuler in the app ends the wait at once.
+  const cancelled = page.evaluate((asked) => window.alicia.google.authorize(asked), request);
+  const second = new URL((await consentUrl(1)).searchParams.get("redirect_uri") ?? "");
+  await page.evaluate(() => window.alicia.google.cancel());
+  expect(await cancelled).toEqual({ ok: false, reason: "cancelled" });
+  await expect(fetch(second)).rejects.toThrow();
+
+  // Neither another window nor a request the main process would not build itself opens anything.
+  const spotlight = await surfacePage(app, "spotlight");
+  await expect(spotlight.evaluate((asked) => window.alicia.google.authorize(asked), request)).rejects.toThrow();
+  await expect(page.evaluate((asked) => window.alicia.google.authorize({ ...asked, clientId: "evil.example.com" }), request))
+    .rejects.toThrow();
+  expect((await recorded(app)).browser).toHaveLength(2);
 });

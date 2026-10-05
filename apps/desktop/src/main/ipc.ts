@@ -3,11 +3,13 @@ import { ConfirmMessage, SendMessage } from "@alicia/protocol";
 import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { z } from "zod";
 import { INVOKE } from "../shared/bridge.ts";
+import { GoogleAuthorizeRequest } from "../shared/google.ts";
 import type { SaveSessionResult, StoredSession } from "../shared/session.ts";
 import { SettingsPatch, type SettingsUpdateResult } from "../shared/settings.ts";
 import type { Surface } from "../shared/surface.ts";
 import type { BrainHub } from "./brain-hub.ts";
 import type { BrainDiscovery } from "./discovery.ts";
+import type { GoogleConsent } from "./google-oauth.ts";
 import type { UpdateController } from "./updater.ts";
 import { mayReadSession } from "./event-routing.ts";
 import type { Presence } from "./presence.ts";
@@ -24,6 +26,7 @@ export interface IpcDependencies {
   settings: SettingsController;
   discovery: BrainDiscovery;
   updates: UpdateController;
+  google: GoogleConsent;
 }
 
 const NONE = z.undefined();
@@ -136,5 +139,14 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.openConversation, z.uuid(), (conversationId) => {
     deps.windows.showMain();
     deps.windows.openConversation(conversationId);
+  });
+  // Google accounts are connected from the Comptes screen only; the main process builds the consent URL itself.
+  handle(INVOKE.googleAuthorize, GoogleAuthorizeRequest, (request, sender) => {
+    mainOnly(sender);
+    return deps.google.authorize(request);
+  });
+  handle(INVOKE.googleCancel, NONE, (_none, sender) => {
+    mainOnly(sender);
+    deps.google.cancel();
   });
 }

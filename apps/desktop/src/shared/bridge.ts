@@ -1,6 +1,7 @@
 import type { ConfirmMessage, SendMessage, ServerEvent } from "@alicia/protocol";
 import type { ConnectionStatus } from "./chat-connection.ts";
 import type { DiscoveredBrain } from "./discovery.ts";
+import type { GoogleAuthorizeRequest, GoogleAuthorizeResult } from "./google.ts";
 import type { HoloView } from "./holo.ts";
 import type { MascotState } from "./mascot.ts";
 import type { SaveSessionResult, StoredSession } from "./session.ts";
@@ -95,6 +96,17 @@ export interface UpdatesBridge {
   onChange(listener: (status: UpdateStatus) => void): Unsubscribe;
 }
 
+/** Google's consent for the Comptes screen, main window only: the main process runs it in the system browser. */
+export interface GoogleBridge {
+  /**
+   * Opens Google's consent page in the person's browser and waits for its answer on a local loopback; resolves with
+   * the code for the brain to exchange, or why there is none. A new consent cancels the one in progress.
+   */
+  authorize(request: GoogleAuthorizeRequest): Promise<GoogleAuthorizeResult>;
+  /** Cancels the consent in progress, if any. */
+  cancel(): Promise<void>;
+}
+
 /** API exposed to every page as `window.alicia` by the preload script. */
 export interface AliciaBridge {
   getSession(): Promise<StoredSession | null>;
@@ -114,6 +126,7 @@ export interface AliciaBridge {
   settings: SettingsBridge;
   discovery: DiscoveryBridge;
   updates: UpdatesBridge;
+  google: GoogleBridge;
 }
 
 /** Page → main process (ipcRenderer.invoke); every handler checks the sender and validates the payload. */
@@ -143,6 +156,8 @@ export const INVOKE = {
   discoveryStop: "discovery:stop",
   updatesStatus: "updates:status",
   updatesInstall: "updates:install",
+  googleAuthorize: "google:authorize",
+  googleCancel: "google:cancel",
 } as const;
 
 /** Main process → pages (webContents.send); the preload validates every payload. */

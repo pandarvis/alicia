@@ -42,6 +42,13 @@ describe("RecordingOs", () => {
     expect(os.hooks().state().shortcuts).toEqual(["Ctrl+Shift+K"]);
   });
 
+  test("opens no browser: the page is recorded for the test to play the browser", async () => {
+    const os = new RecordingOs();
+    expect(os.hooks().state().browser).toEqual([]);
+    await os.openInBrowser("https://accounts.google.com/o/oauth2/v2/auth?state=abc");
+    expect(os.hooks().state().browser).toEqual(["https://accounts.google.com/o/oauth2/v2/auth?state=abc"]);
+  });
+
   test("driving a tray that does not exist is a test error", () => {
     const hooks = new RecordingOs().hooks();
     expect(() => { hooks.trayAction("open"); }).toThrow("No tray");

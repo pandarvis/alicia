@@ -1,5 +1,5 @@
 import {
-  app, globalShortcut, Menu, type MenuItemConstructorOptions, nativeImage, Notification, screen, Tray,
+  app, globalShortcut, Menu, type MenuItemConstructorOptions, nativeImage, Notification, screen, shell, Tray,
 } from "electron";
 import { HIDDEN_ARG } from "./lifecycle.ts";
 import type { OsIntegration, TrayHandle } from "./os-integration.ts";
@@ -66,6 +66,11 @@ export function electronOs(options: { trayIcon: string; notificationIcon: string
         shown.delete(notification);
       });
       notification.show();
+    },
+    // Only ever a secure web page (never a file or another app's scheme); the caller builds the URL itself.
+    openInBrowser: async (url) => {
+      if (new URL(url).protocol !== "https:") throw new Error("Not a secure web page");
+      await shell.openExternal(url);
     },
     createTray: (items, onAction, onClick): TrayHandle => {
       const created = new Tray(nativeImage.createFromPath(options.trayIcon));

@@ -20,6 +20,8 @@ export interface OsIntegration {
   /** Whether Windows starts the app at login; null when it cannot tell (only the installed app has a login item). */
   isLoginItemEnabled(): boolean | null;
   notify(request: NotificationRequest): void;
+  /** Opens a web page in the person's own browser (Google's consent page). */
+  openInBrowser(url: string): Promise<void>;
   createTray(items: readonly TrayItem[], onAction: (action: TrayAction) => void, onClick: () => void): TrayHandle;
   /** Where the mouse pointer is on the desktop (screen DIP). */
   cursorScreenPoint(): Point;

@@ -13,6 +13,8 @@ export const RecordedState = z.object({
   loginItem: z.boolean().nullable(),
   notifications: z.array(z.object({ title: z.string(), body: z.string() })),
   tray: z.array(z.object({ id: TrayAction.or(z.literal("separator")), label: z.string(), checked: z.boolean().nullable() })),
+  /** The pages the app asked to open in the person's browser (none is ever opened in tests). */
+  browser: z.array(z.string()),
 });
 export type RecordedState = z.infer<typeof RecordedState>;
 
@@ -61,6 +63,7 @@ export class RecordingOs implements OsIntegration {
   readonly #shortcuts = new Map<string, () => void>();
   readonly #occupied = new Set<string>();
   readonly #notifications: NotificationRequest[] = [];
+  readonly #browser: string[] = [];
   readonly #loginItemFile: string | undefined;
   /** What "Windows" holds (kept in the file between runs). */
   #loginItemEnabled: boolean;
@@ -98,6 +101,12 @@ export class RecordingOs implements OsIntegration {
 
   notify(request: NotificationRequest): void {
     this.#notifications.push(request);
+  }
+
+  /** Nothing opens: the test reads the URL and plays the browser itself. */
+  openInBrowser(url: string): Promise<void> {
+    this.#browser.push(url);
+    return Promise.resolve();
   }
 
   createTray(items: readonly TrayItem[], onAction: (action: TrayAction) => void, onClick: () => void): TrayHandle {
@@ -138,6 +147,7 @@ export class RecordingOs implements OsIntegration {
         tray: (this.#tray?.items ?? [])
           .filter((item) => item.id !== "separator")
           .map((item) => ({ id: item.id, label: item.label, checked: item.checked })),
+        browser: [...this.#browser],
       }),
       occupy: (accelerator) => {
         this.#occupied.add(accelerator);
