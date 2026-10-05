@@ -8,6 +8,10 @@ const SUMMARY_MAX = 500;
 export interface TurnParams {
   person: Person;
   conversationId: string;
+  /** This conversation's attachments folder (absolute; may not exist yet). */
+  attachmentsDir: string;
+  /** Alicia's skills folder (a skill's own files may be read). */
+  skillsDir: string;
   /** Aborts when the turn ends, whatever the reason: nothing it asked may run afterwards. */
   signal: AbortSignal;
   /** Asks the person on the device that sent the message (settles "cancelled" when the turn ends). */
@@ -18,6 +22,8 @@ export interface TurnParams {
 export class TurnContext {
   readonly person: Person;
   readonly conversationId: string;
+  readonly attachmentsDir: string;
+  readonly skillsDir: string;
   readonly #signal: AbortSignal;
   readonly #confirm: TurnParams["confirm"];
   #untrusted = false;
@@ -25,6 +31,8 @@ export class TurnContext {
   constructor(params: TurnParams) {
     this.person = params.person;
     this.conversationId = params.conversationId;
+    this.attachmentsDir = params.attachmentsDir;
+    this.skillsDir = params.skillsDir;
     this.#signal = params.signal;
     this.#confirm = params.confirm;
   }

@@ -24,6 +24,8 @@ export interface ChatDependencies {
   tools: ToolCatalog;
   /** Files sent with the messages (pending uploads, then per-conversation folders). */
   attachments: AttachmentStore;
+  /** Alicia's skills folder: the built-in Read may open a skill's files. */
+  skillsDir: string;
   clock: Clock;
   timezone: string;
 }
@@ -143,6 +145,8 @@ export async function* handleSend(
   const turn = new TurnContext({
     person,
     conversationId,
+    attachmentsDir: deps.attachments.dirOf(conversationId),
+    skillsDir: deps.skillsDir,
     signal: turnSignal,
     confirm: (request) => ports.confirm({ conversationId, messageId }, request, turnSignal),
   });
@@ -174,7 +178,7 @@ export async function* handleSend(
       try {
         stream = deps.engine.run(
           {
-            prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs,
+            prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(turn), readableDirs,
             toolTimeoutMs: ports.confirmationTimeoutMs + TOOL_RUN_BUDGET_MS,
           },
           // The turn's own scope: whatever the engine still does once the turn is over is stopped.

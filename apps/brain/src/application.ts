@@ -110,7 +110,9 @@ export async function buildApplication(
       pairing,
       repository,
       version: VERSION,
-      chat: { repository, engine, memory, tools, attachments, clock: systemClock, timezone: config.timezone },
+      chat: {
+        repository, engine, memory, tools, attachments, skillsDir: SKILLS_DIR, clock: systemClock, timezone: config.timezone,
+      },
       allowedOrigins: config.allowedOrigins,
       updatesDir,
       ...(options.logging !== undefined ? { logging: options.logging } : {}),

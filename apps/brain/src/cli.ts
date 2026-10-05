@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { type ClientMessage, PairingResponse, ServerEvent } from "@alicia/protocol";
+import { type ClientMessage, PairingResponse, type Person, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import { buildApplication, createSdkEngine, openMemory, SKILLS_DIR, WORKSPACE_DIR } from "./application.ts";
-import { loadConfig, readAuthentication } from "./config.ts";
+import { type Config, loadConfig, readAuthentication } from "./config.ts";
 import { advertiseBrain, bonjourPublisher, serviceHostname, shouldAdvertise } from "./discovery.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
 import { allowedToolNames, checkIsolation, NATIVE_TOOLS, readInit } from "./engine/sdk-engine.ts";
@@ -287,6 +287,22 @@ async function chat(url: string, code: string | undefined): Promise<void> {
   }
 }
 
+/**
+ * A turn for the engine checks: a throwaway conversation, the same folders as a real turn (attachments of that
+ * conversation, the skills), and every confirmation refused.
+ */
+function cliTurn(config: Config, person: Person): TurnContext {
+  const conversationId = randomUUID();
+  return new TurnContext({
+    person,
+    conversationId,
+    attachmentsDir: join(resolve(config.dataDir), "attachments", conversationId),
+    skillsDir: SKILLS_DIR,
+    signal: new AbortController().signal,
+    confirm: () => Promise.resolve("refused"),
+  });
+}
+
 async function checkEngine(): Promise<void> {
   const config = loadConfig(configPath());
   const engine = createSdkEngine(config, readAuthentication(config.engine.mode, process.env));
@@ -298,7 +314,7 @@ async function checkEngine(): Promise<void> {
     model: "sonnet",
     systemPrompt: buildSystemPrompt(person, ""),
     tools: [],
-    guard: createNativeGuard(),
+    guard: createNativeGuard(cliTurn(config, person)),
     readableDirs: [],
     toolTimeoutMs: CONFIRMATION_TIMEOUT_MS + TOOL_RUN_BUDGET_MS,
   };
@@ -316,14 +332,12 @@ async function checkIsolationCommand(): Promise<void> {
   try {
     const person = config.people[0];
     if (person === undefined) throw new Error("Aucune personne dans la config.");
-    const turn = new TurnContext({
-      person, conversationId: randomUUID(), signal: new AbortController().signal, confirm: () => Promise.resolve("refused"),
-    });
+    const turn = cliTurn(config, person);
     const tools = new ToolCatalog([memoryTools(opened.memory)]).forTurn(turn);
     const params = { auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) };
     const init = await readInit(params, {
       prompt: "Réponds juste « ok ».", sessionId: undefined, model: "sonnet",
-      systemPrompt: buildSystemPrompt(person, ""), tools, guard: createNativeGuard(), readableDirs: [],
+      systemPrompt: buildSystemPrompt(person, ""), tools, guard: createNativeGuard(turn), readableDirs: [],
       toolTimeoutMs: CONFIRMATION_TIMEOUT_MS + TOOL_RUN_BUDGET_MS,
     });
     const report = checkIsolation(init, {

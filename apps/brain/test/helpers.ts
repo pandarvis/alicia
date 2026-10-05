@@ -61,6 +61,7 @@ export function createChatDeps(
     memory,
     tools: new ToolCatalog([memoryTools(memory), ...extraTools]),
     attachments: new AttachmentStore(db, createTempDir(), clock),
+    skillsDir: createTempDir(),
     clock,
     timezone: "Europe/Paris",
   };
@@ -87,12 +88,16 @@ export function createTestTurn(
   person: Person,
   conversationId: string,
   outcome: ConfirmationOutcome | (() => Promise<ConfirmationOutcome>) = "approved",
+  paths: { attachmentsDir?: string; skillsDir?: string } = {},
 ) {
   const asked: ConfirmationRequest[] = [];
   const scope = new AbortController();
   const turn = new TurnContext({
     person,
     conversationId,
+    // Folders that do not exist unless a test makes them: nothing is readable by default.
+    attachmentsDir: paths.attachmentsDir ?? join(tmpdir(), "alicia-none", conversationId),
+    skillsDir: paths.skillsDir ?? join(tmpdir(), "alicia-none", "skills"),
     signal: scope.signal,
     confirm: (request) => {
       asked.push(request);

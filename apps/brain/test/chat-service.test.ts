@@ -4,11 +4,12 @@ import { describe, expect, test, vi } from "vitest";
 import { buildResumePrompt, type ChatDependencies, handleSend, titleFrom, type TurnPorts } from "../src/conversations/chat-service.ts";
 import type { Message } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
-import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
-import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
+import { type Engine, INCOMPLETE_TURN_MESSAGE, type NativeDecision } from "../src/engine/engine.ts";
+import { callNative, callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
 import type { ToolResult } from "../src/engine/tools.ts";
 import type { MemoryStore } from "../src/memory/store.ts";
 import { type ConfirmationWhere, TOOL_RUN_BUDGET_MS } from "../src/tools/confirmations.ts";
+import { NOT_READABLE } from "../src/tools/native-guard.ts";
 import { answeringPorts, createChatDeps, createTestClock, createTestDb, ELODIE, KEVIN, PDF_BYTES } from "./helpers.ts";
 
 const REQUEST_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
@@ -532,6 +533,28 @@ describe("attachments", () => {
     expect(deps.repository.get(conversationId, "kevin")?.title).toBe("Tu peux vérifier ?");
     await send(deps, KEVIN, { text: "Et le total ?", conversationId });
     expect(engine.requests[1]?.readableDirs).toEqual([deps.attachments.dirOf(conversationId)]);
+  });
+
+  test("Read through the turn's guard: this conversation's attachment, never someone else's", async () => {
+    const decisions: NativeDecision[] = [];
+    let kevinFile = "";
+    let uploadedId = "";
+    const engine = new FakeEngine(
+      async (request) => {
+        kevinFile = join(request.readableDirs[0] ?? "", `${uploadedId}.pdf`);
+        decisions.push(await callNative(request, "Read", { file_path: kevinFile }));
+        return [{ type: "done", inputTokens: 0, outputTokens: 0 }];
+      },
+      async (request) => {
+        decisions.push(await callNative(request, "Read", { file_path: kevinFile }));
+        return [{ type: "done", inputTokens: 0, outputTokens: 0 }];
+      },
+    );
+    const deps = createChatDeps(createTestDb(), createTestClock().clock, engine);
+    uploadedId = uploadFor(deps, "kevin");
+    await send(deps, KEVIN, { text: "Lis-la", attachments: [uploadedId] });
+    await send(deps, ELODIE, { text: "Lis le fichier de Kévin" });
+    expect(decisions).toEqual([{ allow: true }, { allow: false, reason: NOT_READABLE }]);
   });
 
   test("without attachments, the engine may read no folder", async () => {
