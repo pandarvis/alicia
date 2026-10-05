@@ -17,10 +17,13 @@ import { memoryTools } from "./memory/tools.ts";
 import { TransformersEmbedder } from "./memory/transformers-embedder.ts";
 import { createServer } from "./server/server.ts";
 import { ToolCatalog } from "./tools/catalog.ts";
+import { listSkills } from "./tools/skills.ts";
 import { VERSION } from "./version.ts";
 
-/** cwd of the SDK process (skills in plan 3). */
+/** cwd of the SDK process. */
 export const WORKSPACE_DIR = fileURLToPath(new URL("../workspace", import.meta.url));
+/** Alicia's skills (instructions only): the only ones the SDK loads. */
+export const SKILLS_DIR = join(WORKSPACE_DIR, ".claude", "skills");
 
 export interface ApplicationOptions {
   /** Fastify logger (pino, Authorization masked): enabled by `start`, off by default. */
@@ -40,7 +43,7 @@ export interface Application {
 }
 
 export function createSdkEngine(config: Config, auth: Authentication): Engine {
-  return new SdkEngine({ auth, models: config.models, workspaceDir: WORKSPACE_DIR });
+  return new SdkEngine({ auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) });
 }
 
 /**

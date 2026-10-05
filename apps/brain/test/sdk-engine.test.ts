@@ -1,12 +1,19 @@
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { HookInput, SDKMessage, SDKSystemMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
+import { type EngineEvent, INCOMPLETE_TURN_MESSAGE, type NativeDecision, type NativeToolGuard } from "../src/engine/engine.ts";
 import {
   allowedToolNames,
   buildEnv,
+  buildOptions,
+  checkIsolation,
   classifyError,
   CONFIRMATION_BUDGET_MS,
+  ISOLATION_SETTINGS,
+  NATIVE_TOOLS,
+  postToolUseHook,
+  preToolUseHook,
+  type SdkEngineParams,
   toMcpResult,
   toolHandler,
   toolServer,
@@ -15,6 +22,7 @@ import {
 } from "../src/engine/sdk-engine.ts";
 import { defineTool } from "../src/engine/tools.ts";
 import { CONFIRMATION_TIMEOUT_MS } from "../src/tools/confirmations.ts";
+import { testRequest } from "./helpers.ts";
 
 /** SDK messages carry many fields that are irrelevant here: partial fixtures. */
 const sdk = (m: Record<string, unknown>) => m as unknown as SDKMessage;
@@ -300,5 +308,154 @@ describe("tools", () => {
       },
     });
     expect(await toolHandler(broken)({})).toEqual({ content: [{ type: "text", text: "Erreur de l'outil." }], isError: true });
+  });
+});
+
+const echoTool = defineTool({
+  name: "echo", label: "…", description: "Répète.", input: { word: z.string() },
+  run: ({ word }) => Promise.resolve({ text: word }),
+});
+const PARAMS: SdkEngineParams = {
+  auth: { mode: "subscription", token: "j" },
+  models: { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" },
+  workspaceDir: "/w",
+  skills: ["lire-un-document"],
+};
+const guard = (decision: NativeDecision | Error, reminder?: string): NativeToolGuard => ({
+  check: () => (decision instanceof Error ? Promise.reject(decision) : Promise.resolve(decision)),
+  reminder: () => reminder,
+});
+const options = () => buildOptions(
+  testRequest({ tools: [echoTool], readableDirs: ["/data/attachments/c1"] }), PARAMS, new AbortController(),
+);
+
+describe("buildOptions", () => {
+  test("built-in tools: exactly the allow-list; Read and WebFetch are left to the hook", () => {
+    const o = options();
+    expect(NATIVE_TOOLS).toEqual(["WebSearch", "WebFetch", "Read", "Skill"]);
+    expect(o.tools).toEqual(["WebSearch", "WebFetch", "Read", "Skill"]);
+    expect(o.allowedTools).toEqual(["mcp__alicia__echo", "WebSearch"]);
+    expect(o.skills).toEqual(["lire-un-document"]);
+    expect(o.disallowedTools).toEqual(["ListMcpResourcesTool", "ReadMcpResourceTool"]);
+    expect(o.permissionMode).toBe("default");
+    expect(o.strictMcpConfig).toBe(true);
+  });
+
+  test("isolation: project sources only, host-forced settings, workspace cwd, this conversation's folder", () => {
+    const o = options();
+    expect(o.settingSources).toEqual(["project"]);
+    expect(o.settings).toBe(ISOLATION_SETTINGS);
+    expect(ISOLATION_SETTINGS).toEqual({
+      claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "**/.claude/rules/**"],
+      autoMemoryEnabled: false,
+      disableSkillShellExecution: true,
+      permissions: { blockReadsOutsideWorkingDirectories: true },
+    });
+    expect(o.cwd).toBe("/w");
+    expect(o.additionalDirectories).toEqual(["/data/attachments/c1"]);
+    expect(o.env?.["CLAUDE_CODE_OAUTH_TOKEN"]).toBe("j");
+    expect(o.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+  });
+
+  test("canUseTool refuses everything (backstop if a hook fails)", async () => {
+    const result = await options().canUseTool?.("Read", {}, {
+      signal: new AbortController().signal, toolUseID: "t1", requestId: "r1",
+    });
+    expect(result).toEqual({ behavior: "deny", message: "Cet outil n'est pas disponible." });
+  });
+
+  test("hooks wait longer than a confirmation", () => {
+    const o = options();
+    expect(o.hooks?.PreToolUse?.[0]?.timeout).toBe(360);
+    expect(o.hooks?.PostToolUse).toHaveLength(1);
+  });
+
+  test("no MCP server without tools; resume with a session", () => {
+    const o = buildOptions(testRequest({ sessionId: "s1" }), PARAMS, new AbortController());
+    expect(o.mcpServers).toBeUndefined();
+    expect(o.resume).toBe("s1");
+  });
+});
+
+/** Hook inputs carry many irrelevant fields: partial fixtures. */
+const hookInput = (m: Record<string, unknown>) => m as unknown as HookInput;
+const pre = (tool: string, input: unknown = {}) => hookInput({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: input, tool_use_id: "t1" });
+const post = (tool: string) => hookInput({ hook_event_name: "PostToolUse", tool_name: tool, tool_input: {}, tool_response: "…", tool_use_id: "t1" });
+const SIGNAL = { signal: new AbortController().signal };
+
+describe("preToolUseHook", () => {
+  test("our MCP tools go through (decided in their handler)", async () => {
+    expect(await preToolUseHook(guard({ allow: false, reason: "non" }))(pre("mcp__alicia__echo"), "t1", SIGNAL)).toEqual({});
+  });
+  test("built-in tool allowed by the guard", async () => {
+    expect(await preToolUseHook(guard({ allow: true }))(pre("WebSearch"), "t1", SIGNAL)).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+    });
+  });
+  test("refused with the guard's reason", async () => {
+    expect(await preToolUseHook(guard({ allow: false, reason: "Lecture refusée." }))(pre("Read"), "t1", SIGNAL)).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Lecture refusée." },
+    });
+  });
+  test("a failing guard refuses; another MCP server's tool is the guard's to decide", async () => {
+    expect(await preToolUseHook(guard(new Error("boom")))(pre("WebFetch"), "t1", SIGNAL)).toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    });
+    expect(await preToolUseHook(guard({ allow: false, reason: "non" }))(pre("mcp__other__x"), "t1", SIGNAL)).toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    });
+  });
+  test("the guard gets the tool's input and the hook's signal", async () => {
+    const seen: unknown[] = [];
+    const watching: NativeToolGuard = {
+      check: (tool, input, signal) => {
+        seen.push(tool, input, signal);
+        return Promise.resolve({ allow: true });
+      },
+      reminder: () => undefined,
+    };
+    await preToolUseHook(watching)(pre("Read", { file_path: "C:/a.pdf" }), "t1", SIGNAL);
+    expect(seen).toEqual(["Read", { file_path: "C:/a.pdf" }, SIGNAL.signal]);
+  });
+});
+
+describe("postToolUseHook", () => {
+  test("adds the guard's reminder, for built-in tools only", async () => {
+    const hook = postToolUseHook(guard({ allow: true }, "Rappel."));
+    expect(await hook(post("WebFetch"), "t1", SIGNAL)).toEqual({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "Rappel." } });
+    expect(await hook(post("mcp__alicia__echo"), "t1", SIGNAL)).toEqual({});
+    expect(await postToolUseHook(guard({ allow: true }))(post("WebSearch"), "t1", SIGNAL)).toEqual({});
+  });
+});
+
+describe("checkIsolation", () => {
+  const init = (overrides: Record<string, unknown> = {}) => ({
+    type: "system", subtype: "init", cwd: "/w", apiKeySource: "none",
+    tools: ["WebSearch", "WebFetch", "Read", "Skill", "mcp__alicia__echo"],
+    mcp_servers: [{ name: "alicia", status: "connected" }], skills: ["lire-un-document"], plugins: [],
+    ...overrides,
+  }) as unknown as SDKSystemMessage;
+  const expected = {
+    tools: ["WebSearch", "WebFetch", "Read", "Skill", "mcp__alicia__echo"], skills: ["lire-un-document"],
+    mode: "subscription" as const, workspaceDir: "/w",
+  };
+
+  test("a clean session passes", () => {
+    expect(checkIsolation(init(), expected).ok).toBe(true);
+  });
+  test.each([
+    ["an extra tool", { tools: ["Bash", "WebSearch", "WebFetch", "Read", "Skill", "mcp__alicia__echo"] }],
+    ["a plugin", { plugins: [{ name: "x", path: "/p" }] }],
+    ["another MCP server", { mcp_servers: [{ name: "alicia", status: "connected" }, { name: "gmail", status: "connected" }] }],
+    ["an API key while on the subscription", { apiKeySource: "ANTHROPIC_API_KEY" }],
+    ["a missing skill", { skills: [] }],
+    ["another cwd", { cwd: "/elsewhere" }],
+  ])("fails on %s", (_label, overrides) => {
+    expect(checkIsolation(init(overrides), expected).ok).toBe(false);
+  });
+  test("extra skills are reported, hidden by the skills option", () => {
+    const report = checkIsolation(init({ skills: ["lire-un-document", "update-config"] }), expected);
+    expect(report.ok).toBe(true);
+    expect(report.lines.join("\n")).toContain("update-config");
   });
 });

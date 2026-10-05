@@ -4,7 +4,7 @@ import type { EngineRequest } from "../src/engine/engine.ts";
 import { callTool } from "../src/engine/fake-engine.ts";
 import { memoryTools } from "../src/memory/tools.ts";
 import { ToolCatalog } from "../src/tools/catalog.ts";
-import { createTestClock, createTestDb, createTestMemory, createTestTurn, ELODIE, KEVIN } from "./helpers.ts";
+import { createTestClock, createTestDb, createTestMemory, createTestTurn, ELODIE, KEVIN, testRequest } from "./helpers.ts";
 
 function setup() {
   const db = createTestDb();
@@ -12,8 +12,7 @@ function setup() {
   const store = createTestMemory(db, clock);
   const repository = new ConversationRepository(db, clock);
   // Memories point to the conversation they were learnt in: it must exist.
-  const requestFor = (person: typeof KEVIN): EngineRequest => ({
-    prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "",
+  const requestFor = (person: typeof KEVIN): EngineRequest => testRequest({
     tools: new ToolCatalog([memoryTools(store)]).forTurn(createTestTurn(person, repository.create(person.id, "Test").id).turn),
   });
   return { store, repository, kevin: requestFor(KEVIN), elodie: requestFor(ELODIE) };
@@ -73,9 +72,7 @@ describe("memory tools", () => {
     const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes", source: "manual" });
     if (saved.status !== "created") throw new Error("not created");
     const refusing = createTestTurn(KEVIN, repository.create("kevin", "Test").id, "refused");
-    const request: EngineRequest = {
-      prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "", tools: new ToolCatalog([memoryTools(store)]).forTurn(refusing.turn),
-    };
+    const request = testRequest({ tools: new ToolCatalog([memoryTools(store)]).forTurn(refusing.turn) });
     expect((await callTool(request, "memory_forget", { id: saved.memory.id })).isError).toBe(true);
     expect(refusing.asked).toEqual([{ tool: "memory_forget", summary: "Oublier ce souvenir : « Kévin adore les lasagnes » ?" }]);
     expect(store.get("kevin", saved.memory.id)).toBeDefined();
@@ -86,9 +83,7 @@ describe("memory tools", () => {
     const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes", source: "manual" });
     if (saved.status !== "created") throw new Error("not created");
     const elodie = createTestTurn(ELODIE, repository.create("elodie", "Test").id, "approved");
-    const request: EngineRequest = {
-      prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "", tools: new ToolCatalog([memoryTools(store)]).forTurn(elodie.turn),
-    };
+    const request = testRequest({ tools: new ToolCatalog([memoryTools(store)]).forTurn(elodie.turn) });
     expect(await callTool(request, "memory_forget", { id: saved.memory.id })).toEqual({ text: "Souvenir introuvable.", isError: true });
     expect(elodie.asked).toEqual([]);
     expect(store.get("kevin", saved.memory.id)).toBeDefined();

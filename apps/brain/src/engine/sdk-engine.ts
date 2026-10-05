@@ -1,20 +1,27 @@
 import type { Model } from "@alicia/protocol";
+import { resolve } from "node:path";
 import {
+  type CanUseTool,
   createSdkMcpServer,
+  type HookCallback,
   type McpSdkServerConfigWithInstance,
   type Options,
   query,
   type SDKMessage,
   type SDKRateLimitInfo,
+  type SDKSystemMessage,
   type SdkMcpToolDefinition,
+  type Settings,
   tool,
   USAGE_LIMIT_ERROR_PREFIXES,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Authentication } from "../config.ts";
 import { VERSION } from "../version.ts";
-import { type Engine, type EngineEvent, type EngineRequest, INCOMPLETE_TURN_MESSAGE } from "./engine.ts";
-import type { ToolDefinition, ToolResult } from "./tools.ts";
 import { CONFIRMATION_TIMEOUT_MS } from "../tools/confirmations.ts";
+import {
+  type Engine, type EngineEvent, type EngineRequest, INCOMPLETE_TURN_MESSAGE, type NativeDecision, type NativeToolGuard,
+} from "./engine.ts";
+import type { ToolDefinition, ToolResult } from "./tools.ts";
 
 const LIMIT_PATTERN = /usage limit|rate[ _]?limit|(?<!disk )quota (?:exceeded|reached)|too many requests|\b429\b/i;
 const QUOTA_MESSAGE = "Je me repose : le quota de l'abonnement est atteint.";
@@ -41,6 +48,58 @@ const MCP_PREFIX = `mcp__${MCP_SERVER}__`;
 
 /** Tool calls may wait for a confirmation: their own deadline comes after the broker's. */
 export const CONFIRMATION_BUDGET_MS = CONFIRMATION_TIMEOUT_MS + 60_000;
+
+/** The SDK's built-in tools Alicia may use; everything else (terminal, edits, agents…) does not exist for her. */
+export const NATIVE_TOOLS = ["WebSearch", "WebFetch", "Read", "Skill"] as const;
+/** Built-in tools needing no check. Read and WebFetch stay out: only the hook can allow them. */
+const UNCHECKED_NATIVE = ["WebSearch"];
+/** The PreToolUse hook may wait for a confirmation too. */
+const HOOK_TIMEOUT_S = CONFIRMATION_BUDGET_MS / 1000;
+const NOT_AVAILABLE = "Cet outil n'est pas disponible.";
+
+/**
+ * Settings the brain forces on the SDK process (flag layer, above any settings file): no CLAUDE.md found
+ * around the workspace, no auto-memory, no shell inside skills, no file read outside the working directories.
+ */
+export const ISOLATION_SETTINGS: Settings = {
+  claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "**/.claude/rules/**"],
+  autoMemoryEnabled: false,
+  disableSkillShellExecution: true,
+  permissions: { blockReadsOutsideWorkingDirectories: true },
+};
+
+/** The backstop: whatever reaches the permission prompt (a hook that failed to decide) is refused. */
+const denyAll: CanUseTool = () => Promise.resolve({ behavior: "deny", message: NOT_AVAILABLE });
+
+/** PreToolUse: every built-in tool call goes through the turn's guard; our MCP tools decide in their handler. */
+export function preToolUseHook(guard: NativeToolGuard): HookCallback {
+  return async (input, _toolUseId, { signal }) => {
+    if (input.hook_event_name !== "PreToolUse" || input.tool_name.startsWith(MCP_PREFIX)) return {};
+    let decision: NativeDecision;
+    try {
+      decision = await guard.check(input.tool_name, input.tool_input, signal);
+    } catch {
+      decision = { allow: false, reason: NOT_AVAILABLE };
+    }
+    return {
+      hookSpecificOutput: decision.allow
+        ? { hookEventName: "PreToolUse", permissionDecision: "allow" }
+        : { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: decision.reason },
+    };
+  };
+}
+
+/** PostToolUse: after outside content came in through a built-in tool, a reminder that it is data. */
+export function postToolUseHook(guard: NativeToolGuard): HookCallback {
+  return (input) => {
+    if (input.hook_event_name !== "PostToolUse" || input.tool_name.startsWith(MCP_PREFIX)) return Promise.resolve({});
+    const reminder = guard.reminder(input.tool_name, input.tool_input);
+    return Promise.resolve(
+      reminder === undefined ? {} : { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: reminder } },
+    );
+  };
+}
+
 /** Generic on purpose: an exception may carry paths, SQL or secrets, none of which belongs in the model's context. */
 const TOOL_FAILURE = "Erreur de l'outil.";
 
@@ -225,6 +284,84 @@ export interface SdkEngineParams {
   auth: Authentication;
   models: Readonly<Record<Model, string>>;
   workspaceDir: string;
+  /** Names of the workspace's skills (the only ones the Skill tool accepts). */
+  skills: readonly string[];
+}
+
+export function buildOptions(request: EngineRequest, params: SdkEngineParams, controller: AbortController): Options {
+  return {
+    model: params.models[request.model],
+    systemPrompt: request.systemPrompt,
+    cwd: params.workspaceDir,
+    // Project sources only: Alicia's skills in <workspace>/.claude/skills, never the machine's Claude Code config.
+    settingSources: ["project"],
+    settings: ISOLATION_SETTINGS,
+    strictMcpConfig: true,
+    tools: [...NATIVE_TOOLS],
+    // Allowed outright: our MCP tools (confirmations happen in their handler) and WebSearch. The SDK adds Skill(<name>).
+    allowedTools: [...allowedToolNames(request.tools), ...UNCHECKED_NATIVE],
+    skills: [...params.skills],
+    disallowedTools: ["ListMcpResourcesTool", "ReadMcpResourceTool"],
+    // Explicit: no classifier-driven mode; the hook decides, canUseTool refuses whatever reaches it.
+    permissionMode: "default",
+    additionalDirectories: [...request.readableDirs],
+    hooks: {
+      PreToolUse: [{ hooks: [preToolUseHook(request.guard)], timeout: HOOK_TIMEOUT_S }],
+      PostToolUse: [{ hooks: [postToolUseHook(request.guard)] }],
+    },
+    ...(request.tools.length > 0 ? { mcpServers: { [MCP_SERVER]: toolServer(request.tools) } } : {}),
+    includePartialMessages: true,
+    canUseTool: denyAll,
+    env: buildEnv(process.env, params.auth),
+    abortController: controller,
+    ...(request.sessionId !== undefined ? { resume: request.sessionId } : {}),
+  };
+}
+
+export interface IsolationExpectation {
+  tools: readonly string[];
+  skills: readonly string[];
+  mode: Authentication["mode"];
+  workspaceDir: string;
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((x) => b.includes(x));
+const samePath = (a: string, b: string): boolean =>
+  process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+
+/** Compares what the SDK actually loaded (its init message) with what Alicia should have. */
+export function checkIsolation(init: SDKSystemMessage, expected: IsolationExpectation): { ok: boolean; lines: string[] } {
+  const problems: string[] = [];
+  if (!sameSet(init.tools, expected.tools)) problems.push(`Outils : ${init.tools.join(", ")} (attendu : ${expected.tools.join(", ")})`);
+  const missing = expected.skills.filter((s) => !init.skills.includes(s));
+  if (missing.length > 0) problems.push(`Skills manquants : ${missing.join(", ")}`);
+  if (init.plugins.length > 0) problems.push(`Plugins chargés : ${init.plugins.map((p) => p.name).join(", ")}`);
+  const servers = init.mcp_servers.map((s) => s.name);
+  if (!sameSet(servers, [MCP_SERVER])) problems.push(`Serveurs MCP : ${servers.join(", ")} (attendu : ${MCP_SERVER})`);
+  const keySource = expected.mode === "subscription" ? "none" : "ANTHROPIC_API_KEY";
+  if (init.apiKeySource !== keySource) problems.push(`Source d'authentification : ${init.apiKeySource} (attendu : ${keySource})`);
+  if (!samePath(init.cwd, expected.workspaceDir)) problems.push(`Dossier de travail : ${init.cwd}`);
+  const extra = init.skills.filter((s) => !expected.skills.includes(s));
+  const lines = [
+    ...problems.map((p) => `ÉCHEC  ${p}`),
+    ...(extra.length > 0 ? [`info   Skills découverts mais masqués par l'option skills : ${extra.join(", ")}`] : []),
+    problems.length === 0 ? "OK     Isolation conforme." : `${problems.length} problème(s).`,
+  ];
+  return { ok: problems.length === 0, lines };
+}
+
+/** Starts a session only to read its init message, then stops it (command check-isolation: real engine). */
+export async function readInit(params: SdkEngineParams, request: EngineRequest): Promise<SDKSystemMessage> {
+  const controller = new AbortController();
+  try {
+    for await (const m of query({ prompt: request.prompt, options: buildOptions(request, params, controller) })) {
+      if (m.type === "system" && m.subtype === "init") return m;
+    }
+  } finally {
+    controller.abort();
+  }
+  throw new Error("Aucun message d'initialisation reçu du SDK.");
 }
 
 export class SdkEngine implements Engine {
@@ -240,29 +377,10 @@ export class SdkEngine implements Engine {
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", abort, { once: true });
 
-    const { auth } = this.#params;
-    const options: Options = {
-      model: this.#params.models[request.model],
-      systemPrompt: request.systemPrompt,
-      cwd: this.#params.workspaceDir,
-      settingSources: [],
-      strictMcpConfig: true,
-      // Built-in Claude Code tools stay disabled; only our MCP tools are allowed, everything else is refused.
-      tools: [],
-      allowedTools: allowedToolNames(request.tools),
-      disallowedTools: ["ListMcpResourcesTool", "ReadMcpResourceTool"],
-      // Explicit: no classifier-driven mode; the deny-all canUseTool is the only gate besides allowedTools.
-      permissionMode: "default",
-      ...(request.tools.length > 0 ? { mcpServers: { [MCP_SERVER]: toolServer(request.tools) } } : {}),
-      includePartialMessages: true,
-      canUseTool: () => Promise.resolve({ behavior: "deny", message: "Cet outil n'est pas disponible." }),
-      env: buildEnv(process.env, auth),
-      abortController: controller,
-      ...(request.sessionId !== undefined ? { resume: request.sessionId } : {}),
-    };
+    const options = buildOptions(request, this.#params, controller);
 
     try {
-      yield* translateTurn(query({ prompt: request.prompt, options }), secretOf(auth), signal);
+      yield* translateTurn(query({ prompt: request.prompt, options }), secretOf(this.#params.auth), signal);
     } finally {
       signal.removeEventListener("abort", abort);
     }

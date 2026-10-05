@@ -8,6 +8,7 @@ import type { MemoryStore } from "../memory/store.ts";
 import { truncate } from "../text.ts";
 import { labelOf, type ToolCatalog } from "../tools/catalog.ts";
 import type { ConfirmationOutcome, ConfirmationRequest } from "../tools/confirmations.ts";
+import { createNativeGuard } from "../tools/native-guard.ts";
 import { TurnContext } from "../tools/turn.ts";
 import type { Conversation, ConversationRepository, LoggedToolCall, Message } from "./repository.ts";
 
@@ -131,9 +132,10 @@ export async function* handleSend(
       // a repository failure while handling an event must propagate as is.
       let stream: AsyncIterator<EngineEvent> | undefined;
       try {
-        stream = deps.engine.run({ prompt: currentPrompt, sessionId, model, systemPrompt, tools }, signal)[
-          Symbol.asyncIterator
-        ]();
+        stream = deps.engine.run(
+          { prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs: [] },
+          signal,
+        )[Symbol.asyncIterator]();
       } catch (cause) {
         error = toEngineError(cause);
       }

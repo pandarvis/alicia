@@ -1,10 +1,11 @@
 import { expect, test } from "vitest";
 import { z } from "zod";
 import type { EngineEvent, EngineRequest } from "../src/engine/engine.ts";
-import { callTool, FakeEngine } from "../src/engine/fake-engine.ts";
+import { callNative, callTool, FakeEngine } from "../src/engine/fake-engine.ts";
 import { defineTool } from "../src/engine/tools.ts";
+import { testRequest } from "./helpers.ts";
 
-const REQUEST: EngineRequest = { prompt: "x", sessionId: undefined, model: "sonnet", systemPrompt: "c", tools: [] };
+const REQUEST: EngineRequest = testRequest();
 
 async function collect(source: AsyncIterable<EngineEvent>) {
   const output: EngineEvent[] = [];
@@ -52,4 +53,19 @@ test("callTool rejects an unknown tool and invalid arguments", async () => {
   const request = { ...REQUEST, tools: [echo] };
   await expect(callTool(request, "nope", {})).rejects.toThrow("No tool named nope");
   await expect(callTool(request, "echo", { word: 3 })).rejects.toThrow();
+});
+
+test("callNative asks the turn's guard, like the SDK's hook would", async () => {
+  const asked: unknown[] = [];
+  const request = testRequest({
+    guard: {
+      check: (tool, input) => {
+        asked.push([tool, input]);
+        return Promise.resolve({ allow: false, reason: "Non." });
+      },
+      reminder: () => undefined,
+    },
+  });
+  expect(await callNative(request, "WebFetch", { url: "https://exemple.fr" })).toEqual({ allow: false, reason: "Non." });
+  expect(asked).toEqual([["WebFetch", { url: "https://exemple.fr" }]]);
 });

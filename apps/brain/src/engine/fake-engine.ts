@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Engine, EngineEvent, EngineRequest } from "./engine.ts";
+import type { Engine, EngineEvent, EngineRequest, NativeDecision } from "./engine.ts";
 import type { ToolResult } from "./tools.ts";
 
 export type Scenario = (request: EngineRequest) => readonly EngineEvent[] | Promise<readonly EngineEvent[]>;
@@ -10,6 +10,11 @@ export async function callTool(request: EngineRequest, name: string, args: unkno
   if (definition === undefined) throw new Error(`No tool named ${name}`);
   const parsed = z.object(definition.input).parse(args);
   return definition.run(parsed);
+}
+
+/** Test helper: lets a scenario use a built-in tool like the model would; the turn's guard decides. */
+export function callNative(request: EngineRequest, tool: string, input: unknown): Promise<NativeDecision> {
+  return request.guard.check(tool, input, new AbortController().signal);
 }
 
 /** Test engine: replays scenarios, never consumes any quota. */

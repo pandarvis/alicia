@@ -1,14 +1,29 @@
 import type { Model } from "@alicia/protocol";
 import type { ToolDefinition } from "./tools.ts";
 
+/** Decision on a built-in tool call. */
+export type NativeDecision = { allow: true } | { allow: false; reason: string };
+
+/** Gatekeeper of the SDK's built-in tools (Read, WebFetch, WebSearch, Skill) for one turn. */
+export interface NativeToolGuard {
+  /** Called before every built-in tool call; may wait for the person's confirmation. */
+  check(tool: string, input: unknown, signal: AbortSignal): Promise<NativeDecision>;
+  /** French reminder added after a built-in tool brought outside content in (undefined: nothing to add). */
+  reminder(tool: string, input: unknown): string | undefined;
+}
+
 export interface EngineRequest {
   prompt: string;
   /** SDK session to resume; undefined = new session. */
   sessionId: string | undefined;
   model: Model;
   systemPrompt: string;
-  /** Tools available for this turn (bound to the person speaking). */
+  /** Tools available for this turn (bound to the person speaking, confirmations included). */
   tools: readonly ToolDefinition[];
+  /** Decides on the built-in tools for this turn. */
+  guard: NativeToolGuard;
+  /** Existing directories the built-in Read may reach besides the workspace (this conversation's attachments). */
+  readableDirs: readonly string[];
 }
 
 /** What the engine reports during a turn, independently of the SDK. */

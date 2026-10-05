@@ -6,12 +6,18 @@ import { parseArgs } from "node:util";
 import { type ClientMessage, type ConfirmationOutcome, PairingResponse, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
-import { buildApplication, createSdkEngine, openMemory } from "./application.ts";
+import { buildApplication, createSdkEngine, openMemory, SKILLS_DIR, WORKSPACE_DIR } from "./application.ts";
 import { loadConfig, readAuthentication } from "./config.ts";
 import { advertiseBrain, bonjourPublisher, serviceHostname, shouldAdvertise } from "./discovery.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
+import { allowedToolNames, checkIsolation, NATIVE_TOOLS, readInit } from "./engine/sdk-engine.ts";
 import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
+import { memoryTools } from "./memory/tools.ts";
 import { toText } from "./server/ws.ts";
+import { ToolCatalog } from "./tools/catalog.ts";
+import { createNativeGuard } from "./tools/native-guard.ts";
+import { listSkills } from "./tools/skills.ts";
+import { TurnContext } from "./tools/turn.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
@@ -23,6 +29,7 @@ const HELP = `Usage : pnpm --filter @alicia/brain alicia <commande>
   revoke <id>                    révoque un appareil (effet immédiat, même connecté)
   backup                         sauvegarde la base maintenant (garde les 14 plus récentes)
   check-engine                   un appel réel au SDK (consomme un peu de quota)
+  check-isolation                vérifie ce que le SDK charge réellement (outils, skills, plugins ; un peu de quota)
   import-alice --chroma <chemin> [--rules <chemin>]
                                  importe la mémoire (et les règles) de l'ancienne Alice, sans doublon
 
@@ -300,8 +307,38 @@ async function checkEngine(): Promise<void> {
     model: "sonnet",
     systemPrompt: buildSystemPrompt(person, ""),
     tools: [],
+    guard: createNativeGuard(),
+    readableDirs: [],
   };
   for await (const e of engine.run(request, new AbortController().signal)) console.log(e);
+}
+
+/**
+ * Starts a real SDK session only to read what it loaded (tools, skills, plugins, MCP servers, credentials) and
+ * compares it with what Alicia should have. Consumes a little quota: for Kévin's manual check only.
+ */
+async function checkIsolationCommand(): Promise<void> {
+  const config = loadConfig(configPath());
+  const auth = readAuthentication(config.engine.mode, process.env);
+  const opened = openMemory(config);
+  try {
+    const person = config.people[0];
+    if (person === undefined) throw new Error("Aucune personne dans la config.");
+    const turn = new TurnContext({ person, conversationId: randomUUID(), confirm: () => Promise.resolve("refused") });
+    const tools = new ToolCatalog([memoryTools(opened.memory)]).forTurn(turn);
+    const params = { auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) };
+    const init = await readInit(params, {
+      prompt: "Réponds juste « ok ».", sessionId: undefined, model: "sonnet",
+      systemPrompt: buildSystemPrompt(person, ""), tools, guard: createNativeGuard(), readableDirs: [],
+    });
+    const report = checkIsolation(init, {
+      tools: [...NATIVE_TOOLS, ...allowedToolNames(tools)], skills: params.skills, mode: auth.mode, workspaceDir: WORKSPACE_DIR,
+    });
+    for (const line of report.lines) console.log(line);
+    if (!report.ok) process.exitCode = 1;
+  } finally {
+    opened.close();
+  }
 }
 
 async function importFromAlice(chroma: string | undefined, rules: string | undefined): Promise<void> {
@@ -355,6 +392,8 @@ async function main(): Promise<void> {
       return backup();
     case "check-engine":
       return checkEngine();
+    case "check-isolation":
+      return checkIsolationCommand();
     case "import-alice":
       return importFromAlice(values.chroma, values.rules);
     case undefined:

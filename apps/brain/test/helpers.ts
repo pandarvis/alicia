@@ -1,9 +1,13 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Person } from "@alicia/protocol";
+import { onTestFinished } from "vitest";
 import type { Clock } from "../src/clock.ts";
 import type { ChatDependencies, TurnPorts } from "../src/conversations/chat-service.ts";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { type Db, openDb } from "../src/db/open.ts";
-import type { Engine } from "../src/engine/engine.ts";
+import type { Engine, EngineRequest, NativeToolGuard } from "../src/engine/engine.ts";
 import { syncPeople } from "../src/identity/people.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
 import { MemoryStore } from "../src/memory/store.ts";
@@ -80,4 +84,27 @@ export function createTestTurn(person: Person, conversationId: string, outcome: 
     },
   });
   return { turn, asked };
+}
+
+/** A temporary directory removed when the current test ends (call it inside a test). */
+export function createTempDir(prefix = "alicia-test-"): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  onTestFinished(() => {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  return dir;
+}
+
+/** Guard refusing every built-in tool (tests that do not use them). */
+export const DENY_NATIVE: NativeToolGuard = {
+  check: () => Promise.resolve({ allow: false, reason: "Cet outil n'est pas disponible." }),
+  reminder: () => undefined,
+};
+
+/** An engine request for tests: no tools, built-in tools refused, nothing readable. */
+export function testRequest(overrides: Partial<EngineRequest> = {}): EngineRequest {
+  return {
+    prompt: "x", sessionId: undefined, model: "sonnet", systemPrompt: "c", tools: [], guard: DENY_NATIVE, readableDirs: [],
+    ...overrides,
+  };
 }
