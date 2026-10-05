@@ -4,8 +4,8 @@ import { PUSH } from "../shared/bridge.ts";
 import type { HoloView, Point } from "../shared/holo.ts";
 import type { Surface } from "../shared/surface.ts";
 import {
-  clampAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type Rect, SPOTLIGHT_SIZE,
-  spotlightBounds,
+  clampAnchor, exactAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type PixelGrid, type Rect,
+  SPOTLIGHT_SIZE, spotlightBounds,
 } from "./layout.ts";
 import { onPageReset } from "./page-reset.ts";
 import type { Visibility } from "./turn-notifications.ts";
@@ -73,6 +73,14 @@ export function hardenWebContents(contents: WebContents): void {
 function secureWebPreferences(): WebPreferences {
   return { preload: PRELOAD, sandbox: true, contextIsolation: true, nodeIntegration: false };
 }
+
+/**
+ * Windows' own DIP → pixel conversion (what setBounds will do), to keep the Holo exactly its size on a screen with a
+ * fractional scale. Elsewhere sizes are whole pixels already.
+ */
+const PIXEL_GRID: PixelGrid | null = process.platform === "win32"
+  ? { toPhysical: (rect) => screen.dipToScreenRect(null, rect), scaleOf: (rect) => screen.getDisplayMatching(rect).scaleFactor }
+  : null;
 
 /** The work areas of the connected screens, and the primary one (the Holo may live on any of them). */
 function workAreas(): { areas: Rect[]; primary: Rect } {
@@ -335,17 +343,18 @@ export class WindowManager {
     return isAlive(window) && window.isVisible() && !window.isMinimized() && this.#options.isFocused(window);
   }
 
-  /** The Holo's place, brought back onto a screen that still exists. */
+  /** The Holo's place, brought back onto a screen that still exists, where its window has exactly its size. */
   #holoAnchor(): Point {
     const { areas, primary } = workAreas();
-    return holoAnchor(this.#anchor, areas, primary);
+    const anchor = holoAnchor(this.#anchor, areas, primary);
+    return exactAnchor(anchor, nearestWorkArea(anchor, areas, primary), PIXEL_GRID);
   }
 
   /** Places the Holo window; the page is told whenever its layout changes (side flip, screen edge…). */
   #layoutHolo(): HoloView {
     const anchor = this.#holoAnchor();
     const { areas, primary } = workAreas();
-    const layout: HoloLayout = holoLayout(anchor, this.#expanded, nearestWorkArea(anchor, areas, primary));
+    const layout: HoloLayout = holoLayout(anchor, this.#expanded, nearestWorkArea(anchor, areas, primary), PIXEL_GRID);
     const view: HoloView = { expanded: this.#expanded, panelSide: layout.panelSide, mascot: layout.mascot };
     const holo = this.#holo;
     if (isAlive(holo)) {

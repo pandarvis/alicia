@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
-  clampAnchor, defaultAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, spotlightBounds,
+  clampAnchor, defaultAnchor, exactAnchor, HOLO_SIZE, holoAnchor, type HoloLayout, holoLayout, nearestWorkArea, type PixelGrid,
+  pixelExact, type Rect, spotlightBounds,
 } from "../src/main/layout.ts";
 
 const SCREEN = { x: 0, y: 0, width: 1920, height: 1040 };
@@ -13,6 +14,51 @@ function mascotOnScreen(layout: HoloLayout): { x: number; y: number } {
     y: mascot.edgeY === "top" ? bounds.y + mascot.y : bounds.y + bounds.height - mascot.y - HOLO_SIZE.height,
   };
 }
+
+/** A fractional-scale screen where only every 4th DIP falls on a pixel: elsewhere, the OS adds one pixel. */
+const EVERY_4: PixelGrid = {
+  toPhysical: (rect) => ({ ...rect, width: rect.width + (rect.x % 4 === 0 ? 0 : 1), height: rect.height + (rect.y % 4 === 0 ? 0 : 1) }),
+  scaleOf: () => 1,
+};
+
+/** Windows at 150 %: physical edges rounded outwards (the left screen of a 1920 + 2560 px setup). */
+const AT_150: PixelGrid = {
+  toPhysical: (rect) => {
+    const left = Math.floor(rect.x * 1.5);
+    const top = Math.floor(rect.y * 1.5);
+    return { x: left, y: top, width: Math.ceil((rect.x + rect.width) * 1.5) - left, height: Math.ceil((rect.y + rect.height) * 1.5) - top };
+  },
+  scaleOf: () => 1.5,
+};
+
+describe("pixel-exact windows", () => {
+  const LEFT_SCREEN: Rect = { x: -1707, y: -93, width: 1707, height: 913 };
+
+  test("without a grid (or already exact), nothing moves", () => {
+    const rect = { x: -1707, y: 668, width: 136, height: 152 };
+    expect(pixelExact(rect, LEFT_SCREEN, null)).toBe(rect);
+    let asked = 0;
+    const counting: PixelGrid = { ...AT_150, toPhysical: (r) => { asked++; return AT_150.toPhysical(r); } };
+    const exact = { x: -1706, y: 668, width: 136, height: 152 };
+    expect(pixelExact(exact, LEFT_SCREEN, counting)).toBe(exact);
+    expect(asked).toBe(1);
+  });
+
+  test("against the left edge of a 150 % screen, the Holo moves one DIP in rather than growing a pixel", () => {
+    expect(AT_150.toPhysical({ x: -1707, y: 668, width: 136, height: 152 }).width).toBe(205);
+    expect(exactAnchor({ x: -1707, y: 668 }, LEFT_SCREEN, AT_150)).toEqual({ x: -1706, y: 668 });
+    expect(AT_150.toPhysical({ x: -1706, y: 668, ...HOLO_SIZE })).toMatchObject({ width: 204, height: 228 });
+    // Moved by an even number of DIP, it stays exact (no drift from move to move).
+    expect(exactAnchor({ x: -1406, y: 468 }, LEFT_SCREEN, AT_150)).toEqual({ x: -1406, y: 468 });
+  });
+
+  test("never out of the work area, and the nearest place first", () => {
+    expect(exactAnchor({ x: -137, y: 101 }, LEFT_SCREEN, AT_150)).toEqual({ x: -138, y: 100 });
+    // Nothing better within reach: the place is kept.
+    const stuck: PixelGrid = { toPhysical: (r) => ({ ...r, width: r.width + 1 }), scaleOf: () => 1 };
+    expect(exactAnchor({ x: 10, y: 10 }, SCREEN, stuck)).toEqual({ x: 10, y: 10 });
+  });
+});
 
 describe("Holo layout", () => {
   test("starts in the bottom-right corner, clear of the taskbar", () => {
@@ -70,6 +116,15 @@ describe("Holo layout", () => {
     const layout = holoLayout({ x: 1760, y: 200 }, true, short);
     expect(layout.bounds).toMatchObject({ y: 80, height: 420 });
     expect(layout.mascot).toEqual({ edgeX: "right", x: 0, edgeY: "top", y: 120 });
+    expect(mascotOnScreen(layout)).toEqual({ x: 1760, y: 200 });
+  });
+
+  test("on a short screen with a fractional scale, the expanded window is nudged to its exact size; the mascot stays", () => {
+    const short = { x: 0, y: 2, width: 1920, height: 500 };
+    const layout = holoLayout({ x: 1760, y: 200 }, true, short, EVERY_4);
+    // Pushed back on screen to y = 82, between two pixels: nudged up to 80 (84 would leave the screen).
+    expect(layout.bounds).toEqual({ x: 1432, y: 80, width: 464, height: 420 });
+    expect(EVERY_4.toPhysical(layout.bounds)).toMatchObject({ width: 464, height: 420 });
     expect(mascotOnScreen(layout)).toEqual({ x: 1760, y: 200 });
   });
 
