@@ -5199,6 +5199,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `apps/desktop/src/renderer/src/lib/accounts-screen.svelte.ts`
 - Test: `apps/desktop/test/accounts-screen.test.ts`
 
+> **Alignement (mise en œuvre) :** code du plan, avec : `cancel()` avale l'échec de l'appel (`.catch`, pas de rejet non géré) ; un nouveau flux referme la question « Retirer ? » en cours. Le test « reconnect » vérifie le propriétaire par `toMatchObject` (le lint refuse `expect.objectContaining` dans un `toEqual`). Tests en plus : premier chargement en échec puis rechargement qui garde la liste, seul le dernier chargement compte, compte reconnecté avec une autre adresse, compte disparu, `timeout` / `already_connected`, retrait en échec.
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 `apps/desktop/test/accounts-screen.test.ts` :
