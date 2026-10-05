@@ -6,10 +6,13 @@ import { parseArgs } from "node:util";
 import { type ClientMessage, PairingResponse, type Person, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
-import { buildApplication, createSdkEngine, openMemory, SKILLS_DIR, toolProviders, WORKSPACE_DIR } from "./application.ts";
-import { type Config, loadConfig, readAuthentication } from "./config.ts";
+import {
+  buildApplication, createGoogle, createSdkEngine, type GoogleOptions, openMemory, SKILLS_DIR, toolProviders, WORKSPACE_DIR,
+} from "./application.ts";
+import { type Config, loadConfig, readAuthentication, takeSecretKey } from "./config.ts";
 import { advertiseBrain, bonjourPublisher, serviceHostname, shouldAdvertise } from "./discovery.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
+import type { GoogleClient } from "./google/google-client.ts";
 import { allowedToolNames, checkIsolation, NATIVE_TOOLS, readInit } from "./engine/sdk-engine.ts";
 import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
 import { toText } from "./server/ws.ts";
@@ -45,10 +48,16 @@ const UNUSED_ENGINE: Engine = {
   },
 };
 
+/** The Google key, taken from the environment, when the config has a `google` section. */
+function googleOptions(config: Config): { google?: GoogleOptions } {
+  return config.google === undefined ? {} : { google: { secretKey: takeSecretKey(process.env) } };
+}
+
 async function start(): Promise<void> {
   const config = loadConfig(configPath());
   const engine = createSdkEngine(config, readAuthentication(config.engine.mode, process.env));
-  const app = await buildApplication(config, engine, { logging: true });
+  // Read once and removed from the environment (never inherited by the SDK's process); buildApplication wipes it.
+  const app = await buildApplication(config, engine, { logging: true, ...googleOptions(config) });
   try {
     await app.server.listen({ port: config.port, host: config.host });
   } catch (error) {
@@ -56,6 +65,7 @@ async function start(): Promise<void> {
     throw error;
   }
   console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
+  console.log(app.google === undefined ? "Comptes Google : désactivés." : "Comptes Google : activés.");
   // The desktop app finds the brain on its pairing screen (mDNS), unless turned off or loopback only.
   const machine = serviceHostname(hostname());
   const advertisement = shouldAdvertise(config)
@@ -336,8 +346,15 @@ async function checkIsolationCommand(): Promise<void> {
     const person = config.people[0];
     if (person === undefined) throw new Error("Aucune personne dans la config.");
     const turn = cliTurn(config, person);
-    // The real tool set (weather only with a home), as a turn of the brain gets it.
-    const tools = new ToolCatalog(toolProviders(config, { memory: opened.memory, attachments: opened.attachments, fetch, google: undefined }))
+    const { google: options } = googleOptions(config);
+    let google: GoogleClient | undefined;
+    try {
+      google = createGoogle(opened.db, config, options, fetch);
+    } finally {
+      options?.secretKey.fill(0);
+    }
+    // The real tool set (weather only with a home, Google only when configured), as a turn of the brain gets it.
+    const tools = new ToolCatalog(toolProviders(config, { memory: opened.memory, attachments: opened.attachments, fetch, google }))
       .forTurn(turn);
     const params = { auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) };
     const init = await readInit(params, {

@@ -16,6 +16,7 @@ import { attachmentRoutes } from "./attachment-routes.ts";
 import type { DrainOptions } from "./backpressure.ts";
 import { ConversationLocks } from "./conversation-locks.ts";
 import { addressKey, FailureLimiter } from "./failure-limiter.ts";
+import { registerGoogleRoutes } from "./google-routes.ts";
 import { sendError } from "./http-errors.ts";
 import { registerMemoryRoutes } from "./memory-routes.ts";
 import { attachWs } from "./ws.ts";
@@ -238,6 +239,7 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
   });
 
   registerMemoryRoutes(app, { memory: deps.chat.memory, repository: deps.repository, personOf });
+  registerGoogleRoutes(app, { google: deps.chat.google, personOf });
   await app.register(attachmentRoutes({ attachments: deps.chat.attachments, personOf }));
 
   app.route({

@@ -7,10 +7,14 @@ import { AttachmentStore } from "./attachments/store.ts";
 import { systemClock } from "./clock.ts";
 import type { Authentication, Config } from "./config.ts";
 import { ConversationRepository } from "./conversations/repository.ts";
-import { openDb } from "./db/open.ts";
+import { type Db, openDb } from "./db/open.ts";
 import type { Engine } from "./engine/engine.ts";
 import { SdkEngine } from "./engine/sdk-engine.ts";
-import type { GoogleClient } from "./google/google-client.ts";
+import { GoogleAccountStore } from "./google/account-store.ts";
+import { loadClientSecret } from "./google/client-secret.ts";
+import { GoogleClient } from "./google/google-client.ts";
+import { GoogleOAuth } from "./google/oauth.ts";
+import { TokenCipher } from "./google/token-cipher.ts";
 import { googleTools } from "./google/tools.ts";
 import { Maintenance } from "./maintenance.ts";
 import { PairingService } from "./identity/pairing.ts";
@@ -36,8 +40,18 @@ export interface ApplicationOptions {
   logging?: boolean;
   /** Memory embedder (default: the local multilingual model, loaded lazily on first use). */
   embedder?: Embedder;
-  /** HTTP client of the tools that go online (default: the global fetch). */
+  /** HTTP client of the tools that go online, Google's included (default: the global fetch). */
   fetch?: typeof fetch;
+  /** Google accounts: used only when the config has a `google` section too. */
+  google?: GoogleOptions;
+}
+
+export interface GoogleOptions {
+  /**
+   * ALICIA_SECRET_KEY, decoded (32 bytes): encrypts the refresh tokens at rest. Wiped (zeroed) by buildApplication
+   * once the cipher holds it, whether startup succeeds or not.
+   */
+  secretKey: Buffer;
 }
 
 export interface Application {
@@ -48,6 +62,8 @@ export interface Application {
   maintenance: Maintenance;
   /** Files sent with the messages. */
   attachments: AttachmentStore;
+  /** Undefined when Google is not configured (or no key was given). */
+  google: GoogleClient | undefined;
   /** Stops the nightly job, closes the server (and its WebSockets), then the database. */
   close(): Promise<void>;
 }
@@ -97,10 +113,26 @@ export function toolProviders(
 export function openMemory(
   config: Config,
   embedder?: Embedder,
-): { memory: MemoryStore; attachments: AttachmentStore; close: () => void } {
+): { db: Db; memory: MemoryStore; attachments: AttachmentStore; close: () => void } {
   const { db, memory } = openCore(config, embedder);
   const attachments = new AttachmentStore(db, resolve(config.dataDir, "attachments"), systemClock);
-  return { memory, attachments, close: () => db.$client.close() };
+  return { db, memory, attachments, close: () => db.$client.close() };
+}
+
+/**
+ * Google is on only with both the config section and the key (the CLI maintenance commands pass no key). A missing
+ * or unreadable client secret file is a startup error. The caller wipes the key once this returned or threw.
+ */
+export function createGoogle(db: Db, config: Config, options: GoogleOptions | undefined, fetchFn: typeof fetch): GoogleClient | undefined {
+  if (config.google === undefined || options === undefined) return undefined;
+  const secret = loadClientSecret(config.google.clientSecretFile);
+  return new GoogleClient({
+    accounts: new GoogleAccountStore(db, new TokenCipher(options.secretKey), systemClock),
+    oauth: new GoogleOAuth(secret, fetchFn, systemClock),
+    fetch: fetchFn,
+    clock: systemClock,
+    clientId: secret.clientId,
+  });
 }
 
 export async function buildApplication(
@@ -108,6 +140,15 @@ export async function buildApplication(
   engine: Engine,
   options: ApplicationOptions = {},
 ): Promise<Application> {
+  try {
+    return await assemble(config, engine, options);
+  } finally {
+    // The cipher holds the key now (in OpenSSL's memory), or nothing will: the caller's copy goes.
+    options.google?.secretKey.fill(0);
+  }
+}
+
+async function assemble(config: Config, engine: Engine, options: ApplicationOptions): Promise<Application> {
   const { db, memory } = openCore(config, options.embedder);
   try {
     // <dataDir>/updates: where a new version of the desktop app is dropped (README, « Publier une version »).
@@ -130,8 +171,9 @@ export async function buildApplication(
       timezone: config.timezone,
       clock: systemClock,
     });
-    // Google is wired at the next step (its routes and startup); until then the brain has none.
-    const tools = new ToolCatalog(toolProviders(config, { memory, attachments, fetch: options.fetch ?? fetch, google: undefined }));
+    const fetchFn = options.fetch ?? fetch;
+    const google = createGoogle(db, config, options.google, fetchFn);
+    const tools = new ToolCatalog(toolProviders(config, { memory, attachments, fetch: fetchFn, google }));
     // Two tools with one name would only fail on the first turn: refuse to start instead.
     const someone = config.people[0];
     if (someone !== undefined) tools.checkNames({ person: someone, conversationId: randomUUID() });
@@ -141,6 +183,7 @@ export async function buildApplication(
       version: VERSION,
       chat: {
         repository, engine, memory, tools, attachments, skillsDir: SKILLS_DIR, clock: systemClock, timezone: config.timezone,
+        ...(google !== undefined ? { google } : {}),
       },
       allowedOrigins: config.allowedOrigins,
       updatesDir,
@@ -153,6 +196,7 @@ export async function buildApplication(
       pairing,
       maintenance,
       attachments,
+      google,
       close: async () => {
         await maintenance.stop();
         await server.close();

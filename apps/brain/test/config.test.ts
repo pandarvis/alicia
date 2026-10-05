@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseConfig, readAuthentication, readSecretKey } from "../src/config.ts";
+import { parseConfig, readAuthentication, readSecretKey, takeSecretKey } from "../src/config.ts";
 
 const MINIMAL_YAML = `
 people:
@@ -116,5 +116,15 @@ describe("google config", () => {
     expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: garbage }))).not.toContain("pas-du-base64");
     // Base64 with stray characters that Buffer.from would silently skip: refused too.
     expect(() => readSecretKey({ ALICIA_SECRET_KEY: `${KEY.slice(0, 20)}!${KEY.slice(20)}` })).toThrow(/32 octets/);
+  });
+
+  test("taking the key removes it from the environment: nothing started later can inherit it", () => {
+    const env: Record<string, string | undefined> = { ALICIA_SECRET_KEY: KEY, PATH: "x" };
+    expect(takeSecretKey(env)).toEqual(Buffer.alloc(32, 7));
+    expect(env).toEqual({ PATH: "x" });
+    // Refused, it is removed all the same.
+    const bad: Record<string, string | undefined> = { ALICIA_SECRET_KEY: "court" };
+    expect(() => takeSecretKey(bad)).toThrow(/32 octets/);
+    expect(bad).toEqual({});
   });
 });

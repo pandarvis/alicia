@@ -7,11 +7,14 @@ import { AttachmentStore } from "../src/attachments/store.ts";
 import { buildApplication, toolProviders } from "../src/application.ts";
 import { parseConfig } from "../src/config.ts";
 import { callTool, FakeEngine } from "../src/engine/fake-engine.ts";
+import { FakeGoogle } from "../src/google/fake-google.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
 import type { GoogleClient } from "../src/google/google-client.ts";
 import { ToolCatalog } from "../src/tools/catalog.ts";
 import { createGoogleFixture } from "./google-fixture.ts";
-import { createTempDir, createTestClock, createTestDb, createTestMemory, createTestTurn, KEVIN, testRequest } from "./helpers.ts";
+import {
+  createTempDir, createTestClock, createTestDb, createTestMemory, createTestTurn, KEVIN, TEST_SECRET_KEY, testRequest,
+} from "./helpers.ts";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -140,4 +143,62 @@ test("tool providers: Google only when a Google client is given", () => {
       .map((t) => t.name);
   expect(names(undefined)).not.toContain("gmail_read");
   expect(names(client)).toEqual(expect.arrayContaining(["calendar_list", "gmail_draft"]));
+});
+
+function googleConfig(dataDir: string, secretFile: string) {
+  return parseConfig([
+    `dataDir: ${JSON.stringify(dataDir)}`,
+    "people: [{ id: kevin, name: Kévin }]",
+    "engine: { mode: subscription }",
+    `google: { clientSecretFile: ${JSON.stringify(secretFile)} }`,
+  ].join("\n"));
+}
+
+test("Google is wired when configured and given the key; off otherwise", async () => {
+  dir = mkdtempSync(join(tmpdir(), "alicia-"));
+  const fake = new FakeGoogle();
+  const secretFile = join(dir, "google_client_secret.json");
+  writeFileSync(secretFile, JSON.stringify({ installed: { client_id: fake.clientId, client_secret: fake.clientSecret } }));
+  const config = googleConfig(dir, secretFile);
+  const on = await buildApplication(config, new FakeEngine(() => []), {
+    embedder: new FakeEmbedder(), fetch: fake.fetch, google: { secretKey: Buffer.from(TEST_SECRET_KEY) },
+  });
+  expect(on.google?.clientId).toBe(fake.clientId);
+  const code = on.pairing.generateCode("kevin");
+  const paired = await on.server.inject({ method: "POST", url: "/pairing", payload: { code, deviceName: "PC" } });
+  const headers = { authorization: `Bearer ${paired.json<{ token: string }>().token}` };
+  const client = await on.server.inject({ method: "GET", url: "/google/oauth-client", headers });
+  expect(client.statusCode).toBe(200);
+  expect(client.body).not.toContain(fake.clientSecret);
+  await on.close();
+  // No key (the maintenance commands): Google stays off, its routes say so.
+  const off = await buildApplication(config, new FakeEngine(() => []), { embedder: new FakeEmbedder() });
+  expect(off.google).toBeUndefined();
+  expect((await off.server.inject({ method: "GET", url: "/google/accounts", headers })).statusCode).toBe(503);
+  await off.close();
+});
+
+test("the key given is wiped once the cipher holds it, whether startup succeeds or not", async () => {
+  dir = mkdtempSync(join(tmpdir(), "alicia-"));
+  const fake = new FakeGoogle();
+  const secretFile = join(dir, "google_client_secret.json");
+  writeFileSync(secretFile, JSON.stringify({ installed: { client_id: fake.clientId, client_secret: fake.clientSecret } }));
+  const key = Buffer.from(TEST_SECRET_KEY);
+  const app = await buildApplication(googleConfig(dir, secretFile), new FakeEngine(() => []), {
+    embedder: new FakeEmbedder(), fetch: fake.fetch, google: { secretKey: key },
+  });
+  await app.close();
+  expect(key.equals(Buffer.alloc(32))).toBe(true);
+  const refused = Buffer.from(TEST_SECRET_KEY);
+  await expect(buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
+    embedder: new FakeEmbedder(), google: { secretKey: refused },
+  })).rejects.toThrow();
+  expect(refused.equals(Buffer.alloc(32))).toBe(true);
+});
+
+test("a missing client secret file is a clear startup error", async () => {
+  dir = mkdtempSync(join(tmpdir(), "alicia-"));
+  await expect(buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
+    embedder: new FakeEmbedder(), google: { secretKey: Buffer.from(TEST_SECRET_KEY) },
+  })).rejects.toThrow(/google_client_secret.json introuvable/);
 });

@@ -114,3 +114,15 @@ export function readSecretKey(env: Readonly<Record<string, string | undefined>>)
   }
   return key;
 }
+
+/**
+ * Reads the key and removes it from `env` (process.env at startup), valid or not: no process started afterwards (the
+ * SDK's, a hook…) can inherit it, and it is no longer readable from the environment.
+ */
+export function takeSecretKey(env: Record<string, string | undefined>): Buffer {
+  try {
+    return readSecretKey(env);
+  } finally {
+    delete env["ALICIA_SECRET_KEY"];
+  }
+}
