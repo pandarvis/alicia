@@ -19,6 +19,7 @@ import { memoryTools } from "./memory/tools.ts";
 import { TransformersEmbedder } from "./memory/transformers-embedder.ts";
 import { createServer } from "./server/server.ts";
 import { ToolCatalog, type ToolProvider } from "./tools/catalog.ts";
+import { documentTools } from "./tools/document-read.ts";
 import { listSkills } from "./tools/skills.ts";
 import { weatherTools } from "./tools/weather.ts";
 import { VERSION } from "./version.ts";
@@ -81,6 +82,7 @@ export function toolProviders(
 ): ToolProvider[] {
   return [
     memoryTools(parts.memory),
+    documentTools(parts.attachments),
     ...(config.home !== undefined ? [weatherTools({ home: config.home, timezone: config.timezone, fetch: parts.fetch })] : []),
   ];
 }

@@ -104,7 +104,7 @@ engine: { mode: subscription }
   expect(res.body).toContain("version: 0.2.0");
 });
 
-test("tool providers: weather only when the home is configured, through the given fetch", async () => {
+test("tool providers: documents always, weather only when the home is configured, through the given fetch", async () => {
   const db = createTestDb();
   const clock = createTestClock().clock;
   const urls: string[] = [];
@@ -117,6 +117,7 @@ test("tool providers: weather only when the home is configured, through the give
     new ToolCatalog(toolProviders(parseConfig(yaml), parts)).forTurn(createTestTurn(KEVIN, "11111111-1111-4111-8111-111111111111").turn);
   const base = "people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }\n";
   expect(tools(base).map((t) => t.name)).not.toContain("weather");
+  expect(tools(base).map((t) => t.name)).toContain("document_read");
   const withHome = tools(`${base}home: { latitude: 48.85, longitude: 2.35 }\n`);
   expect(withHome.map((t) => t.name)).toContain("weather");
   await callTool(testRequest({ tools: withHome }), "weather", {});

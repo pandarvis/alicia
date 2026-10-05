@@ -4266,7 +4266,7 @@ export function documentTools(store: AttachmentStore): ToolProvider {
 ```
 (`mammoth` est un module CommonJS : l'import par défaut fonctionne en ESM ; si `tsc` le refuse, utiliser `import * as mammoth from "mammoth"` et le signaler. Les noms d'options SheetJS ci-dessus existent en 0.20.x : `dense`, `sheetRows`, `cellFormula`, `cellHTML`, `cellStyles`, `bookVBA`, et pour `sheet_to_csv` `blankrows`, `strip`.)
 
-Risque accepté et noté : un .docx/.xlsx est une archive ; une « bombe zip » de 25 Mo pourrait gonfler en mémoire. Usage familial, fichiers déposés par la famille elle-même : pas de bac à sable pour l'instant.
+**Fait (revue des tâches 4 à 6) :** `attachments/office.ts` (`checkOffice`) lit le répertoire central avant `mammoth` / SheetJS (100 Mo décompressés au plus en tout, 5 000 entrées, rapport de compression plausible au-delà de 1 Mo, pas de ZIP64), puis décompresse chaque entrée sans jamais dépasser la taille déclarée (`maxOutputLength`) : une archive qui ment sur ses tailles est refusée aussi. Le type (Word ou Excel) vient de l'archive (`word/document.xml` / `xl/workbook.xml`), pas de l'extension. Un fichier composé (CFB `D0 CF 11 E0`) est accepté au téléversement pour un .docx / .xlsx (`sniff.ts`) : avec un flux `EncryptedPackage`, « Document protégé par mot de passe : impossible de le lire. », sinon (vieux .doc / .xls déguisé) document illisible. Le texte : UTF-16 avec BOM, sinon UTF-8 strict, sinon Windows-1252 (table maison pour 0x80–0x9F : le décodeur de Node les lit comme du Latin-1). La mention de troncature est ajoutée hors du cadre (la normalisation NFKC du cadre changerait « … »).
 
 `apps/brain/src/application.ts`, `toolProviders` : ajouter `documentTools(parts.attachments)` après `memoryTools(…)`.
 
