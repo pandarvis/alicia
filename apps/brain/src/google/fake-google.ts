@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { GOOGLE_SCOPES } from "@alicia/protocol";
+import { addDays, withOffset } from "./time.ts";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
@@ -10,7 +11,8 @@ const LOOPBACK = /^http:\/\/127\.0\.0\.1:\d+$/;
 export interface FakeCalendar {
   id: string;
   summary: string;
-  accessRole: "freeBusyReader" | "reader" | "writer" | "owner";
+  /** Google's roles are freeBusyReader, reader, writer, owner; any other string tests an unknown one. */
+  accessRole: string;
   primary?: boolean;
   selected?: boolean;
 }
@@ -52,7 +54,8 @@ export interface FakeRequest {
 
 interface FakeAccount {
   email: string;
-  refreshTokens: Set<string>;
+  /** Refresh tokens of this account, with the scopes each one was granted. */
+  refreshTokens: Map<string, readonly string[]>;
   calendars: FakeCalendar[];
   events: Map<string, FakeEvent[]>;
   mails: FakeMail[];
@@ -92,6 +95,113 @@ function instantOf(time: unknown): number {
   return Date.parse(/[zZ]|[+-]\d{2}:\d{2}$/.test(value) || !value.includes("T") ? value : `${value}Z`);
 }
 
+const DAY_MS = 86_400_000;
+/** The only recurrence rules the fake understands: enough to test occurrences and series. */
+const RULE = /^RRULE:FREQ=(DAILY|WEEKLY);COUNT=(\d{1,3})$/;
+const TRAILING_OFFSET = /(?:Z|[+-]\d{2}:\d{2})$/;
+
+function ruleOf(event: FakeEvent): { stepDays: number; count: number } | undefined {
+  const recurrence = event["recurrence"];
+  const first = Array.isArray(recurrence) ? recurrence.find((r): r is string => typeof r === "string") : undefined;
+  const match = first === undefined ? null : RULE.exec(first);
+  if (match === null) return undefined;
+  return { stepDays: match[1] === "DAILY" ? 1 : 7, count: Number(match[2]) };
+}
+
+/** A start or end moved by whole days, written as the original was (same offset for a dateTime). */
+function shift(time: unknown, days: number): unknown {
+  if (!isRecord(time)) return time;
+  const date = time["date"];
+  if (typeof date === "string") return { ...time, date: addDays(date, days) };
+  const dateTime = time["dateTime"];
+  if (typeof dateTime !== "string") return time;
+  const offset = TRAILING_OFFSET.exec(dateTime)?.[0] ?? "Z";
+  const sign = offset.startsWith("-") ? -1 : 1;
+  const offsetMs = offset === "Z" ? 0 : sign * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6))) * 60_000;
+  const local = new Date(Date.parse(dateTime) + days * DAY_MS + offsetMs).toISOString().slice(0, 19);
+  return { ...time, dateTime: `${local}${offset}` };
+}
+
+/** Google's instance id suffix: the original start, in UTC ("20261010T080000Z") or the day ("20261010"). */
+function suffixOf(start: unknown): string {
+  if (!isRecord(start)) return "";
+  if (typeof start["date"] === "string") return start["date"].replaceAll("-", "");
+  const dateTime = typeof start["dateTime"] === "string" ? start["dateTime"] : "";
+  return new Date(Date.parse(dateTime)).toISOString().replace(/\.\d{3}/u, "").replaceAll("-", "").replaceAll(":", "");
+}
+
+/** The occurrences of a recurring event, as `singleEvents=true` lists them. */
+function occurrences(master: FakeEvent, rule: { stepDays: number; count: number }): FakeEvent[] {
+  const fields = Object.fromEntries(Object.entries(master).filter(([key]) => key !== "recurrence"));
+  const etag = typeof master["etag"] === "string" ? master["etag"].replaceAll("\"", "") : "";
+  return Array.from({ length: rule.count }, (_, index) => {
+    const start = shift(master["start"], index * rule.stepDays);
+    return {
+      ...fields,
+      id: `${idOf(master)}_${suffixOf(start)}`,
+      etag: `"${etag}-${index}"`,
+      recurringEventId: idOf(master),
+      originalStartTime: start,
+      start,
+      end: shift(master["end"], index * rule.stepDays),
+    };
+  });
+}
+
+/** Single events and every occurrence of the series, exceptions (changed or cancelled occurrences) applied. */
+function expand(stored: readonly FakeEvent[]): FakeEvent[] {
+  const exceptions = new Map(stored.filter((e) => typeof e["recurringEventId"] === "string").map((e) => [idOf(e), e]));
+  return stored.flatMap((event) => {
+    if (typeof event["recurringEventId"] === "string") return [];
+    const rule = ruleOf(event);
+    if (rule === undefined) return [event];
+    return occurrences(event, rule).map((occurrence) => exceptions.get(idOf(occurrence)) ?? occurrence);
+  });
+}
+
+/** Like Google: a wall-clock dateTime written with a timeZone comes back with its offset. */
+function withOffsets(event: FakeEvent): FakeEvent {
+  const fix = (time: unknown): unknown => {
+    if (!isRecord(time)) return time;
+    const dateTime = time["dateTime"];
+    const timeZone = time["timeZone"];
+    if (typeof dateTime !== "string" || typeof timeZone !== "string" || TRAILING_OFFSET.test(dateTime)) return time;
+    try {
+      return { ...time, dateTime: withOffset(dateTime, timeZone) };
+    } catch {
+      return time;
+    }
+  };
+  return { ...event, start: fix(event["start"]), end: fix(event["end"]) };
+}
+
+/** A PATCH: fields replaced, start / end merged, a null clears (top level and inside start / end). */
+function applyPatch(current: FakeEvent, patch: Record<string, unknown>): FakeEvent {
+  const merged: FakeEvent = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "etag" || key === "id") continue;
+    const base = current[key];
+    merged[key] = (key === "start" || key === "end") && isRecord(value)
+      ? Object.fromEntries(Object.entries({ ...(isRecord(base) ? base : {}), ...value }).filter(([, v]) => v !== null))
+      : value;
+  }
+  return Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== null));
+}
+
+/** events.list: a time range, occurrences when singleEvents=true, by start, in pages (pageToken = offset). */
+function listEvents(stored: readonly FakeEvent[], query: URLSearchParams): Response {
+  const min = Date.parse(query.get("timeMin") ?? "");
+  const max = Date.parse(query.get("timeMax") ?? "");
+  const all = (query.get("singleEvents") === "true" ? expand(stored) : stored.filter((e) => typeof e["recurringEventId"] !== "string"))
+    .filter((e) => e["status"] !== "cancelled")
+    .filter((e) => (Number.isNaN(max) || instantOf(e["start"]) < max) && (Number.isNaN(min) || instantOf(e["end"]) > min))
+    .sort((a, b) => instantOf(a["start"]) - instantOf(b["start"]));
+  const size = Number(query.get("maxResults") ?? "250");
+  const from = Number(query.get("pageToken") ?? "0");
+  const next = from + size;
+  return json(200, { items: all.slice(from, next), ...(next < all.length ? { nextPageToken: String(next) } : {}) });
+}
+
 /**
  * An in-memory Google (OAuth, Calendar v3, Gmail v1) behind a `fetch`, for tests and the end-to-end run.
  * Never touches the network. Any URL that would send a mail is refused (and recorded).
@@ -103,7 +213,9 @@ export class FakeGoogle {
   /** Tokens revoked through the revocation endpoint. */
   readonly revoked: string[] = [];
   readonly #accounts = new Map<string, FakeAccount>();
-  readonly #codes = new Map<string, { email: string; challenge: string | undefined; scopes: readonly string[] }>();
+  readonly #codes = new Map<string, {
+    email: string; challenge: string | undefined; scopes: readonly string[]; redirectUri: string | undefined;
+  }>();
   readonly #accessTokens = new Map<string, string>();
   readonly #failures: { status: number; reason: string }[] = [];
   #counter = 0;
@@ -119,7 +231,7 @@ export class FakeGoogle {
   addAccount(email: string): void {
     if (this.#accounts.has(email)) return;
     this.#accounts.set(email, {
-      email, refreshTokens: new Set(), calendars: [], events: new Map(), mails: [], drafts: [],
+      email, refreshTokens: new Map(), calendars: [], events: new Map(), mails: [], drafts: [],
     });
   }
 
@@ -146,11 +258,16 @@ export class FakeGoogle {
     return this.#account(email).drafts;
   }
 
-  /** A one-time authorization code, as Google hands it to the loopback redirect. */
-  issueCode(email: string, options: { challenge?: string; scopes?: readonly string[] } = {}): string {
+  /**
+   * A one-time authorization code, as Google hands it to the loopback redirect. `redirectUri`: the exact address
+   * the flow started with (the exchange must repeat it); without it, any loopback address passes.
+   */
+  issueCode(email: string, options: { challenge?: string; scopes?: readonly string[]; redirectUri?: string } = {}): string {
     this.addAccount(email);
     const code = this.#next("code");
-    this.#codes.set(code, { email, challenge: options.challenge, scopes: options.scopes ?? GOOGLE_SCOPES });
+    this.#codes.set(code, {
+      email, challenge: options.challenge, scopes: options.scopes ?? GOOGLE_SCOPES, redirectUri: options.redirectUri,
+    });
     return code;
   }
 
@@ -221,13 +338,16 @@ export class FakeGoogle {
       const code = this.#codes.get(params.get("code") ?? "");
       if (code === undefined) return json(400, { error: "invalid_grant" });
       this.#codes.delete(params.get("code") ?? "");
-      if (!LOOPBACK.test(params.get("redirect_uri") ?? "")) return json(400, { error: "redirect_uri_mismatch" });
+      const redirect = params.get("redirect_uri") ?? "";
+      if (code.redirectUri === undefined ? !LOOPBACK.test(redirect) : redirect !== code.redirectUri) {
+        return json(400, { error: "redirect_uri_mismatch" });
+      }
       const verifier = params.get("code_verifier") ?? "";
       if (code.challenge !== undefined && createHash("sha256").update(verifier).digest("base64url") !== code.challenge) {
         return json(400, { error: "invalid_grant" });
       }
       const refreshToken = this.#next("refresh");
-      this.#account(code.email).refreshTokens.add(refreshToken);
+      this.#account(code.email).refreshTokens.set(refreshToken, code.scopes);
       return json(200, {
         access_token: this.#issueAccess(code.email), expires_in: 3599, refresh_token: refreshToken,
         scope: code.scopes.join(" "), token_type: "Bearer",
@@ -236,17 +356,22 @@ export class FakeGoogle {
     if (grant === "refresh_token") {
       const refreshToken = params.get("refresh_token") ?? "";
       const owner = [...this.#accounts.values()].find((a) => a.refreshTokens.has(refreshToken));
-      if (owner === undefined) return json(400, { error: "invalid_grant", error_description: "Token has been expired or revoked." });
+      const granted = owner?.refreshTokens.get(refreshToken);
+      if (owner === undefined || granted === undefined) {
+        return json(400, { error: "invalid_grant", error_description: "Token has been expired or revoked." });
+      }
       return json(200, {
-        access_token: this.#issueAccess(owner.email), expires_in: 3599, scope: GOOGLE_SCOPES.join(" "), token_type: "Bearer",
+        access_token: this.#issueAccess(owner.email), expires_in: 3599, scope: granted.join(" "), token_type: "Bearer",
       });
     }
     return json(400, { error: "unsupported_grant_type" });
   }
 
   #revoke(token: string): Response {
+    const owner = [...this.#accounts.values()].find((a) => a.refreshTokens.has(token));
+    if (owner === undefined) return json(400, { error: "invalid_token" });
+    owner.refreshTokens.delete(token);
     this.revoked.push(token);
-    for (const account of this.#accounts.values()) account.refreshTokens.delete(token);
     return json(200, {});
   }
 
@@ -334,49 +459,55 @@ export class FakeGoogle {
     const calendarId = decodeURIComponent(match[1] ?? "");
     const calendar = account.calendars.find((c) => c.id === calendarId);
     if (calendar === undefined) return apiError(404, "notFound");
-    const events = account.events.get(calendarId) ?? [];
     const eventId = match[2] === undefined ? undefined : decodeURIComponent(match[2]);
-    const writable = calendar.accessRole === "owner" || calendar.accessRole === "writer";
-
-    if (eventId === undefined && method === "GET") {
-      const min = Date.parse(url.searchParams.get("timeMin") ?? "");
-      const max = Date.parse(url.searchParams.get("timeMax") ?? "");
-      const items = events
-        .filter((e) => (Number.isNaN(max) || instantOf(e["start"]) < max) && (Number.isNaN(min) || instantOf(e["end"]) > min))
-        .sort((a, b) => instantOf(a["start"]) - instantOf(b["start"]));
-      return json(200, { items });
+    if (method !== "GET") {
+      // Structural guard, stricter than Google: a write that could e-mail anyone never passes here.
+      if (url.searchParams.get("sendUpdates") !== "none") return apiError(400, "sendUpdates must be none");
+      const parsed = parseJson(body);
+      if (isRecord(parsed) && "attendees" in parsed) return apiError(400, "attendees are forbidden");
     }
+    const writable = calendar.accessRole === "owner" || calendar.accessRole === "writer";
+    const stored = account.events.get(calendarId) ?? [];
+    const save = (events: FakeEvent[]): void => {
+      account.events.set(calendarId, events);
+    };
+
+    if (eventId === undefined && method === "GET") return listEvents(stored, url.searchParams);
     if (eventId === undefined && method === "POST") {
       if (!writable) return apiError(403, "forbidden");
       const parsed = parseJson(body);
       if (!isRecord(parsed)) return apiError(400, "invalid");
-      const created: FakeEvent = { status: "confirmed", ...parsed, id: this.#next("evt"), etag: this.#etag() };
-      account.events.set(calendarId, [...events, created]);
+      const created = withOffsets({ status: "confirmed", ...parsed, id: this.#next("evt"), etag: this.#etag() });
+      save([...stored, created]);
       return json(200, created);
     }
-    const current = events.find((e) => idOf(e) === eventId);
+    if (eventId === undefined) return apiError(405, "methodNotAllowed");
+    const isStored = stored.some((e) => idOf(e) === eventId);
+    const current = stored.find((e) => idOf(e) === eventId) ?? expand(stored).find((e) => idOf(e) === eventId);
     if (current === undefined) return apiError(404, "notFound");
     if (method === "GET") return json(200, current);
     if (!writable) return apiError(403, "forbidden");
     // A conditional write on an event that changed since it was read: Google answers 412.
     const ifMatch = headers.get("if-match");
     if (ifMatch !== null && ifMatch !== current["etag"]) return apiError(412, "conditionNotMet");
+    /** An occurrence changed alone becomes an exception of its series (stored next to it). */
+    const keep = (event: FakeEvent): void => {
+      save(isStored ? stored.map((e) => (idOf(e) === eventId ? event : e)) : [...stored, event]);
+    };
     if (method === "DELETE") {
-      account.events.set(calendarId, events.filter((e) => idOf(e) !== eventId));
+      if (typeof current["recurringEventId"] === "string") {
+        keep({ ...current, status: "cancelled", etag: this.#etag() });
+      } else {
+        // A single event, or a whole series with its exceptions.
+        save(stored.filter((e) => idOf(e) !== eventId && e["recurringEventId"] !== eventId));
+      }
       return json(204, null);
     }
     if (method === "PATCH") {
       const parsed = parseJson(body);
       if (!isRecord(parsed)) return apiError(400, "invalid");
-      const updated: FakeEvent = { ...current, etag: this.#etag() };
-      for (const [key, value] of Object.entries(parsed)) {
-        if (value === null || key === "etag" || key === "id") continue;
-        const base = current[key];
-        updated[key] = (key === "start" || key === "end") && isRecord(value)
-          ? Object.fromEntries(Object.entries({ ...(isRecord(base) ? base : {}), ...value }).filter(([, v]) => v !== null))
-          : value;
-      }
-      account.events.set(calendarId, events.map((e) => (idOf(e) === eventId ? updated : e)));
+      const updated = withOffsets({ ...applyPatch(current, parsed), etag: this.#etag() });
+      keep(updated);
       return json(200, updated);
     }
     return apiError(405, "methodNotAllowed");

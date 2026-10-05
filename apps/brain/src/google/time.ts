@@ -1,9 +1,12 @@
 import { z } from "zod";
+import { GoogleApiError } from "./http.ts";
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const LOCAL = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
 /** An explicit UTC offset at the end of a dateTime ("Z", "+02:00"). */
 const OFFSET = /(?:[zZ]|[+-]\d{2}:\d{2})$/;
+/** An instant as Google sends it (RFC 3339): wall-clock, optional fraction, offset. */
+const RFC3339 = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?(?:[zZ]|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 
@@ -40,9 +43,10 @@ function isReal(value: string): boolean {
     && t.getUTCHours() === w.hour && t.getUTCMinutes() === w.minute && t.getUTCSeconds() === w.second;
 }
 
+/** A date that does not parse came from Google (or a tool past its schema): a Google "invalid", never a crash. */
 function parse(value: string): WallClock {
   const w = wallClock(value);
-  if (w === undefined) throw new Error(`Invalid date: ${value}`);
+  if (w === undefined) throw new GoogleApiError("invalid");
   return w;
 }
 
@@ -50,6 +54,11 @@ function parse(value: string): WallClock {
 export const IsoDate = z.string().regex(DATE).refine(isReal, "Date invalide");
 /** A wall-clock time in the household's time zone, without offset: "2026-10-10T14:00". */
 export const LocalDateTime = z.string().regex(LOCAL).refine(isReal, "Date ou heure invalide");
+/** An instant with its offset, as Google sends it: "2026-10-10T14:00:00+02:00". */
+export const Rfc3339DateTime = z
+  .string()
+  .regex(RFC3339)
+  .refine((value) => isReal(RFC3339.exec(value)?.[1] ?? ""), "Date ou heure invalide");
 
 export function addDays(date: string, days: number): string {
   return new Date(utc(parse(date)) + days * DAY_MS).toISOString().slice(0, 10);
@@ -72,7 +81,9 @@ export function addMinutesLocal(dateTime: string, minutes: number): string {
 export function zoneOffsetMinutes(instant: number, timeZone: string): number {
   const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
     .formatToParts(new Date(instant))
-    .find((part) => part.type === "timeZoneName")?.value ?? "GMT";
+    .find((part) => part.type === "timeZoneName")?.value;
+  // No silent UTC: an offset that cannot be read is a bug, not a time zone.
+  if (name === undefined) throw new Error(`No offset for time zone ${timeZone}`);
   const match = /^GMT(?:([+-])(\d{2}):(\d{2}))?$/.exec(name);
   if (match === null) throw new Error(`Unexpected time zone offset: ${name}`);
   if (match[1] === undefined) return 0;
@@ -93,13 +104,28 @@ export function localMidnight(date: string, timeZone: string): string {
 
 /** A Google dateTime: with its offset as is, otherwise wall-clock in `timeZone`. */
 export function instantOfDateTime(value: string, timeZone: string): number {
-  return OFFSET.test(value) ? Date.parse(value) : localInstant(value, timeZone);
+  if (!OFFSET.test(value)) return localInstant(value, timeZone);
+  if (!Rfc3339DateTime.safeParse(value).success) throw new GoogleApiError("invalid");
+  return Date.parse(value);
+}
+
+/** A wall-clock time in `timeZone` written with its offset, as Google returns it: "2026-10-12T09:00:00+02:00". */
+export function withOffset(dateTime: string, timeZone: string): string {
+  const local = normalizeLocal(dateTime);
+  const offset = zoneOffsetMinutes(localInstant(local, timeZone), timeZone);
+  if (offset === 0) return `${local}Z`;
+  const abs = Math.abs(offset);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${local}${offset < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
 }
 
 /** The household's day of an instant, "2026-10-10". */
 export function localDay(instant: number, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
-    .format(new Date(instant));
+  // Parts, not a formatted string: the "en-CA" layout is not something ICU promises.
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date(instant));
+  const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 /** "sam. 10 oct." */

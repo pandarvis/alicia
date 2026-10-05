@@ -50,7 +50,7 @@ export function buildUrl(request: ApiRequest): string {
 }
 
 const SCOPE_MISSING = /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions|insufficient authentication scopes/i;
-const RATE_LIMITED = /rateLimitExceeded|userRateLimitExceeded|quotaExceeded/;
+const RATE_LIMITED = /rateLimitExceeded|userRateLimitExceeded|dailyLimitExceeded|quotaExceeded/;
 
 /** A non-2xx answer as a failure. 401 only reaches here after one refresh already failed to help. */
 export function failureOf(status: number, body: string): GoogleFailure {

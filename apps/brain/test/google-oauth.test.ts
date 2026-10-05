@@ -78,8 +78,12 @@ describe("Google OAuth", () => {
 
   test("revocation is best effort", async () => {
     const { google, oauth } = setup();
-    expect(await oauth.revoke("refresh-1")).toBe(true);
-    expect(google.revoked).toEqual(["refresh-1"]);
+    const tokens = await oauth.exchangeCode({ code: google.issueCode("kevin@example.com"), codeVerifier: VERIFIER, redirectUri: REDIRECT });
+    const refreshToken = tokens.refreshToken ?? "";
+    expect(await oauth.revoke(refreshToken)).toBe(true);
+    expect(google.revoked).toEqual([refreshToken]);
+    // Already revoked: Google says invalid_token, which is fine (nothing left to revoke).
+    expect(await oauth.revoke(refreshToken)).toBe(false);
     const offline = new GoogleOAuth(
       { clientId: "x.apps.googleusercontent.com", clientSecret: "s" }, () => Promise.reject(new Error("offline")), () => 0,
     );

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GoogleOwner, Person } from "@alicia/protocol";
 import { FakeGoogle } from "../src/google/fake-google.ts";
 import { type GoogleAccess, GoogleClient } from "../src/google/google-client.ts";
@@ -6,6 +7,13 @@ import { createTestClock, createTestDb, createTestGoogleAccounts, ELODIE, KEVIN 
 
 export const VERIFIER = "v".repeat(43);
 export const REDIRECT = "http://127.0.0.1:4000";
+/** S256 of VERIFIER: Google checks it at the exchange, as the app's flow requires. */
+export const CHALLENGE = createHash("sha256").update(VERIFIER).digest("base64url");
+
+/** A code as Google issues it to the app's flow: bound to REDIRECT and to VERIFIER's challenge. */
+export function issueCode(google: FakeGoogle, email: string, scopes?: readonly string[]): string {
+  return google.issueCode(email, { challenge: CHALLENGE, redirectUri: REDIRECT, ...(scopes !== undefined ? { scopes } : {}) });
+}
 
 /** A brain-side Google client wired to an in-memory Google. */
 export function createGoogleFixture() {
@@ -19,7 +27,7 @@ export function createGoogleFixture() {
   /** Runs the whole connection (code issued by Google, exchanged by the brain) and returns the account. */
   async function connect(person: Person, owner: GoogleOwner, email: string) {
     const result = await client.connect(person, {
-      owner, code: google.issueCode(email), codeVerifier: VERIFIER, redirectUri: REDIRECT,
+      owner, code: issueCode(google, email), codeVerifier: VERIFIER, redirectUri: REDIRECT,
     });
     if (!("account" in result)) throw new Error(`connect failed: ${result.status}`);
     return result.account;

@@ -64,7 +64,8 @@ export class GoogleClient {
     try {
       email = await fetchProfileEmail(this.#deps.fetch, tokens.accessToken);
     } catch (error) {
-      if (error instanceof GoogleAuthError) return { status: "unavailable" };
+      // Google refusing the fresh token on the profile means the exchange did not give what was asked.
+      if (error instanceof GoogleAuthError) return { status: error.failure === "unavailable" ? "unavailable" : "exchange_failed" };
       throw error;
     }
     const result = this.#deps.accounts.connect({
@@ -102,6 +103,8 @@ export class GoogleClient {
     if (signal?.aborted === true) throw new GoogleApiError("unavailable");
     let response = await this.#call(await this.#accessToken(personId, accountId, false), request, signal);
     if (response.status === 401) {
+      // The refused answer is dropped before trying again (its connection is released).
+      await response.body?.cancel().catch(() => undefined);
       response = await this.#call(await this.#accessToken(personId, accountId, true), request, signal);
     }
     if (response.ok) return response;
@@ -154,9 +157,12 @@ export class GoogleClient {
     if (refreshToken === undefined) throw new GoogleApiError("not_found");
     try {
       const tokens = await this.#deps.oauth.refresh(refreshToken);
+      // Removed (or out of reach) while Google answered: its token is neither kept nor used.
+      if (this.#deps.accounts.get(personId, accountId) === undefined) throw new GoogleApiError("not_found");
       this.#tokens.set(accountId, { token: tokens.accessToken, expiresAt: tokens.expiresAt });
       return tokens.accessToken;
     } catch (error) {
+      if (error instanceof GoogleApiError) throw error;
       if (!(error instanceof GoogleAuthError)) throw error;
       if (error.failure !== "invalid_grant") {
         // invalid_client & co. are configuration problems: reconnecting would not help.
@@ -221,7 +227,9 @@ export class GoogleAccess implements GoogleRequester {
       return await this.#client.send(this.#person.id, account.id, request, this.#signal);
     } catch (error) {
       if (error instanceof GoogleApiError && error.failure === "reconnect") {
-        this.#flagged.set(account.id, { id: account.id, email: account.email });
+        // Named as stored, whatever the object the tool held says.
+        const stored = this.accounts().find((a) => a.id === account.id);
+        if (stored !== undefined) this.#flagged.set(stored.id, { id: stored.id, email: stored.email });
       }
       throw error;
     }

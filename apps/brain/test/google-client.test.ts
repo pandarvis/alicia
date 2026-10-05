@@ -5,7 +5,7 @@ import { GoogleApiError } from "../src/google/http.ts";
 import { GoogleOAuth } from "../src/google/oauth.ts";
 import { TokenCipher } from "../src/google/token-cipher.ts";
 import { GoogleAccountStore } from "../src/google/account-store.ts";
-import { createFamilyGoogle, createGoogleFixture, REDIRECT, VERIFIER } from "./google-fixture.ts";
+import { createFamilyGoogle, createGoogleFixture, issueCode, REDIRECT, VERIFIER } from "./google-fixture.ts";
 import { createTestGoogleAccounts, ELODIE, KEVIN } from "./helpers.ts";
 
 const PROFILE = { method: "GET", url: "https://gmail.googleapis.com/gmail/v1/users/me/profile" } as const;
@@ -33,17 +33,70 @@ describe("GoogleClient", () => {
 
   test("missing scopes, a bad code, someone else's address: nothing stored", async () => {
     const { client, google, connect } = createGoogleFixture();
-    const partial = google.issueCode("kevin@example.com", { scopes: ["https://www.googleapis.com/auth/gmail.readonly"] });
+    const partial = issueCode(google, "kevin@example.com", ["https://www.googleapis.com/auth/gmail.readonly"]);
     expect(await client.connect(KEVIN, { owner: "personal", code: partial, codeVerifier: VERIFIER, redirectUri: REDIRECT }))
       .toEqual({ status: "missing_scopes" });
     expect(await client.connect(KEVIN, { owner: "personal", code: "nope", codeVerifier: VERIFIER, redirectUri: REDIRECT }))
       .toEqual({ status: "exchange_failed" });
     expect(client.list(KEVIN)).toEqual([]);
     await connect(KEVIN, "personal", "kevin@example.com");
-    const code = google.issueCode("kevin@example.com");
+    const code = issueCode(google, "kevin@example.com");
     expect(await client.connect(ELODIE, { owner: "personal", code, codeVerifier: VERIFIER, redirectUri: REDIRECT }))
       .toEqual({ status: "conflict" });
     expect(client.list(ELODIE)).toEqual([]);
+  });
+
+  test("Google refusing the new account's profile: the exchange failed; Google down: unavailable", async () => {
+    const { client, google } = createGoogleFixture();
+    for (const [status, expected] of [[403, "exchange_failed"], [401, "exchange_failed"], [503, "unavailable"]] as const) {
+      google.failNext(status, "nope");
+      const code = issueCode(google, "kevin@example.com");
+      expect(await client.connect(KEVIN, { owner: "personal", code, codeVerifier: VERIFIER, redirectUri: REDIRECT }), String(status))
+        .toEqual({ status: expected });
+    }
+    expect(client.list(KEVIN)).toEqual([]);
+  });
+
+  test("an account removed while its token was being refreshed: the call stops, Google is not called with it", async () => {
+    const { db, time, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    let release: () => void = () => undefined;
+    let asked = false;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The refresh answer is held until the account is gone.
+    const slowToken: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/token")) {
+        asked = true;
+        await held;
+      }
+      return google.fetch(input, init);
+    };
+    const oauth = new GoogleOAuth({ clientId: google.clientId, clientSecret: google.clientSecret }, slowToken, time.clock);
+    const client = new GoogleClient({
+      accounts: createTestGoogleAccounts(db, time.clock), oauth, fetch: google.fetch, clock: time.clock, clientId: google.clientId,
+    });
+    const pending = failureOf(client.forPerson(KEVIN).json(account, PROFILE, Profile));
+    await vi.waitFor(() => {
+      expect(asked).toBe(true);
+    });
+    createTestGoogleAccounts(db, time.clock).remove(KEVIN.id, account.id);
+    const before = google.requests.length;
+    release();
+    expect(await pending).toBe("not_found");
+    expect(google.requests.slice(before).map((r) => r.url.pathname)).toEqual(["/token"]);
+  });
+
+  test("the reconnect notice names the account as stored, whatever object the tool held", async () => {
+    const { client, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    google.revokeGrant("kevin@example.com");
+    google.expireAccessTokens();
+    const access = client.forPerson(KEVIN);
+    expect(await failureOf(access.json({ ...account, email: "spoof@example.com" }, PROFILE, Profile))).toBe("reconnect");
+    expect(access.flagged()).toEqual([{ id: account.id, email: "kevin@example.com" }]);
   });
 
   test("an expired access token is refreshed once, transparently", async () => {
@@ -191,7 +244,7 @@ describe("GoogleClient", () => {
     for (const [status, reason, expected] of [
       [404, "notFound", "not_found"], [429, "rateLimitExceeded", "unavailable"], [403, "rateLimitExceeded", "unavailable"],
       [403, "forbidden", "forbidden"], [500, "backendError", "unavailable"], [400, "invalid", "invalid"],
-      [410, "deleted", "not_found"], [412, "conditionNotMet", "changed"],
+      [410, "deleted", "not_found"], [412, "conditionNotMet", "changed"], [403, "dailyLimitExceeded", "unavailable"],
     ] as const) {
       google.failNext(status, reason);
       expect(await failureOf(access.json(account, PROFILE, Profile))).toBe(expected);
