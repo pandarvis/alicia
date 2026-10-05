@@ -65,6 +65,8 @@ export interface SettingsBridge {
   update(patch: SettingsPatch): Promise<SettingsUpdateResult>;
   /** Changed from another place (tray menu, Holo closed with Alt+F4…). */
   onChange(listener: (snapshot: SettingsSnapshot) => void): Unsubscribe;
+  /** Sets the global shortcut aside while a new one is typed (true), or brings it back (false). */
+  suspendShortcut(suspended: boolean): Promise<void>;
 }
 
 /** Brains found on the local network (mDNS), for the pairing screen of the main window only. */
@@ -125,6 +127,7 @@ export const INVOKE = {
   holoSetExpanded: "holo:set-expanded",
   settingsGet: "settings:get",
   settingsUpdate: "settings:update",
+  settingsSuspendShortcut: "settings:suspend-shortcut",
   discoveryStart: "discovery:start",
   discoveryStop: "discovery:stop",
   updatesStatus: "updates:status",

@@ -26,6 +26,8 @@ export interface WindowManagerOptions {
   onSessionEnd(): void;
   /** Where the mouse pointer is on the desktop (screen DIP). */
   cursor(): Point;
+  /** The main window was shown (true) or hidden or minimized (false). */
+  onMainVisibility(visible: boolean): void;
   /** Whether a window has the keyboard focus (in front of the person). */
   isFocused(window: BrowserWindow): boolean;
 }
@@ -51,6 +53,9 @@ function isAlive(window: BrowserWindow | null): window is BrowserWindow {
  */
 export function hardenWebContents(contents: WebContents): void {
   contents.on("will-navigate", (event) => {
+    event.preventDefault();
+  });
+  contents.on("will-frame-navigate", (event) => {
     event.preventDefault();
   });
   contents.on("will-attach-webview", (event) => {
@@ -119,6 +124,18 @@ export class WindowManager {
       event.preventDefault();
       window.hide();
     });
+    window.on("show", () => {
+      this.#options.onMainVisibility(true);
+    });
+    window.on("restore", () => {
+      this.#options.onMainVisibility(true);
+    });
+    window.on("hide", () => {
+      this.#options.onMainVisibility(false);
+    });
+    window.on("minimize", () => {
+      this.#options.onMainVisibility(false);
+    });
     // Logoff or shutdown: Windows ends the process without before-quit, so the windows must let go here.
     window.on("session-end", () => {
       this.#quitting = true;
@@ -129,7 +146,6 @@ export class WindowManager {
         window.show();
       });
     }
-    this.#harden(window);
     this.#load(window, "main");
     this.#main = window;
   }
@@ -346,7 +362,6 @@ export class WindowManager {
       event.preventDefault();
       this.#options.onHoloDismissed();
     });
-    this.#harden(window);
     this.#load(window, "holo");
     this.#holo = window;
     return window;
@@ -381,7 +396,6 @@ export class WindowManager {
       event.preventDefault();
       this.#requestHide(window);
     });
-    this.#harden(window);
     this.#load(window, "spotlight");
     this.#spotlight = window;
     return window;
@@ -425,11 +439,6 @@ export class WindowManager {
     } else {
       contents.send(channel);
     }
-  }
-
-  /** The app never navigates away nor opens windows; external links go to the browser. */
-  #harden(window: BrowserWindow): void {
-    hardenWebContents(window.webContents);
   }
 
   #load(window: BrowserWindow, surface: Surface): void {

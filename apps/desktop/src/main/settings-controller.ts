@@ -23,6 +23,8 @@ export class SettingsController {
   readonly #ports: SettingsPorts;
   #settings: Settings;
   #shortcutActive = false;
+  /** The shortcut is set aside while the Réglages screen captures a new one. */
+  #suspended = false;
 
   constructor(store: SettingsPersistence, ports: SettingsPorts) {
     this.#store = store;
@@ -58,6 +60,7 @@ export class SettingsController {
    * fails, the new shortcut is freed again and nothing has changed.
    */
   update(patch: SettingsPatch): SettingsUpdateResult {
+    this.resumeShortcut();
     const previous = this.#settings;
     const next: Settings = { ...previous };
     let registered: string | null = null;
@@ -84,14 +87,50 @@ export class SettingsController {
       return { ok: false, reason: "save_failed", snapshot: this.snapshot };
     }
 
-    if (registered !== null) {
-      if (this.#shortcutActive && registered !== previous.shortcut) this.#ports.unregisterShortcut(previous.shortcut);
-      this.#shortcutActive = true;
-    }
-    if (next.launchAtStartup !== previous.launchAtStartup) this.#ports.setLoginItem(next.launchAtStartup);
+    // Saved: memory follows the disk before anything else can fail.
     this.#settings = next;
+    if (registered !== null) {
+      const releasePrevious = this.#shortcutActive && registered !== previous.shortcut;
+      this.#shortcutActive = true;
+      if (releasePrevious) {
+        this.#safely("old shortcut could not be released", () => {
+          this.#ports.unregisterShortcut(previous.shortcut);
+        });
+      }
+    }
+    if (next.launchAtStartup !== previous.launchAtStartup) {
+      this.#safely("login item could not be changed", () => {
+        this.#ports.setLoginItem(next.launchAtStartup);
+      });
+    }
     this.#ports.onChange(this.snapshot);
     return { ok: true, snapshot: this.snapshot };
+  }
+
+  /** The Réglages screen captures a new shortcut: the current one must not open Spotlight meanwhile. */
+  suspendShortcut(): void {
+    if (this.#suspended) return;
+    this.#suspended = true;
+    if (this.#shortcutActive) this.#ports.unregisterShortcut(this.#settings.shortcut);
+  }
+
+  /** The capture ended (or a change arrives): the current shortcut is registered again. */
+  resumeShortcut(): void {
+    if (!this.#suspended) return;
+    this.#suspended = false;
+    if (!this.#shortcutActive) return;
+    this.#shortcutActive = this.#ports.registerShortcut(this.#settings.shortcut);
+    // Another application took it meanwhile: the screen says so.
+    if (!this.#shortcutActive) this.#ports.onChange(this.snapshot);
+  }
+
+  /** A system side effect that fails after the save is logged; the saved settings stand. */
+  #safely(what: string, run: () => void): void {
+    try {
+      run();
+    } catch (error) {
+      console.error(what, error);
+    }
   }
 
   /** The Holo was moved: it stays there for this session even if the position cannot be saved. Never throws. */

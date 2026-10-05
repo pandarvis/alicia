@@ -6,6 +6,7 @@ import { Settings, type SettingsSnapshot } from "../src/shared/settings.ts";
 function setup(initial: Partial<Settings> = {}, taken: string[] = [], osLoginItem: boolean | null = null) {
   let saved: Settings = { ...Settings.parse({}), ...initial };
   const disk = { failing: false };
+  const os = { loginItemFails: false };
   const registered = new Set<string>();
   const loginItems: boolean[] = [];
   const changes: SettingsSnapshot[] = [];
@@ -24,12 +25,15 @@ function setup(initial: Partial<Settings> = {}, taken: string[] = [], osLoginIte
         return true;
       },
       unregisterShortcut: (accelerator) => { registered.delete(accelerator); },
-      setLoginItem: (open) => { loginItems.push(open); },
+      setLoginItem: (open) => {
+        if (os.loginItemFails) throw new Error("registry says no");
+        loginItems.push(open);
+      },
       isLoginItemEnabled: () => osLoginItem,
       onChange: (snapshot) => { changes.push(snapshot); },
     },
   );
-  return { controller, registered, loginItems, changes, disk, saved: () => saved };
+  return { controller, registered, loginItems, changes, disk, os, saved: () => saved };
 }
 
 afterEach(() => {
@@ -121,6 +125,51 @@ describe("SettingsController", () => {
     controller.update({ launchAtStartup: true });
     controller.update({ launchAtStartup: true });
     expect(loginItems).toEqual([true]);
+  });
+
+  test("while a new shortcut is being typed, the current one is set aside so it does not open Spotlight", () => {
+    const { controller, registered, changes } = setup();
+    controller.start();
+    controller.suspendShortcut();
+    controller.suspendShortcut();
+    expect([...registered]).toEqual([]);
+    expect(controller.snapshot.shortcutActive).toBe(true);
+    controller.resumeShortcut();
+    controller.resumeShortcut();
+    expect([...registered]).toEqual(["Ctrl+Alt+A"]);
+    expect(changes).toEqual([]);
+  });
+
+  test("a change made while the shortcut is set aside brings it back first, then applies", () => {
+    const { controller, registered } = setup();
+    controller.start();
+    controller.suspendShortcut();
+    expect(controller.update({ shortcut: "Ctrl+Shift+K" }).ok).toBe(true);
+    expect([...registered]).toEqual(["Ctrl+Shift+K"]);
+    controller.suspendShortcut();
+    expect(controller.update({ showHolo: false }).ok).toBe(true);
+    expect([...registered]).toEqual(["Ctrl+Shift+K"]);
+  });
+
+  test("a shortcut taken meanwhile by another app is reported when it comes back", () => {
+    const taken: string[] = [];
+    const { controller, changes } = setup({}, taken);
+    controller.start();
+    controller.suspendShortcut();
+    taken.push("Ctrl+Alt+A");
+    controller.resumeShortcut();
+    expect(controller.snapshot.shortcutActive).toBe(false);
+    expect(changes.at(-1)?.shortcutActive).toBe(false);
+  });
+
+  test("a login item Windows refuses after the save keeps memory and disk together", () => {
+    const { controller, os, saved } = setup();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    os.loginItemFails = true;
+    const result = controller.update({ launchAtStartup: true, showHolo: false });
+    expect(result.ok).toBe(true);
+    expect(controller.snapshot.settings).toMatchObject({ launchAtStartup: true, showHolo: false });
+    expect(saved()).toMatchObject({ launchAtStartup: true, showHolo: false });
   });
 
   test("showing the Holo and its position are saved", () => {

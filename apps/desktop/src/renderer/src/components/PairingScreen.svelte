@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fade } from "svelte/transition";
+  import { fade, slide } from "svelte/transition";
   import { motion } from "../lib/motion.ts";
   import type { DiscoveredBrain } from "../../../shared/discovery.ts";
   import type { SaveSessionResult, StoredSession } from "../../../shared/session.ts";
@@ -107,14 +107,14 @@
     <h1>Bonjour, je suis Alicia</h1>
     <p class="lead">Pour faire connaissance, demande un code d'appairage au cerveau (commande <code>pair</code>).</p>
     {#if notice}<p class="notice" data-testid="pairing-notice">{notice}</p>{/if}
-    <!-- The three states share one cell and cross-fade in place. -->
+    <!-- The three states share one cell; they slide (height and opacity), so the card never jumps. -->
     <div class="found" aria-live="polite">
       {#if brains.length > 0}
-        <div class="state" transition:fade={{ duration: motion(150) }}>
+        <div class="state" transition:slide={{ duration: motion(180) }}>
           <p class="found-label">Trouvée sur le réseau</p>
           <ul>
             {#each brains as brain (brain.name)}
-              <li transition:fade={{ duration: motion(150) }}>
+              <li transition:slide={{ duration: motion(180) }}>
                 <button type="button" class="brain" class:selected={serverUrl === brain.url} onclick={() => { choose(brain); }} data-testid="discovered-brain">
                   <span class="brain-name">{brain.name}</span>
                   <span class="brain-url">{brain.url}</span>
@@ -124,9 +124,9 @@
           </ul>
         </div>
       {:else if searching}
-        <p class="state found-label" data-testid="discovery-searching" transition:fade={{ duration: motion(150) }}>Recherche d'Alicia sur le réseau…</p>
+        <p class="state found-label" data-testid="discovery-searching" transition:slide={{ duration: motion(180) }}>Recherche d'Alicia sur le réseau…</p>
       {:else}
-        <p class="state found-label" data-testid="discovery-none" transition:fade={{ duration: motion(150) }}>
+        <p class="state found-label" data-testid="discovery-none" transition:slide={{ duration: motion(180) }}>
           Pas trouvée sur le réseau : saisis son adresse ci-dessous (avec Tailscale, par exemple http://mac-mini:8780).
         </p>
       {/if}

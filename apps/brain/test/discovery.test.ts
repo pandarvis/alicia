@@ -1,5 +1,9 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { advertiseBrain, type Publisher, type ServiceAnnouncement, SERVICE_TYPE, shouldAdvertise } from "../src/discovery.ts";
+import {
+  advertiseBrain, guardSocketErrors, type Publisher, type ServiceAnnouncement, SERVICE_TYPE, serviceHostname,
+  shouldAdvertise,
+} from "../src/discovery.ts";
 
 function fakePublisher(stop: () => Promise<void> = () => Promise.resolve()) {
   const published: ServiceAnnouncement[] = [];
@@ -40,6 +44,28 @@ describe("brain discovery (mDNS)", () => {
     await expect(stopped).resolves.toBeUndefined();
     const failing = fakePublisher(() => Promise.reject(new Error("socket closed")));
     await expect(advertiseBrain({ port: 8780, version: "0.1.0", hostname: "pc" }, failing.publisher).stop()).resolves.toBeUndefined();
+  });
+
+  test("an mDNS socket error (port 5353 taken, refused) is reported, never thrown", () => {
+    const mdns = new EventEmitter();
+    const errors: unknown[] = [];
+    expect(guardSocketErrors({ server: { mdns } }, (error) => { errors.push(error); })).toBe(true);
+    const taken = Object.assign(new Error("bind EADDRINUSE 0.0.0.0:5353"), { code: "EADDRINUSE" });
+    expect(() => mdns.emit("error", taken)).not.toThrow();
+    expect(errors).toEqual([taken]);
+  });
+
+  test("a bonjour-service without the expected socket is left alone", () => {
+    expect(guardSocketErrors({}, () => undefined)).toBe(false);
+    expect(guardSocketErrors({ server: { mdns: {} } }, () => undefined)).toBe(false);
+    expect(guardSocketErrors(null, () => undefined)).toBe(false);
+  });
+
+  test("the announced machine name drops the .local suffix and any domain", () => {
+    expect(serviceHostname("mac-mini.local")).toBe("mac-mini");
+    expect(serviceHostname("Mac-Mini.LOCAL")).toBe("Mac-Mini");
+    expect(serviceHostname("raspberrypi.home.lan")).toBe("raspberrypi");
+    expect(serviceHostname("DESKTOP-KEVIN")).toBe("DESKTOP-KEVIN");
   });
 
   test("announced only when enabled and reachable from the network", () => {

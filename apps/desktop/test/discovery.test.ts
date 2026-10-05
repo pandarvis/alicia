@@ -1,5 +1,8 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, test } from "vitest";
-import { type BrainBrowser, BrainDiscovery, brainFromService, staticBrowser } from "../src/main/discovery.ts";
+import {
+  type BrainBrowser, BrainDiscovery, brainFromService, guardSocketErrors, staticBrowser,
+} from "../src/main/discovery.ts";
 import type { DiscoveredBrain } from "../src/shared/discovery.ts";
 
 const PI: DiscoveredBrain = { name: "Alicia sur pi5", url: "http://192.168.1.20:8780", version: "0.1.0" };
@@ -49,6 +52,22 @@ function controllableBrowser() {
   };
 }
 
+describe("guardSocketErrors", () => {
+  test("an mDNS socket error (port 5353 taken, refused) is reported, never thrown", () => {
+    const mdns = new EventEmitter();
+    const errors: unknown[] = [];
+    expect(guardSocketErrors({ server: { mdns } }, (error) => { errors.push(error); })).toBe(true);
+    const refused = Object.assign(new Error("bind EACCES 0.0.0.0:5353"), { code: "EACCES" });
+    expect(() => mdns.emit("error", refused)).not.toThrow();
+    expect(errors).toEqual([refused]);
+  });
+
+  test("an unexpected bonjour-service shape is left alone", () => {
+    expect(guardSocketErrors({ server: {} }, () => undefined)).toBe(false);
+    expect(guardSocketErrors(undefined, () => undefined)).toBe(false);
+  });
+});
+
 describe("BrainDiscovery", () => {
   test("lists the brains found by name, without duplicates, and forgets those gone", () => {
     const lists: string[][] = [];
@@ -66,6 +85,39 @@ describe("BrainDiscovery", () => {
       ["Alicia sur mac-mini"],
     ]);
     expect(discovery.brains).toEqual([MAC]);
+  });
+
+  test("one entry per brain: the same address under two names, or one name at a new address, shows once", () => {
+    const network = controllableBrowser();
+    const discovery = new BrainDiscovery(network.browser, () => undefined);
+    discovery.start();
+    network.up(PI);
+    network.up({ ...PI, name: "Alicia sur pi5 (2)" });
+    expect(discovery.brains).toEqual([{ ...PI, name: "Alicia sur pi5 (2)" }]);
+    network.up(MAC);
+    network.up({ ...MAC, url: "http://192.168.1.31:8780" });
+    expect(discovery.brains.map((brain) => brain.url)).toEqual(["http://192.168.1.31:8780", "http://192.168.1.20:8780"]);
+  });
+
+  test("looking pauses while the window is hidden, and resumes with what was found", () => {
+    const network = controllableBrowser();
+    const discovery = new BrainDiscovery(network.browser, () => undefined);
+    discovery.setVisible(false);
+    discovery.start();
+    expect(network.counts()).toEqual([0, 0]);
+    discovery.setVisible(true);
+    expect(network.counts()).toEqual([1, 0]);
+    network.up(PI);
+    discovery.setVisible(false);
+    expect(network.counts()).toEqual([1, 1]);
+    expect(discovery.brains).toEqual([PI]);
+    discovery.setVisible(true);
+    expect(network.counts()).toEqual([2, 1]);
+    expect(discovery.brains).toEqual([PI]);
+    discovery.stop();
+    discovery.setVisible(false);
+    discovery.setVisible(true);
+    expect(network.counts()).toEqual([2, 2]);
   });
 
   test("start is idempotent, stop stops looking, a new search starts empty", () => {

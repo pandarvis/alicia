@@ -71,7 +71,7 @@ test("every page the app creates is locked down: no navigation, no webview", asy
   const guards = await app.evaluate(({ BrowserWindow }) => {
     const stray = new BrowserWindow({ show: false });
     const contents = stray.webContents;
-    const counts = [contents.listenerCount("will-navigate"), contents.listenerCount("will-attach-webview")];
+    const counts = ["will-navigate", "will-frame-navigate", "will-attach-webview"].map((name) => contents.listenerCount(name));
     stray.destroy();
     return counts;
   });
@@ -299,6 +299,16 @@ test("Réglages: shortcut, launch at startup and Holo are kept after a restart; 
   // A new shortcut, typed on the keyboard.
   await first.page.getByTestId("settings-shortcut-change").click();
   await first.page.getByTestId("settings-shortcut-capture").waitFor();
+  // While a new one is typed, the current shortcut is set aside (pressing it must not open Spotlight).
+  await expect.poll(async () => (await recorded(first.app)).shortcuts, POLL).toEqual([]);
+  await first.page.keyboard.press("Escape");
+  await expect.poll(async () => (await recorded(first.app)).shortcuts, POLL).toEqual(["Ctrl+Alt+A"]);
+  await expect.poll(() => first.page.getByTestId("settings-shortcut-change").evaluate((element) => element === document.activeElement), POLL).toBe(true);
+  await first.page.getByTestId("settings-shortcut-change").click();
+  await first.page.getByTestId("settings-shortcut-capture").waitFor();
+  // A bare letter is explained under the shortcut.
+  await first.page.keyboard.press("k");
+  await first.page.getByTestId("settings-shortcut-error").waitFor();
   await first.page.keyboard.press("Control+Shift+K");
   await expect.poll(() => first.page.getByTestId("settings-shortcut").textContent(), POLL).toBe("Ctrl+Shift+K");
   expect((await recorded(first.app)).shortcuts).toEqual(["Ctrl+Shift+K"]);
@@ -348,4 +358,7 @@ test("nothing found on the network: the manual address stays, with a hint for Ta
   // Only the pairing screen (main window) may search the network.
   const bar = await surfacePage(app, "spotlight");
   await expect(bar.evaluate(() => window.alicia.discovery.start())).rejects.toThrow();
+  // Nor change settings, nor sign the device out.
+  await expect(bar.evaluate(() => window.alicia.settings.update({ showHolo: false }))).rejects.toThrow();
+  await expect(bar.evaluate(() => window.alicia.clearSession())).rejects.toThrow();
 });

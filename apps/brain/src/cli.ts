@@ -8,7 +8,7 @@ import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import { buildApplication, createSdkEngine, openMemory } from "./application.ts";
 import { loadConfig, readAuthentication } from "./config.ts";
-import { advertiseBrain, bonjourPublisher, shouldAdvertise } from "./discovery.ts";
+import { advertiseBrain, bonjourPublisher, serviceHostname, shouldAdvertise } from "./discovery.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
 import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
 import { toText } from "./server/ws.ts";
@@ -49,15 +49,16 @@ async function start(): Promise<void> {
   }
   console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
   // The desktop app finds the brain on its pairing screen (mDNS), unless turned off or loopback only.
+  const machine = serviceHostname(hostname());
   const advertisement = shouldAdvertise(config)
     ? advertiseBrain(
-        { port: config.port, version: VERSION, hostname: hostname() },
+        { port: config.port, version: VERSION, hostname: machine },
         bonjourPublisher((error) => {
           console.error(`Annonce sur le réseau local impossible : ${error instanceof Error ? error.message : "erreur"}`);
         }),
       )
     : null;
-  if (advertisement !== null) console.log(`Annoncée sur le réseau local : « Alicia sur ${hostname()} ».`);
+  if (advertisement !== null) console.log(`Annoncée sur le réseau local : « Alicia sur ${machine} ».`);
   // Nightly job (backup, journal rotation); catches up at once if the brain was off at 3:00.
   void app.maintenance.start();
   // Load (first time: download) the memory model now, not in the middle of an answer.

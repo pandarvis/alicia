@@ -53,7 +53,9 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.paired, NONE, () => deps.session.paired());
   // An invalid session is answered with a reason, not an exception (the pairing screen explains it).
   handle(INVOKE.saveSession, z.unknown(), (raw) => deps.session.save(raw));
-  handle(INVOKE.clearSession, NONE, () => {
+  // Signing out and changing settings belong to the main window (Réglages).
+  handle(INVOKE.clearSession, NONE, (_none, sender) => {
+    mainOnly(sender);
     deps.session.clear();
   });
   handle(INVOKE.deviceName, NONE, () => hostname());
@@ -96,10 +98,16 @@ export function registerIpc(deps: IpcDependencies): void {
   });
   handle(INVOKE.settingsGet, NONE, () => deps.settings.snapshot);
   // An invalid patch is answered as such (the page shows why), not thrown.
-  handle(INVOKE.settingsUpdate, z.unknown(), (raw): SettingsUpdateResult => {
+  handle(INVOKE.settingsUpdate, z.unknown(), (raw, sender): SettingsUpdateResult => {
+    mainOnly(sender);
     const patch = SettingsPatch.safeParse(raw);
     if (!patch.success) return { ok: false, reason: "invalid", snapshot: deps.settings.snapshot };
     return deps.settings.update(patch.data);
+  });
+  handle(INVOKE.settingsSuspendShortcut, z.boolean(), (suspended, sender) => {
+    mainOnly(sender);
+    if (suspended) deps.settings.suspendShortcut();
+    else deps.settings.resumeShortcut();
   });
   // Only the pairing screen (main window) looks for brains on the network.
   handle(INVOKE.discoveryStart, NONE, (_none, sender) => {

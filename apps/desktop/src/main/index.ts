@@ -109,6 +109,9 @@ function start(): void {
       quitCleanup();
     },
     cursor: () => os.cursorScreenPoint(),
+    onMainVisibility: (visible) => {
+      discovery.setVisible(visible);
+    },
     isFocused: (window) => os.isFocused(window),
   });
   const presence = new Presence({
@@ -157,6 +160,8 @@ function start(): void {
   const discovery = new BrainDiscovery(brainBrowser(), (brains) => {
     windows.sendTo("main", PUSH.discovery, brains);
   });
+  // Until the main window shows (never, when started at login), nothing is looked for.
+  discovery.setVisible(false);
   // Updates from the paired brain, in the installed app only; installing goes through the one quit path.
   const updates = new UpdateController(
     app.isPackaged

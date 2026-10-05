@@ -95,6 +95,7 @@ const bridge: AliciaBridge = {
     get: () => call(SettingsSnapshot, INVOKE.settingsGet),
     update: (patch) => call(SettingsUpdateResult, INVOKE.settingsUpdate, patch),
     onChange: (listener) => subscribe(PUSH.settings, SettingsSnapshot, listener),
+    suspendShortcut: (suspended) => call(z.undefined(), INVOKE.settingsSuspendShortcut, suspended),
   },
   discovery: {
     start: () => call(z.array(DiscoveredBrain), INVOKE.discoveryStart),

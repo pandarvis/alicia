@@ -17,11 +17,13 @@ function setup(
 ) {
   let current = snapshot();
   const patches: SettingsPatch[] = [];
+  const calls: string[] = [];
   const listeners: ((next: SettingsSnapshot) => void)[] = [];
   const ports: SettingsPorts = {
     get: () => Promise.resolve(current),
     update: (patch) => {
       patches.push(patch);
+      calls.push("update");
       if (answer !== undefined) return answer(patch, current);
       current = snapshot({
         ...current.settings,
@@ -35,9 +37,13 @@ function setup(
       listeners.push(listener);
       return () => { listeners.splice(listeners.indexOf(listener), 1); };
     },
+    suspendShortcut: (suspended) => {
+      calls.push(suspended ? "suspend" : "resume");
+      return Promise.resolve();
+    },
   };
   const screen = new SettingsScreen(ports, () => Promise.resolve(layout));
-  return { screen, patches, push: (next: SettingsSnapshot) => { for (const listener of [...listeners]) listener(next); } };
+  return { screen, patches, calls, push: (next: SettingsSnapshot) => { for (const listener of [...listeners]) listener(next); } };
 }
 
 async function started(screen: SettingsScreen): Promise<void> {
@@ -72,16 +78,16 @@ describe("SettingsScreen", () => {
 
     screen.startCapture();
     await screen.captureKey(key("Control", "ControlLeft", { ctrlKey: true }));
-    expect([screen.capturing, screen.error]).toEqual([true, null]);
+    expect([screen.capturing, screen.shortcutError]).toEqual([true, null]);
     await screen.captureKey(key("k", "KeyK"));
-    expect([screen.capturing, screen.error]).toEqual([true, SETTINGS_MESSAGES.not_a_shortcut]);
+    expect([screen.capturing, screen.shortcutError]).toEqual([true, SETTINGS_MESSAGES.not_a_shortcut]);
     await screen.captureKey(key("€", "KeyE", { ctrlKey: true, altKey: true }));
-    expect([screen.capturing, screen.error]).toEqual([true, SETTINGS_MESSAGES.types_character]);
+    expect([screen.capturing, screen.shortcutError]).toEqual([true, SETTINGS_MESSAGES.types_character]);
     await screen.captureKey(key("K", "KeyK", { ctrlKey: true, shiftKey: true }));
     expect(screen.capturing).toBe(false);
     expect(patches).toEqual([{ shortcut: "Ctrl+Shift+K" }]);
     expect(screen.snapshot?.settings.shortcut).toBe("Ctrl+Shift+K");
-    expect(screen.error).toBeNull();
+    expect(screen.shortcutError).toBeNull();
   });
 
   test("with the keyboard layout, Ctrl+Alt on an AZERTY digit without AltGr character is accepted", async () => {
@@ -89,7 +95,7 @@ describe("SettingsScreen", () => {
     await started(screen);
     screen.startCapture();
     await screen.captureKey(key("@", "Digit0", { ctrlKey: true, altKey: true }));
-    expect(screen.error).toBe(SETTINGS_MESSAGES.types_character);
+    expect(screen.shortcutError).toBe(SETTINGS_MESSAGES.types_character);
     await screen.captureKey(key("&", "Digit1", { ctrlKey: true, altKey: true }));
     expect(patches).toEqual([{ shortcut: "Ctrl+Alt+1" }]);
   });
@@ -103,12 +109,36 @@ describe("SettingsScreen", () => {
     expect(patches).toEqual([]);
   });
 
+  test("the current shortcut is set aside during the capture, and back before the new one is saved", async () => {
+    const { screen, calls } = setup();
+    await started(screen);
+    screen.startCapture();
+    await screen.captureKey(key("Escape", "Escape"));
+    screen.startCapture();
+    await screen.captureKey(key("K", "KeyK", { ctrlKey: true, shiftKey: true }));
+    expect(calls).toEqual(["suspend", "resume", "suspend", "resume", "update"]);
+  });
+
+  test("cancelling clears the refusal; leaving the screen while capturing brings the shortcut back", async () => {
+    const { screen, calls } = setup();
+    await started(screen);
+    screen.startCapture();
+    await screen.captureKey(key("k", "KeyK"));
+    expect(screen.shortcutError).not.toBeNull();
+    screen.cancelCapture();
+    expect(screen.shortcutError).toBeNull();
+    screen.startCapture();
+    screen.stop();
+    expect(calls).toEqual(["suspend", "resume", "suspend", "resume"]);
+  });
+
   test("a shortcut held by another app is explained, the old one stays", async () => {
     const { screen } = setup((_patch, current) => Promise.resolve({ ok: false, reason: "shortcut_unavailable", snapshot: current }));
     await started(screen);
     screen.startCapture();
     await screen.captureKey(key("K", "KeyK", { ctrlKey: true, shiftKey: true }));
-    expect(screen.error).toBe(SETTINGS_MESSAGES.shortcut_unavailable);
+    expect(screen.shortcutError).toBe(SETTINGS_MESSAGES.shortcut_unavailable);
+    expect(screen.error).toBeNull();
     expect(screen.snapshot?.settings.shortcut).toBe("Ctrl+Alt+A");
   });
 

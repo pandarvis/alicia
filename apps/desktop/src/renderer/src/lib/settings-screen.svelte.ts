@@ -11,6 +11,8 @@ export interface SettingsPorts {
   get(): Promise<SettingsSnapshot>;
   update(patch: SettingsPatch): Promise<SettingsUpdateResult>;
   onChange(listener: (snapshot: SettingsSnapshot) => void): () => void;
+  /** Sets the global shortcut aside while a new one is typed (true), or brings it back (false). */
+  suspendShortcut(suspended: boolean): Promise<void>;
 }
 
 export const SETTINGS_MESSAGES = {
@@ -27,6 +29,9 @@ export class SettingsScreen {
   /** Waiting for the new shortcut on the keyboard. */
   capturing = $state(false);
   saving = $state(false);
+  /** Why the shortcut could not be captured or changed (shown under its row). */
+  shortcutError = $state<string | null>(null);
+  /** Why another setting could not be changed. */
   error = $state<string | null>(null);
 
   readonly #ports: SettingsPorts;
@@ -51,6 +56,7 @@ export class SettingsScreen {
   }
 
   stop(): void {
+    this.cancelCapture();
     this.#off?.();
     this.#off = null;
   }
@@ -67,12 +73,18 @@ export class SettingsScreen {
 
   startCapture(): void {
     this.error = null;
+    this.shortcutError = null;
     this.capturing = true;
     this.#layout = this.#readLayout().catch(() => undefined);
+    // Pressing the current shortcut must be captured, not open Spotlight.
+    this.#ports.suspendShortcut(true).catch(() => undefined);
   }
 
   cancelCapture(): void {
+    if (!this.capturing) return;
     this.capturing = false;
+    this.shortcutError = null;
+    void this.#resume();
   }
 
   /** A key pressed while capturing: Escape cancels, modifiers alone wait for the key, anything else is tried. */
@@ -89,15 +101,21 @@ export class SettingsScreen {
     if (!this.#isCapturing()) return;
     const capture = captureShortcut(key, layout);
     if (!capture.ok) {
-      this.error = SETTINGS_MESSAGES[capture.reason];
+      this.shortcutError = SETTINGS_MESSAGES[capture.reason];
       return;
     }
     this.capturing = false;
+    // The main process brings the current shortcut back before registering the new one.
+    await this.#resume();
     await this.#update({ shortcut: capture.accelerator });
   }
 
   resetShortcut(): Promise<void> {
     return this.#update({ shortcut: DEFAULT_SHORTCUT });
+  }
+
+  #resume(): Promise<void> {
+    return this.#ports.suspendShortcut(false).catch(() => undefined);
   }
 
   /** Read through a call: `capturing` may change while `captureKey` waits. */
@@ -108,12 +126,17 @@ export class SettingsScreen {
   async #update(patch: SettingsPatch): Promise<void> {
     this.saving = true;
     this.error = null;
+    this.shortcutError = null;
+    const fail = (message: string): void => {
+      if (patch.shortcut !== undefined) this.shortcutError = message;
+      else this.error = message;
+    };
     try {
       const result = await this.#ports.update(patch);
       this.snapshot = result.snapshot;
-      if (!result.ok) this.error = SETTINGS_MESSAGES[result.reason];
+      if (!result.ok) fail(SETTINGS_MESSAGES[result.reason]);
     } catch {
-      this.error = SETTINGS_MESSAGES.failed;
+      fail(SETTINGS_MESSAGES.failed);
     } finally {
       this.saving = false;
     }

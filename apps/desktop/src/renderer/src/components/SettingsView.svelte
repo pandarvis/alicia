@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { fade, slide } from "svelte/transition";
   import { DEFAULT_SHORTCUT } from "../../../shared/accelerator.ts";
   import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
@@ -29,9 +29,11 @@
 
   let deviceName = $state("…");
   let appVersion = $state("…");
-  let brainVersion = $state<string | null>(null);
+  /** Undefined while the brain is asked; null when it could not say. */
+  let brainVersion = $state<string | null | undefined>(undefined);
   let update = $state<UpdateStatus>({ state: "disabled" });
   let captureButton = $state<HTMLButtonElement | null>(null);
+  let changeButton = $state<HTMLButtonElement | null>(null);
   let confirming = $state(false);
   let signOutButton = $state<HTMLButtonElement | null>(null);
   let cancelButton = $state<HTMLButtonElement | null>(null);
@@ -87,11 +89,15 @@
     if (screen.capturing) captureButton?.focus();
   });
 
-  function handleCaptureKeydown(event: KeyboardEvent): void {
+  async function handleCaptureKeydown(event: KeyboardEvent): Promise<void> {
     // Tab still leaves (and the blur cancels the capture).
     if (event.key === "Tab") return;
     event.preventDefault();
-    void screen.captureKey(event);
+    await screen.captureKey(event);
+    if (screen.capturing) return;
+    // Captured or cancelled from the keyboard: the focus goes back to « Modifier ».
+    await tick();
+    changeButton?.focus();
   }
 
   function askSignOut(): void {
@@ -135,18 +141,24 @@
           <button
             class="capture"
             bind:this={captureButton}
-            onkeydown={handleCaptureKeydown}
+            onkeydown={(event) => void handleCaptureKeydown(event)}
             onblur={() => { screen.cancelCapture(); }}
-            aria-describedby="{uid}-shortcut"
+            aria-describedby="{uid}-shortcut {uid}-shortcut-error"
             data-testid="settings-shortcut-capture"
             in:fade={{ duration: motion(120) }}
           >Appuie sur la combinaison… (Échap pour annuler)</button>
         {:else}
           <kbd data-testid="settings-shortcut" in:fade={{ duration: motion(120) }}>{settings?.shortcut ?? "…"}</kbd>
-          <button class="link" onclick={() => { screen.startCapture(); }} disabled={busy} data-testid="settings-shortcut-change">Modifier</button>
+          <button class="link" bind:this={changeButton} onclick={() => { screen.startCapture(); }} disabled={busy} aria-describedby="{uid}-shortcut-error" data-testid="settings-shortcut-change">Modifier</button>
           {#if settings !== null && settings.shortcut !== DEFAULT_SHORTCUT}
             <button class="link" onclick={() => void screen.resetShortcut()} disabled={busy} data-testid="settings-shortcut-reset" transition:fade={{ duration: motion(120) }}>Rétablir {DEFAULT_SHORTCUT}</button>
           {/if}
+        {/if}
+      </div>
+      <!-- Always in the DOM: the capture button and « Modifier » point at it. -->
+      <div id="{uid}-shortcut-error" aria-live="polite">
+        {#if screen.shortcutError}
+          <p class="warning" data-testid="settings-shortcut-error" transition:slide={{ duration: motion(150) }}>{screen.shortcutError}</p>
         {/if}
       </div>
       {#if screen.snapshot !== null && !screen.snapshot.shortcutActive}
@@ -178,7 +190,7 @@
         <dt>Personne</dt><dd>{session.person.name}</dd>
         <dt>Nom de l'appareil</dt><dd>{deviceName}</dd>
         <dt>Version de l'app</dt><dd data-testid="settings-app-version">{appVersion}</dd>
-        <dt>Version d'Alicia</dt><dd>{brainVersion ?? "inconnue"}</dd>
+        <dt>Version d'Alicia</dt><dd>{brainVersion === undefined ? "…" : (brainVersion ?? "inconnue")}</dd>
       </dl>
       <div class="signout">
         {#if confirming}
