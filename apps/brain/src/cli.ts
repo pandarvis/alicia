@@ -337,7 +337,7 @@ async function checkIsolationCommand(): Promise<void> {
     if (person === undefined) throw new Error("Aucune personne dans la config.");
     const turn = cliTurn(config, person);
     // The real tool set (weather only with a home), as a turn of the brain gets it.
-    const tools = new ToolCatalog(toolProviders(config, { memory: opened.memory, attachments: opened.attachments, fetch }))
+    const tools = new ToolCatalog(toolProviders(config, { memory: opened.memory, attachments: opened.attachments, fetch, google: undefined }))
       .forTurn(turn);
     const params = { auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) };
     const init = await readInit(params, {

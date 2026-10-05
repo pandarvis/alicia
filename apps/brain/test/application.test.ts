@@ -8,7 +8,9 @@ import { buildApplication, toolProviders } from "../src/application.ts";
 import { parseConfig } from "../src/config.ts";
 import { callTool, FakeEngine } from "../src/engine/fake-engine.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
+import type { GoogleClient } from "../src/google/google-client.ts";
 import { ToolCatalog } from "../src/tools/catalog.ts";
+import { createGoogleFixture } from "./google-fixture.ts";
 import { createTempDir, createTestClock, createTestDb, createTestMemory, createTestTurn, KEVIN, testRequest } from "./helpers.ts";
 
 let dir: string | undefined;
@@ -112,7 +114,9 @@ test("tool providers: documents always, weather only when the home is configured
     urls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     return Promise.reject(new Error("offline"));
   };
-  const parts = { memory: createTestMemory(db, clock), attachments: new AttachmentStore(db, createTempDir(), clock), fetch: fakeFetch };
+  const parts = {
+    memory: createTestMemory(db, clock), attachments: new AttachmentStore(db, createTempDir(), clock), fetch: fakeFetch, google: undefined,
+  };
   const tools = (yaml: string) =>
     new ToolCatalog(toolProviders(parseConfig(yaml), parts)).forTurn(createTestTurn(KEVIN, "11111111-1111-4111-8111-111111111111").turn);
   const base = "people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }\n";
@@ -122,4 +126,18 @@ test("tool providers: documents always, weather only when the home is configured
   expect(withHome.map((t) => t.name)).toContain("weather");
   await callTool(testRequest({ tools: withHome }), "weather", {});
   expect(urls).toHaveLength(1);
+});
+
+test("tool providers: Google only when a Google client is given", () => {
+  const db = createTestDb();
+  const clock = createTestClock().clock;
+  const { client } = createGoogleFixture();
+  const base = parseConfig("people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }\n");
+  const parts = { memory: createTestMemory(db, clock), attachments: new AttachmentStore(db, createTempDir(), clock), fetch };
+  const names = (google: GoogleClient | undefined) =>
+    new ToolCatalog(toolProviders(base, { ...parts, google }))
+      .forTurn(createTestTurn(KEVIN, "11111111-1111-4111-8111-111111111111").turn)
+      .map((t) => t.name);
+  expect(names(undefined)).not.toContain("gmail_read");
+  expect(names(client)).toEqual(expect.arrayContaining(["calendar_list", "gmail_draft"]));
 });

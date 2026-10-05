@@ -10,6 +10,8 @@ import { ConversationRepository } from "./conversations/repository.ts";
 import { openDb } from "./db/open.ts";
 import type { Engine } from "./engine/engine.ts";
 import { SdkEngine } from "./engine/sdk-engine.ts";
+import type { GoogleClient } from "./google/google-client.ts";
+import { googleTools } from "./google/tools.ts";
 import { Maintenance } from "./maintenance.ts";
 import { PairingService } from "./identity/pairing.ts";
 import { syncPeople } from "./identity/people.ts";
@@ -75,15 +77,19 @@ function openCore(config: Config, embedder?: Embedder) {
   }
 }
 
-/** Every tool family of the brain (plan 3b adds Google here). The weather only exists once the home is known. */
+/**
+ * Every tool family of the brain. The weather only exists once the home is known; Google (calendars, Gmail) only
+ * when it is configured and its key given.
+ */
 export function toolProviders(
   config: Config,
-  parts: { memory: MemoryStore; attachments: AttachmentStore; fetch: typeof fetch },
+  parts: { memory: MemoryStore; attachments: AttachmentStore; fetch: typeof fetch; google: GoogleClient | undefined },
 ): ToolProvider[] {
   return [
     memoryTools(parts.memory),
     documentTools(parts.attachments),
     ...(config.home !== undefined ? [weatherTools({ home: config.home, timezone: config.timezone, fetch: parts.fetch })] : []),
+    ...(parts.google !== undefined ? [googleTools(parts.google, config.timezone)] : []),
   ];
 }
 
@@ -124,7 +130,8 @@ export async function buildApplication(
       timezone: config.timezone,
       clock: systemClock,
     });
-    const tools = new ToolCatalog(toolProviders(config, { memory, attachments, fetch: options.fetch ?? fetch }));
+    // Google is wired at the next step (its routes and startup); until then the brain has none.
+    const tools = new ToolCatalog(toolProviders(config, { memory, attachments, fetch: options.fetch ?? fetch, google: undefined }));
     // Two tools with one name would only fail on the first turn: refuse to start instead.
     const someone = config.people[0];
     if (someone !== undefined) tools.checkNames({ person: someone, conversationId: randomUUID() });

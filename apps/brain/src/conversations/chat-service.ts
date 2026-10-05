@@ -5,6 +5,7 @@ import { attachmentNote, describeAttachments } from "../attachments/prompt.ts";
 import type { AttachmentStore, ClaimResult } from "../attachments/store.ts";
 import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
+import type { GoogleClient, ReconnectNotice } from "../google/google-client.ts";
 import { buildSheet } from "../memory/sheet.ts";
 import type { MemoryStore } from "../memory/store.ts";
 import { defuseMentions, truncate } from "../text.ts";
@@ -28,6 +29,8 @@ export interface ChatDependencies {
   skillsDir: string;
   clock: Clock;
   timezone: string;
+  /** Google accounts: their tools come through `tools`; this is for the « Reconnecter » card at the end of a turn. */
+  google?: GoogleClient;
 }
 
 /** What a turn needs from the connection that started it. */
@@ -185,6 +188,7 @@ export async function* handleSend(
   // Existing conversation without a session (lost): re-inject the last exchanges from the first attempt.
   let currentPrompt = sessionId === undefined ? buildResumePrompt(history, prompt, notes) : prompt;
   let error: EngineError | undefined;
+  let reconnect: ReconnectNotice[] = [];
 
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -270,6 +274,8 @@ export async function* handleSend(
     }
   } finally {
     turnScope.abort();
+    // The turn's Google findings are collected whatever happened (nothing stays behind); they feed the card below.
+    reconnect = deps.google?.endTurn(conversationId) ?? [];
     // A mark that could not be written during the turn (locked database…) gets a last try.
     turn.persistUntrusted();
     // Always store what was said and log the turn, even if the consumer stops.
@@ -282,6 +288,9 @@ export async function* handleSend(
   }
 
   if (signal.aborted) return;
+  // Accounts Google refused during this turn: the app shows a « Reconnecter le compte » card. Sent before the final
+  // done / error: the app forgets the turn on its terminal event.
+  if (reconnect.length > 0) yield { type: "account_reconnect", conversationId, accounts: reconnect };
   const durationMs = deps.clock() - start;
   if (error !== undefined) {
     yield {
