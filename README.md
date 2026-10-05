@@ -130,10 +130,10 @@ la session reprise et dans ce qu'Alicia a pu retenir) : pour repartir de zéro, 
 Les contenus extérieurs sont présentés à Alicia comme des données encadrées, jamais comme des consignes.
 
 **Mise à jour d'un cerveau existant** :
-- **Les apps installées d'abord** : une app de bureau 0.1.0 ignore les cartes Oui / Non (`confirm_request`) ;
-  avec elle, tout ce qui demande l'accord resterait sans réponse (rien n'est fait au bout de 5 minutes). Publier
-  l'app **0.2.0** (voir « Installer et publier une version ») et vérifier que les apps installées sont passées en
-  0.2.0 (Réglages → Version de l'app) **avant** de passer le vrai cerveau sur cette version.
+- **Les apps installées d'abord** : une app de bureau construite avant la v0.1.0 (développement) ignore les
+  cartes Oui / Non (`confirm_request`) ; avec elle, tout ce qui demande l'accord resterait sans réponse (rien
+  n'est fait au bout de 5 minutes). Installer l'app **0.1.0** ou plus (voir « Installer et publier une
+  version ») et le vérifier dans Réglages → Version de l'app **avant** de passer le vrai cerveau sur cette version.
 - **Migration `0005_untrusted_conversations`** (au premier démarrage) : elle marque « contenu extérieur » les
   conversations qui ont déjà eu une pièce jointe, une recherche web ou une page web. Un cerveau venu du plan 4b
   n'en a aucune (avant cette version, le SDK tournait sans aucun outil natif et sans pièce jointe) : rien n'est
@@ -142,7 +142,7 @@ Les contenus extérieurs sont présentés à Alicia comme des données encadrée
   recherches, les pages inconnues et les souvenirs demandent désormais un « Oui ».
 - **Migration `0006_google_accounts`** (au premier démarrage) : elle ne fait qu'ajouter la table des comptes
   Google, vide ; rien d'existant n'est touché. Sans `google` dans la config, rien ne change.
-- **Apps 0.1.0 / 0.2.0** : elles ignorent la carte « Reconnecter le compte » (`account_reconnect`) ; Alicia dit
+- **Apps d'avant la v0.1.0** : elles ignorent la carte « Reconnecter le compte » (`account_reconnect`) ; Alicia dit
   quand même en une phrase qu'un compte est à reconnecter, et l'écran Comptes n'existe que dans les apps à jour.
 
 ### Pièces jointes
@@ -502,8 +502,8 @@ Windows, avec l'installateur `apps/desktop/dist/Alicia-Setup-<version>.exe`.
    de notification, sans fenêtre ; relancer l'app à la main alors ramène bien la fenêtre. Le désactiver dans
    Paramètres Windows → Applications → Démarrage : au lancement suivant, la case est décochée.
 9. **Fermeture de session / arrêt** avec Alicia ouverte : rien ne bloque la fermeture de Windows.
-10. **Mise à jour réelle** : passer `version` à la suivante (ex. `0.2.1`), `dist`, copier les trois fichiers dans
-    `<dataDir>/updates/` du cerveau, relancer l'app : Réglages finit par afficher « La version 0.2.1 est
-    prête » ; « Redémarrer pour installer » ; l'app redémarre en 0.2.1 (Réglages → Version de l'app).
+10. **Mise à jour réelle** : passer `version` à la suivante (ex. `0.1.1`), `dist`, copier les trois fichiers dans
+    `<dataDir>/updates/` du cerveau, relancer l'app : Réglages finit par afficher « La version 0.1.1 est
+    prête » ; « Redémarrer pour installer » ; l'app redémarre en 0.1.1 (Réglages → Version de l'app).
 11. **Développement** : `pnpm --filter @alicia/desktop dev` — le rechargement à chaud (HMR) fonctionne
     toujours avec la CSP resserrée (`connect-src 'self' http: https:`, sans `ws:`).
