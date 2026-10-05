@@ -3,6 +3,10 @@ import {
   type AttachmentRefusalReason,
   AttachmentSummary,
   ConversationSummary,
+  GoogleAccountSummary,
+  GoogleConnectFailure,
+  type GoogleConnectRequest,
+  GoogleOAuthClient,
   HealthResponse,
   HistoryMessage,
   HttpErrorBody,
@@ -38,6 +42,34 @@ export type MemoryWriteResult =
 export type UploadResult =
   | { ok: true; attachment: AttachmentSummary }
   | { ok: false; reason: AttachmentRefusalReason | "failed" };
+
+/** The Google accounts the caller reaches, or `available: false` when Google is not configured on the brain. */
+export type GoogleAccountsResult = { available: true; accounts: GoogleAccountSummary[] } | { available: false };
+
+/** Why an account was not connected, as the Comptes screen explains it. */
+export type GoogleConnectFailureReason = "exchange_failed" | "missing_scopes" | "already_connected" | "unavailable";
+export type GoogleConnectResult =
+  | { ok: true; account: GoogleAccountSummary }
+  | { ok: false; reason: GoogleConnectFailureReason };
+
+/** The brain's word for a Google-specific failure (`{ error: "missing_scopes" }`…), distinct from its typed errors. */
+const GoogleFailureBody = z.object({ error: GoogleConnectFailure });
+
+const CONNECT_FAILURES: Readonly<Record<GoogleConnectFailure, GoogleConnectFailureReason>> = {
+  exchange_failed: "exchange_failed",
+  missing_scopes: "missing_scopes",
+  already_connected: "already_connected",
+  google_unreachable: "unavailable",
+  google_unavailable: "unavailable",
+};
+/** Without the brain's word (a proxy page): the status. */
+const CONNECT_FAILURES_BY_STATUS: Readonly<Record<number, GoogleConnectFailureReason>> = {
+  400: "exchange_failed",
+  409: "already_connected",
+  422: "missing_scopes",
+  502: "unavailable",
+  503: "unavailable",
+};
 
 const PAIRING_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -243,6 +275,49 @@ export class BrainApi {
     if (response.status !== 204 && response.status !== 404) {
       throw statusError(response.status, path, (await readError(response))?.code);
     }
+  }
+
+  /** `available: false` only when the brain says Google is not configured on it. */
+  async listGoogleAccounts(): Promise<GoogleAccountsResult> {
+    const path = "/google/accounts";
+    const response = await this.#request("GET", path);
+    if (response.ok) return { available: true, accounts: z.array(GoogleAccountSummary).parse(await response.json()) };
+    const body = await readJson(response);
+    if (response.status === 503 && GoogleFailureBody.safeParse(body).data?.error === "google_unavailable") {
+      return { available: false };
+    }
+    throw statusError(response.status, path, HttpErrorBody.safeParse(body).data?.error.code);
+  }
+
+  /** What the browser flow needs (the client secret never leaves the brain). */
+  googleClient(): Promise<GoogleOAuthClient> {
+    return this.#get("/google/oauth-client", GoogleOAuthClient);
+  }
+
+  /**
+   * Hands the code of the browser flow to the brain, which exchanges it: the account (new or reconnected), or why
+   * not. An invalid request or an unexpected answer throws.
+   */
+  async connectGoogleAccount(input: GoogleConnectRequest): Promise<GoogleConnectResult> {
+    const path = "/google/accounts";
+    const response = await this.#request("POST", path, input);
+    if (response.ok) return { ok: true, account: GoogleAccountSummary.parse(await response.json()) };
+    const body = await readJson(response);
+    const failure = GoogleFailureBody.safeParse(body);
+    if (failure.success) return { ok: false, reason: CONNECT_FAILURES[failure.data.error] };
+    const typed = HttpErrorBody.safeParse(body);
+    const reason = typed.success ? undefined : CONNECT_FAILURES_BY_STATUS[response.status];
+    if (reason === undefined) throw statusError(response.status, path, typed.data?.error.code);
+    return { ok: false, reason };
+  }
+
+  /** False when the account does not exist (or is not the caller's to remove). */
+  async removeGoogleAccount(id: string): Promise<boolean> {
+    const path = `/google/accounts/${encodeURIComponent(id)}`;
+    const response = await this.#request("DELETE", path);
+    if (response.status === 204) return true;
+    if (response.status === 404) return false;
+    throw statusError(response.status, path, (await readError(response))?.code);
   }
 
   async #get<T>(path: string, schema: z.ZodType<T>): Promise<T> {

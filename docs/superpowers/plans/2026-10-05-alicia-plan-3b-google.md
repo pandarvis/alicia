@@ -5081,6 +5081,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `apps/desktop/src/renderer/src/lib/brain-client.ts`
 - Test: `apps/desktop/test/brain-client.test.ts`
 
+> **Alignement (mise en œuvre) :** les échecs se lisent d'abord dans le **mot du cerveau** (`{ error: GoogleConnectFailure }`, tâche 13) : `exchange_failed`, `missing_scopes`, `already_connected` tels quels, `google_unreachable` (502) et `google_unavailable` (503) → `unavailable`. Sans ce mot (page d'un proxy), le statut décide comme dans le plan ; une erreur typée du cerveau (`{ error: { code, message } }`, ex. `400 invalid_request`, qui partage le statut 400 avec `exchange_failed`) est une **exception**, jamais un échec affiché comme « Google n'a pas validé ». `listGoogleAccounts` ne rend `available: false` que pour un 503 `google_unavailable` (un 503 de proxy est une erreur) ; 401 → `UnauthorizedError` partout. Tests en plus : URL, méthode, corps et jeton envoyés, réponses mal formées, `invalid_request`, 500.
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 Ajouter à `apps/desktop/test/brain-client.test.ts` (le fichier a déjà `fakeFetch` ; définir une session de test comme les tests voisins, ici `SESSION`) :

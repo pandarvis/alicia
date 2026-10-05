@@ -406,3 +406,77 @@ describe("attachments", () => {
     await expect(api(500, brainError("internal")).api.discardAttachment(ATTACHMENT_ID)).rejects.toThrow();
   });
 });
+
+describe("Google accounts", () => {
+  const SESSION = { serverUrl: "http://brain.local:8780", token: "t".repeat(43), person: { id: "kevin", name: "Kévin" } };
+  const ACCOUNT = {
+    id: "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192", owner: "common", email: "famille@example.com",
+    status: "connected", connectedAt: "2026-10-05T08:00:00.000Z",
+  };
+  const CONNECT = { owner: "common", code: "4/0A", codeVerifier: "v".repeat(43), redirectUri: "http://127.0.0.1:4000" } as const;
+  const api = (status: number, body: unknown) => new BrainApi(fakeFetch(status, body).fetchFn, SESSION);
+
+  test("list, or 'unavailable' when the brain has no Google", async () => {
+    const { calls, fetchFn } = fakeFetch(200, [ACCOUNT]);
+    expect(await new BrainApi(fetchFn, SESSION).listGoogleAccounts()).toEqual({ available: true, accounts: [ACCOUNT] });
+    expect(calls[0]?.url).toBe("http://brain.local:8780/google/accounts");
+    expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe(`Bearer ${"t".repeat(43)}`);
+    expect(await api(503, { error: "google_unavailable" }).listGoogleAccounts()).toEqual({ available: false });
+  });
+
+  test("list: a revoked device, a proxy's 503 or a malformed answer are not 'no Google'", async () => {
+    await expect(api(401, brainError("unauthenticated")).listGoogleAccounts()).rejects.toBeInstanceOf(UnauthorizedError);
+    await expect(api(503, "<html>maintenance</html>").listGoogleAccounts()).rejects.toThrow(/503/);
+    await expect(api(200, [{ ...ACCOUNT, token: undefined, email: "pas une adresse" }]).listGoogleAccounts()).rejects.toThrow();
+  });
+
+  test("OAuth client", async () => {
+    const client = { clientId: "1-a.apps.googleusercontent.com", scopes: ["https://www.googleapis.com/auth/gmail.compose"] };
+    const { calls, fetchFn } = fakeFetch(200, client);
+    expect(await new BrainApi(fetchFn, SESSION).googleClient()).toEqual(client);
+    expect(calls[0]?.url).toBe("http://brain.local:8780/google/oauth-client");
+    await expect(api(200, { clientId: "evil.example.com", scopes: [] }).googleClient()).rejects.toThrow();
+    await expect(api(503, { error: "google_unavailable" }).googleClient()).rejects.toThrow(/503/);
+  });
+
+  test("connect: the account (new or reconnected), or why not", async () => {
+    const created = fakeFetch(201, ACCOUNT);
+    expect(await new BrainApi(created.fetchFn, SESSION).connectGoogleAccount(CONNECT)).toEqual({ ok: true, account: ACCOUNT });
+    expect(created.calls[0]?.url).toBe("http://brain.local:8780/google/accounts");
+    expect(created.calls[0]?.init?.method).toBe("POST");
+    expect(created.calls[0]?.init?.body).toBe(JSON.stringify(CONNECT));
+    expect(await api(200, ACCOUNT).connectGoogleAccount(CONNECT)).toEqual({ ok: true, account: ACCOUNT });
+
+    // The brain's own word decides.
+    for (const [status, error, reason] of [
+      [400, "exchange_failed", "exchange_failed"], [409, "already_connected", "already_connected"],
+      [422, "missing_scopes", "missing_scopes"], [502, "google_unreachable", "unavailable"],
+      [503, "google_unavailable", "unavailable"],
+    ] as const) {
+      expect(await api(status, { error }).connectGoogleAccount(CONNECT)).toEqual({ ok: false, reason });
+    }
+    // Without it (a proxy page), the status.
+    for (const [status, reason] of [
+      [400, "exchange_failed"], [409, "already_connected"], [422, "missing_scopes"], [502, "unavailable"], [503, "unavailable"],
+    ] as const) {
+      expect(await api(status, { error: "x" }).connectGoogleAccount(CONNECT)).toEqual({ ok: false, reason });
+    }
+  });
+
+  test("connect: an invalid request, a revoked device or another status is an error", async () => {
+    await expect(api(400, brainError("invalid_request")).connectGoogleAccount(CONNECT)).rejects.toThrow(/invalid_request/);
+    await expect(api(401, brainError("unauthenticated")).connectGoogleAccount(CONNECT)).rejects.toBeInstanceOf(UnauthorizedError);
+    await expect(api(500, brainError("internal")).connectGoogleAccount(CONNECT)).rejects.toThrow(/500/);
+    await expect(api(201, { nope: true }).connectGoogleAccount(CONNECT)).rejects.toThrow();
+  });
+
+  test("remove", async () => {
+    const removed = fakeFetch(204, null);
+    expect(await new BrainApi(removed.fetchFn, SESSION).removeGoogleAccount(ACCOUNT.id)).toBe(true);
+    expect(removed.calls[0]?.url).toBe(`http://brain.local:8780/google/accounts/${ACCOUNT.id}`);
+    expect(removed.calls[0]?.init?.method).toBe("DELETE");
+    expect(await api(404, brainError("not_found")).removeGoogleAccount(ACCOUNT.id)).toBe(false);
+    await expect(api(503, { error: "google_unavailable" }).removeGoogleAccount(ACCOUNT.id)).rejects.toThrow(/503/);
+    await expect(api(401, brainError("unauthenticated")).removeGoogleAccount(ACCOUNT.id)).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+});
