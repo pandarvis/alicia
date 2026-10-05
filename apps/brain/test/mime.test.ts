@@ -61,7 +61,7 @@ describe("draft MIME", () => {
       ...BASE, inReplyTo: "<ok@ecole.example.com>", references: "<one@x.example> garbage <two@y.example>\r\nBcc: z@evil.example",
     }));
     expect(headers).toContain("In-Reply-To: <ok@ecole.example.com>");
-    expect(headers).toContain("References: <one@x.example> <two@y.example>");
+    expect(headers).toContain("References: <one@x.example>\r\n <two@y.example>");
     expect(headers).not.toMatch(/Bcc|garbage|evil/);
     const none = decode(buildRawMessage({ ...BASE, inReplyTo: "not an id", references: "nothing here" })).headers;
     expect(none).not.toMatch(/In-Reply-To|References/);
@@ -78,5 +78,37 @@ describe("draft MIME", () => {
   test("the subject never breaks the message: one header line, however long", () => {
     const { headers } = decode(buildRawMessage({ ...BASE, subject: "Sortie ".repeat(200) }));
     for (const line of headers.split("\r\n")) expect(line.length).toBeLessThanOrEqual(998);
+  });
+
+  test("a long thread keeps its first and last references, folded, never encoded", () => {
+    const ids = Array.from({ length: 40 }, (_, i) => `<message-${i}-${"x".repeat(30)}@mail.ecole-du-village.example.com>`);
+    const { headers } = decode(buildRawMessage({ ...BASE, inReplyTo: ids[39] ?? "", references: ids.join(" ") }));
+    const lines = headers.split("\r\n");
+    const start = lines.findIndex((line) => line.startsWith("References: "));
+    const folded = [lines[start]?.slice("References: ".length) ?? ""];
+    for (let i = start + 1; lines[i]?.startsWith(" ") === true; i++) folded.push(lines[i]?.slice(1) ?? "");
+    expect(folded).toEqual([ids[0], ...ids.slice(20)]);
+    expect(headers).toContain(`In-Reply-To: ${ids[39] ?? ""}`);
+    expect(headers).not.toContain("=?");
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(998);
+  });
+
+  test("an overlong message id is dropped", () => {
+    const long = `<${"a".repeat(251)}@x.example>`;
+    const { headers } = decode(buildRawMessage({ ...BASE, inReplyTo: long, references: `${long} <ok@x.example>` }));
+    expect(headers).not.toContain("In-Reply-To");
+    expect(headers).toContain("References: <ok@x.example>\r\n");
+  });
+
+  test("hostile references are scanned in linear time", () => {
+    for (const references of [`<${"@".repeat(200_000)}`, "<a@".repeat(66_000), `<${"a".repeat(200_000)}`, "<".repeat(200_000)]) {
+      const started = performance.now();
+      buildRawMessage({ ...BASE, inReplyTo: references, references });
+      expect(performance.now() - started, references.slice(0, 6)).toBeLessThan(1_000);
+    }
+  });
+
+  test("no recipient: no To header", () => {
+    expect(decode(buildRawMessage({ ...BASE, to: [] })).headers).not.toMatch(/^To:/m);
   });
 });

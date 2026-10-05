@@ -50,6 +50,25 @@ describe("FakeGoogle", () => {
     }
   });
 
+  test("any Gmail route Alicia does not use is refused and recorded", async () => {
+    const { google, call } = await setup();
+    const gmail = "https://gmail.googleapis.com/gmail/v1/users/me";
+    for (const [method, url] of [
+      ["POST", `${gmail}/messages/send`], ["POST", `${gmail}/messages/m1/modify`], ["DELETE", `${gmail}/messages/m1`],
+      ["GET", `${gmail}/drafts`], ["POST", `${gmail}/settings/forwardingAddresses`],
+      ["POST", "https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send"],
+    ] as const) {
+      expect((await call(url, { method, body: "{}" })).status, url).toBe(400);
+    }
+    expect(google.refusedRoutes.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
+      "POST /gmail/v1/users/me/messages/send", "POST /gmail/v1/users/me/messages/m1/modify",
+      "DELETE /gmail/v1/users/me/messages/m1", "GET /gmail/v1/users/me/drafts",
+      "POST /gmail/v1/users/me/settings/forwardingAddresses", "POST /upload/gmail/v1/users/me/messages/send",
+    ]);
+    expect((await call(`${gmail}/profile`)).status).toBe(200);
+    expect(google.refusedRoutes).toHaveLength(6);
+  });
+
   test("a calendar write that could notify anyone is refused: no sendUpdates=none, or attendees", async () => {
     const { google, call } = await setup();
     const event = { summary: "Dîner", start: { date: "2026-10-12" }, end: { date: "2026-10-13" } };

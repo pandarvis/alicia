@@ -1,7 +1,11 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { GoogleClient } from "../src/google/google-client.ts";
-import { GoogleApiError } from "../src/google/http.ts";
+import { type ApiRequest, GoogleApiError } from "../src/google/http.ts";
 import { GoogleOAuth } from "../src/google/oauth.ts";
 import { TokenCipher } from "../src/google/token-cipher.ts";
 import { GoogleAccountStore } from "../src/google/account-store.ts";
@@ -276,5 +280,65 @@ describe("GoogleClient", () => {
     expect(await client.remove(KEVIN, accounts.kevin.id)).toBe(true);
     expect(google.revoked).toHaveLength(1);
     expect(client.list(KEVIN).map((a) => a.email)).toEqual(["famille@example.com"]);
+  });
+});
+
+describe("what may reach Google", () => {
+  const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
+
+  test("Gmail: only reading the profile, searching, reading a message and creating a draft — checked before any call", async () => {
+    const { client, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    const access = client.forPerson(KEVIN);
+    const before = google.requests.length;
+    const refused: ApiRequest[] = [
+      { method: "POST", url: `${GMAIL}/messages/send` },
+      { method: "POST", url: `${GMAIL}/drafts/send` },
+      { method: "POST", url: `${GMAIL}/drafts/d1/send` },
+      { method: "POST", url: `${GMAIL}/messages` },
+      { method: "POST", url: `${GMAIL}/messages/m1/modify` },
+      { method: "DELETE", url: `${GMAIL}/messages/m1` },
+      { method: "POST", url: `${GMAIL}/messages/m1/trash` },
+      { method: "GET", url: `${GMAIL}/messages/m1/attachments/a1` },
+      { method: "GET", url: `${GMAIL}/drafts` },
+      { method: "PATCH", url: `${GMAIL}/drafts` },
+      { method: "POST", url: `${GMAIL}/settings/forwardingAddresses` },
+      { method: "GET", url: `${GMAIL}/messages/%2e%2e/settings/filters` },
+      { method: "GET", url: "https://gmail.googleapis.com/gmail/v1/users/other%40example.com/profile" },
+      { method: "POST", url: "https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send" },
+      { method: "GET", url: "http://gmail.googleapis.com/gmail/v1/users/me/profile" },
+      { method: "GET", url: "https://gmail.googleapis.com:8443/gmail/v1/users/me/profile" },
+      { method: "GET", url: "https://evil.example/gmail/v1/users/me/profile" },
+      { method: "GET", url: "https://www.googleapis.com/drive/v3/files" },
+    ];
+    for (const request of refused) {
+      expect(await failureOf(access.json(account, request, z.unknown())), `${request.method} ${request.url}`).toBe("invalid");
+    }
+    expect(google.requests.length).toBe(before);
+    for (const request of [
+      { method: "GET", url: `${GMAIL}/profile` },
+      { method: "GET", url: `${GMAIL}/messages`, query: { q: "is:unread" } },
+      { method: "GET", url: `${GMAIL}/messages/m%2F1` },
+      { method: "POST", url: `${GMAIL}/drafts`, body: { message: { raw: "eA" } } },
+    ] satisfies ApiRequest[]) {
+      expect(await failureOf(access.json(account, request, z.unknown())), `${request.method} ${request.url}`).not.toBe("invalid");
+    }
+  });
+
+  test("no string in the Google code names a way to send", () => {
+    const root = fileURLToPath(new URL("../src/google", import.meta.url));
+    const found: string[] = [];
+    for (const file of readdirSync(root).filter((name) => name.endsWith(".ts"))) {
+      const source = ts.createSourceFile(file, readFileSync(join(root, file), "utf8"), ts.ScriptTarget.Latest);
+      const visit = (node: ts.Node): void => {
+        if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateLiteralToken(node))
+          && /\bsend\b/i.test(node.text)) {
+          found.push(`${file}: ${node.text}`);
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+    }
+    expect(found).toEqual([]);
   });
 });

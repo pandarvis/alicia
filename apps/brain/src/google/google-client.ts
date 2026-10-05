@@ -2,7 +2,7 @@ import { GOOGLE_SCOPES, type GoogleConnectRequest, type Person } from "@alicia/p
 import type { z } from "zod";
 import type { Clock } from "../clock.ts";
 import type { ConnectResult, GoogleAccount, GoogleAccountStore } from "./account-store.ts";
-import { type ApiRequest, buildUrl, failureOf, GoogleApiError, type GoogleRequester } from "./http.ts";
+import { type ApiRequest, buildUrl, failureOf, GoogleApiError, type GoogleRequester, isAllowedRoute } from "./http.ts";
 import { fetchProfileEmail, GoogleAuthError, type GoogleOAuth, type Tokens } from "./oauth.ts";
 import { TokenDecryptError } from "./token-cipher.ts";
 
@@ -96,6 +96,8 @@ export class GoogleClient {
 
   /** One authorized call. The person's reach is checked on every call, cached token or not. */
   async send(personId: string, accountId: string, request: ApiRequest, signal?: AbortSignal): Promise<Response> {
+    // A route Alicia has no business with (sending a mail, another host…) never gets a token, nor a call.
+    if (!isAllowedRoute(request)) throw new GoogleApiError("invalid");
     const account = this.#deps.accounts.get(personId, accountId);
     if (account === undefined) throw new GoogleApiError("not_found");
     if (account.status === "reconnect") throw new GoogleApiError("reconnect");

@@ -9,18 +9,26 @@ export interface MessagePart {
   parts?: MessagePart[] | undefined;
 }
 
-export const MessagePart: z.ZodType<MessagePart> = z.lazy(() =>
-  z.object({
+/** Real mails nest a few levels; anything deeper is not read (a crafted mail cannot exhaust the stack). */
+const MAX_DEPTH = 32;
+
+/**
+ * One schema per level, built once: parts below MAX_DEPTH are dropped without being walked, so a crafted answer
+ * nested thousands of levels deep cannot exhaust the stack while it is validated either.
+ */
+function partSchema(depth: number): z.ZodType<MessagePart> {
+  const fields = {
     mimeType: z.string().optional(),
     filename: z.string().optional(),
     headers: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
     body: z.object({ data: z.string().optional(), attachmentId: z.string().optional() }).optional(),
-    parts: z.array(MessagePart).optional(),
-  }),
-);
+  };
+  return depth >= MAX_DEPTH
+    ? z.object({ ...fields, parts: z.unknown().transform(() => undefined) })
+    : z.object({ ...fields, parts: z.array(partSchema(depth + 1)).optional() });
+}
 
-/** Real mails nest a few levels; anything deeper is not read (a crafted mail cannot exhaust the stack). */
-const MAX_DEPTH = 32;
+export const MessagePart: z.ZodType<MessagePart> = partSchema(0);
 /** At most this many attachment names are given. */
 const MAX_ATTACHMENTS = 64;
 /** A body is cut to this many characters before any cleaning (the cleaning's cost stays bounded). */
@@ -95,16 +103,58 @@ function decodeEntities(text: string): string {
   });
 }
 
-/** Rough HTML → text for reading a mail: no scripts, styles or tags; paragraphs become lines. */
+/** Elements whose content is never text. An unclosed script or style hides everything after it; a head does not. */
+const HIDDEN_ELEMENT = /^<(script|style|head)(?![a-z0-9-])/;
+
+/**
+ * Comments, scripts, styles and heads removed in one forward pass (indexOf, never a backtracking pattern: a crafted
+ * mail cannot make it quadratic). An unclosed comment, script or style drops everything after it.
+ */
+function stripHidden(html: string): string {
+  // ASCII only: the same length as `html`, so its indexes are html's (toLowerCase may lengthen some letters).
+  const lower = html.replace(/[A-Z]+/g, (letters) => letters.toLowerCase());
+  /** End markers known to be absent from some position on: never searched for again. */
+  const absent = new Set<string>();
+  const find = (marker: string, from: number): number => {
+    if (absent.has(marker)) return -1;
+    const found = lower.indexOf(marker, from);
+    if (found === -1) absent.add(marker);
+    return found;
+  };
+  let out = "";
+  let at = 0;
+  while (at < html.length) {
+    const open = lower.indexOf("<", at);
+    if (open === -1) return out + html.slice(at);
+    out += html.slice(at, open);
+    if (lower.startsWith("<!--", open)) {
+      const end = find("-->", open + 4);
+      if (end === -1) return out;
+      at = end + 3;
+      continue;
+    }
+    const name = HIDDEN_ELEMENT.exec(lower.slice(open, open + 8))?.[1];
+    const close = name === undefined ? -1 : find(`</${name}`, open + 1);
+    if (name === undefined || (close === -1 && name === "head")) {
+      out += "<";
+      at = open + 1;
+      continue;
+    }
+    if (close === -1) return out;
+    const end = lower.indexOf(">", close);
+    if (end === -1) return out;
+    at = end + 1;
+  }
+  return out;
+}
+
+/** Rough HTML → text for reading a mail: no comments, scripts, styles or tags; paragraphs become lines. */
 export function htmlToText(html: string): string {
-  const text = html
-    .slice(0, MAX_BODY)
-    .replace(/<(script|style|head)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
-    // An unclosed script or style: everything after it is code, not text.
-    .replace(/<(script|style)\b[\s\S]*$/i, "")
+  const text = stripHidden(html.slice(0, MAX_BODY))
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n")
-    .replace(/<[^>]+>/g, "");
+    // `[^<>]`: a scan from one "<" stops at the next, so a run of "<" stays linear.
+    .replace(/<[^<>]*>/g, "");
   return decodeEntities(text)
     .replace(/[ \t\xa0]+/g, " ")
     .replace(/ *\n */g, "\n")

@@ -31,6 +31,13 @@ describe("Gmail API", () => {
     expect(mail.messageId).toBe("<sortie@ecole.example.com>");
   });
 
+  test("a maximum that is not a number searches with the default cap", async () => {
+    const { kevinAccess, accounts, google } = await createFamilyGoogle();
+    const found = await new GmailApi(kevinAccess).search(accounts.famille, "is:unread", Number.NaN);
+    expect(found.map((m) => m.id)).toEqual(["famillemail1"]);
+    expect(google.requests.find((r) => r.url.pathname.endsWith("/messages"))?.url.searchParams.get("maxResults")).toBe("25");
+  });
+
   test("no code path can send a mail: no sending URL anywhere in the brain, no sending method", () => {
     const sources = brainSources();
     expect(sources.length).toBeGreaterThan(20);

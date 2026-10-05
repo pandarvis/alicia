@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 import type { ToolDefinition, ToolResult } from "../src/engine/tools.ts";
 import type { GoogleOwner, Person } from "@alicia/protocol";
@@ -22,6 +23,10 @@ export function createGoogleFixture() {
   const db = createTestDb();
   const time = createTestClock();
   const google = new FakeGoogle();
+  // The brain checks its routes before any call: Google must never have seen one Alicia does not use.
+  onTestFinished(() => {
+    expect(google.refusedRoutes.map((r) => `${r.method} ${r.url.href}`)).toEqual([]);
+  });
   const accounts = createTestGoogleAccounts(db, time.clock);
   const oauth = new GoogleOAuth({ clientId: google.clientId, clientSecret: google.clientSecret }, google.fetch, time.clock);
   const client = new GoogleClient({ accounts, oauth, fetch: google.fetch, clock: time.clock, clientId: google.clientId });

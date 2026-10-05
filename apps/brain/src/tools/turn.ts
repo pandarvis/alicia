@@ -4,7 +4,7 @@ import type { ConfirmationOutcome, ConfirmationRequest } from "./confirmations.t
 import { userUrls } from "./urls.ts";
 
 /** The protocol caps a card's question at 500 characters. */
-const SUMMARY_MAX = 500;
+export const SUMMARY_MAX = 500;
 
 export interface TurnParams {
   person: Person;

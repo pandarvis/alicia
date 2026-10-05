@@ -202,6 +202,14 @@ function listEvents(stored: readonly FakeEvent[], query: URLSearchParams): Respo
   return json(200, { items: all.slice(from, next), ...(next < all.length ? { nextPageToken: String(next) } : {}) });
 }
 
+/** The Gmail routes Alicia uses (the brain checks them too, before any call). */
+function isAlicias(method: string, path: string): boolean {
+  if (!path.startsWith(`${GMAIL_PREFIX}/`)) return false;
+  const route = path.slice(GMAIL_PREFIX.length);
+  if (method === "GET") return route === "/profile" || route === "/messages" || /^\/messages\/[^/]+$/.test(route);
+  return method === "POST" && route === "/drafts";
+}
+
 /**
  * An in-memory Google (OAuth, Calendar v3, Gmail v1) behind a `fetch`, for tests and the end-to-end run.
  * Never touches the network. Any URL that would send a mail is refused (and recorded).
@@ -210,6 +218,8 @@ export class FakeGoogle {
   readonly clientId = "alicia-test.apps.googleusercontent.com";
   readonly clientSecret = "alicia-test-secret";
   readonly requests: FakeRequest[] = [];
+  /** Calls to a Gmail route Alicia never uses (sending, deleting, settings…): answered 400. Tests expect none. */
+  readonly refusedRoutes: FakeRequest[] = [];
   /** Tokens revoked through the revocation endpoint. */
   readonly revoked: string[] = [];
   readonly #accounts = new Map<string, FakeAccount>();
@@ -315,7 +325,10 @@ export class FakeGoogle {
     this.requests.push({ method, url, email, body });
     if (url.href === TOKEN_URL && method === "POST") return this.#token(new URLSearchParams(body));
     if (url.href === REVOKE_URL && method === "POST") return this.#revoke(new URLSearchParams(body).get("token") ?? "");
-    if (/\/send$/.test(url.pathname)) return apiError(400, "sending is forbidden");
+    if (/\/send$/.test(url.pathname) || (url.hostname === "gmail.googleapis.com" && !isAlicias(method, url.pathname))) {
+      this.refusedRoutes.push({ method, url, email, body });
+      return apiError(400, "route not used by Alicia");
+    }
     if (email === undefined) return apiError(401, "authError");
     const failure = this.#failures.shift();
     if (failure !== undefined) return apiError(failure.status, failure.reason);

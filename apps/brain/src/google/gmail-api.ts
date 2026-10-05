@@ -67,7 +67,7 @@ export class GmailApi {
 
   /** Summaries of the mails Gmail finds for `query` (its own search syntax), newest first, at most MAX_SEARCH. */
   async search(account: GoogleAccount, query: string, max: number): Promise<MailSummary[]> {
-    const limit = Math.max(1, Math.min(MAX_SEARCH, Math.floor(max)));
+    const limit = Number.isFinite(max) ? Math.max(1, Math.min(MAX_SEARCH, Math.floor(max))) : MAX_SEARCH;
     const list = await this.#google.json(account, {
       method: "GET", url: `${BASE}/messages`, query: { q: query, maxResults: limit },
     }, MessageList);

@@ -58,6 +58,36 @@ export function buildUrl(request: ApiRequest): string {
   return url.href;
 }
 
+const GMAIL_HOST = "gmail.googleapis.com";
+const CALENDAR_HOST = "www.googleapis.com";
+const GMAIL_ME = "/gmail/v1/users/me";
+/** Every Gmail route Alicia uses — reading and drafting. Anything else (sending, deleting, settings…) never leaves. */
+const GMAIL_ROUTES: readonly { method: ApiRequest["method"]; path: RegExp }[] = [
+  { method: "GET", path: /^\/profile$/ },
+  { method: "GET", path: /^\/messages$/ },
+  { method: "GET", path: /^\/messages\/[^/]+$/ },
+  { method: "POST", path: /^\/drafts$/ },
+];
+
+/**
+ * Whether a request may go to Google with an account's token: HTTPS on Google's default port, Calendar v3 on
+ * www.googleapis.com, and on Gmail only the routes above. Checked on the URL as it would be fetched (dot segments
+ * resolved), so no path trick can reach another route.
+ */
+export function isAllowedRoute(request: ApiRequest): boolean {
+  let url: URL;
+  try {
+    url = new URL(buildUrl(request));
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.port !== "" || url.username !== "" || url.password !== "") return false;
+  if (url.hostname === CALENDAR_HOST) return url.pathname.startsWith("/calendar/v3/");
+  if (url.hostname !== GMAIL_HOST || !url.pathname.startsWith(`${GMAIL_ME}/`)) return false;
+  const path = url.pathname.slice(GMAIL_ME.length);
+  return GMAIL_ROUTES.some((route) => route.method === request.method && route.path.test(path));
+}
+
 const SCOPE_MISSING = /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions|insufficient authentication scopes/i;
 const RATE_LIMITED = /rateLimitExceeded|userRateLimitExceeded|dailyLimitExceeded|quotaExceeded/;
 

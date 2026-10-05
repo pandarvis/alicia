@@ -7,8 +7,13 @@ const PLAIN = /^[ -~]*$/;
  * Unicode line and paragraph separators. A line break would let a value add headers (Bcc…).
  */
 const FORBIDDEN = /[\p{Cc}\p{Zl}\p{Zp}]/u;
-/** A message id as it appears in Message-ID / In-Reply-To / References: <left@right>, printable, no brackets inside. */
-const MESSAGE_ID = /<[!-;=?-~]+@[!-;=?-~]+>/g;
+/**
+ * A message id as it appears in Message-ID / In-Reply-To / References: <left@right>, printable ASCII, no bracket or
+ * "@" inside either side, at most 250 characters each (bounded: a crafted header cannot make the scan quadratic).
+ */
+const MESSAGE_ID = /<[!-;=?A-~]{1,250}@[!-;=?A-~]{1,250}>/g;
+/** References kept after the thread's first id. */
+const REFERENCES_KEPT = 20;
 /** UTF-8 bytes per encoded word: base64 of 45 bytes is 60 characters, under the 75 of RFC 2047. */
 const WORD_BYTES = 45;
 const BODY_LINE = 76;
@@ -58,9 +63,18 @@ function addresses(name: string, list: readonly string[]): string {
   return `${name}: ${list.join(",\r\n ")}`;
 }
 
-/** The well-formed message ids of an outside header, space-separated (empty when there are none). */
-function messageIds(value: string | undefined): string {
-  return [...(value ?? "").matchAll(MESSAGE_ID)].map((match) => match[0]).join(" ");
+/** The well-formed message ids of an outside header, in order (none when there are none). */
+function messageIds(value: string | undefined): string[] {
+  return [...(value ?? "").matchAll(MESSAGE_ID)].map((match) => match[0]);
+}
+
+/**
+ * Message ids as one header: printable ASCII already (never encoded words, which would break threading), one id per
+ * folded line. A long thread keeps its first id and its last ones, as RFC 5322 suggests trimming References.
+ */
+function idHeader(name: string, ids: readonly string[]): string {
+  const kept = ids.length > REFERENCES_KEPT + 1 ? [ids[0] ?? "", ...ids.slice(-REFERENCES_KEPT)] : ids;
+  return `${name}: ${kept.join("\r\n ")}`;
 }
 
 /** A plain-text mail (UTF-8, base64 body), base64url-encoded as Gmail's `raw` field expects. */
@@ -68,15 +82,15 @@ export function buildRawMessage(message: DraftMessage): string {
   const body = Buffer.from(message.body.replace(/\r?\n/g, "\r\n"), "utf8").toString("base64");
   const lines: string[] = [];
   for (let i = 0; i < body.length; i += BODY_LINE) lines.push(body.slice(i, i + BODY_LINE));
-  const inReplyTo = messageIds(message.inReplyTo).split(" ")[0] ?? "";
+  const inReplyTo = messageIds(message.inReplyTo).slice(0, 1);
   const references = messageIds(message.references);
   const text = [
     addresses("From", [message.from]),
-    addresses("To", message.to),
+    ...(message.to.length > 0 ? [addresses("To", message.to)] : []),
     ...(message.cc.length > 0 ? [addresses("Cc", message.cc)] : []),
     header("Subject", message.subject),
-    ...(inReplyTo !== "" ? [header("In-Reply-To", inReplyTo)] : []),
-    ...(references !== "" ? [header("References", references)] : []),
+    ...(inReplyTo.length > 0 ? [idHeader("In-Reply-To", inReplyTo)] : []),
+    ...(references.length > 0 ? [idHeader("References", references)] : []),
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=\"UTF-8\"",
     "Content-Transfer-Encoding: base64",

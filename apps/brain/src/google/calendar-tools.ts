@@ -1,14 +1,15 @@
 import { z } from "zod";
 import { type ConfirmationAsk, defineTool, type ToolDefinition, type ToolResult } from "../engine/tools.ts";
 import { oneLine } from "../memory/sheet.ts";
-import { hasHiddenCharacters } from "../text.ts";
+import { hasHiddenCharacters, truncate } from "../text.ts";
+import { SUMMARY_MAX } from "../tools/turn.ts";
 import { frameUntrusted } from "../tools/untrusted.ts";
 import type { GoogleAccount } from "./account-store.ts";
 import {
   CalendarApi, type CalendarEntry, type CalendarEvent, type EventFields, type EventTime, type EventTimeInput,
 } from "./calendar-api.ts";
 import type { GoogleAccess } from "./google-client.ts";
-import { GoogleApiError } from "./http.ts";
+import { GoogleApiError, type GoogleFailure } from "./http.ts";
 import {
   addDays, addMinutesLocal, daysBetween, formatDay, formatDayTime, formatTime, instantOfDateTime, IsoDate, localDay,
   LocalDateTime, localInstant, localMidnight, normalizeLocal,
@@ -28,6 +29,14 @@ const NO_ANSWER =
 const TRUNCATED = "(liste coupée : précise une période plus courte)";
 const WHEN_HELP = "AAAA-MM-JJ pour une journée entière, AAAA-MM-JJTHH:MM (heure du foyer) sinon";
 const THIS_EVENT = "cet événement";
+/** An event title on a card: the rest of the card is for the changes asked. */
+const CARD_TITLE_MAX = 80;
+const UNREADABLE_TITLE = "(titre illisible)";
+const TOO_LONG =
+  "Texte trop long à afficher sur la carte de confirmation : rien n'a été fait. Fais la modification en plusieurs fois (le titre, puis le lieu par exemple).";
+const UNREACHABLE = "Google ne répond pas pour l'instant : rien n'a été fait. Propose de réessayer plus tard.";
+const NO_VERSION =
+  "Google n'a pas donné la version de cet événement : rien n'a été fait, la modification ne pourrait pas être vérifiée.";
 
 const When = z.union([IsoDate, LocalDateTime]);
 const CalendarId = z.string().min(1).max(300);
@@ -43,8 +52,13 @@ interface Target {
 
 type Times = { start: EventTimeInput; end: EventTimeInput } | { error: string };
 type Resolution = { target: Target } | { result: ToolResult };
-/** An event as found for a question or a check: absent (or out of reach), found, or Google not answering. */
-type Lookup = { kind: "absent" } | { kind: "found"; target: Target; event: CalendarEvent } | { kind: "unreachable" };
+/** An event as found for a question or a check: found, Google not answering, or another failure (kept to be said). */
+type Lookup =
+  | { kind: "found"; target: Target; event: CalendarEvent }
+  | { kind: "unreachable" }
+  | { kind: "failed"; failure: GoogleFailure };
+/** A card to show, or what Alicia is told instead (nothing to confirm: `run` says why). */
+type Card = { ask: ConfirmationAsk } | { result: ToolResult };
 
 interface Change {
   title?: string | undefined;
@@ -95,6 +109,14 @@ function titleOf(event: CalendarEvent): string {
   return title === "" ? "(sans titre)" : title;
 }
 
+/**
+ * The event's title as a card shows it: short enough to leave room for the changes asked, and never with characters
+ * the card could not show (anyone who invites the account writes it).
+ */
+function cardTitle(event: CalendarEvent): string {
+  return hasHiddenCharacters(event.summary) ? UNREADABLE_TITLE : truncate(titleOf(event), CARD_TITLE_MAX);
+}
+
 function describeEvent(target: Target, event: CalendarEvent, timeZone: string): string {
   const place = event.location !== undefined && event.location.trim() !== "" ? ` · lieu : ${oneLine(event.location)}` : "";
   // An occurrence is changed alone; the series has its own id, given as such.
@@ -120,12 +142,12 @@ function describeSeries(event: CalendarEvent, timeZone: string): string {
 /** How the card names the event: a single one, one occurrence of a series, or the whole series (always said). */
 function nameForCard(event: CalendarEvent, timeZone: string): string {
   if (event.recurrence !== undefined && event.recurrence.length > 0) {
-    return `toute la série « ${titleOf(event)} » (${describeSeries(event, timeZone)})`;
+    return `toute la série « ${cardTitle(event)} » (${describeSeries(event, timeZone)})`;
   }
   const when = describeWhen(event.start, event.end, timeZone);
   return event.recurringEventId === undefined
-    ? `« ${titleOf(event)} » (${when})`
-    : `cette occurrence de « ${titleOf(event)} » (${when})`;
+    ? `« ${cardTitle(event)} » (${when})`
+    : `cette occurrence de « ${cardTitle(event)} » (${when})`;
 }
 
 /** Times as Google wants them: all-day ends are exclusive; a timed event lasts an hour by default. */
@@ -205,6 +227,18 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
       const missing = calendarId === undefined ? "Aucun agenda modifiable dans ces comptes." : "Agenda introuvable ou en lecture seule.";
       return { result: { text: [missing, ...problems].join("\n"), isError: true } };
     }
+    if (others.length === 0) {
+      // Taken for granted only when every account answered: the person says whether this one is right.
+      return {
+        result: {
+          text: [
+            "Un seul agenda trouvé, mais un autre compte n'a pas répondu : demande à la personne si c'est bien celui-ci, puis rappelle l'outil avec account et calendarId.",
+            frameUntrusted("agendas", `- ${describeCalendar(only)} ${reference(only)}`),
+            ...problems,
+          ].join("\n"),
+        },
+      };
+    }
     return {
       result: {
         text: [
@@ -229,40 +263,47 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
     try {
       const target = await findTarget(account, calendarId);
       const event = await calendar.event(account, target.calendar.id, eventId);
-      return event.status === "cancelled" ? { kind: "absent" } : { kind: "found", target, event };
+      return event.status === "cancelled" ? { kind: "failed", failure: "not_found" } : { kind: "found", target, event };
     } catch (error) {
       if (!(error instanceof GoogleApiError)) throw error;
       // Only Google not answering still asks (generically); anything else is for `run` to explain.
-      return error.failure === "unavailable" ? { kind: "unreachable" } : { kind: "absent" };
+      return error.failure === "unavailable" ? { kind: "unreachable" } : { kind: "failed", failure: error.failure };
     }
   }
 
   /**
-   * The card's question: the event as found (single, occurrence or whole series) and its version as the snapshot.
-   * Null when there is nothing to confirm (out of reach, unknown, invalid change: `run` says why). Google not
+   * The card for a change: the event as found (single, occurrence or whole series) and its version as the snapshot.
+   * No card (a result instead) when there is nothing to confirm: out of reach, unknown, no version to check, or a
+   * question too long for the card to show whole — a card never hides part of what is approved. Google not
    * answering: a generic question with an empty snapshot, and `run` then does nothing.
    */
-  async function ask(
+  async function card(
     verb: "Modifier" | "Supprimer", email: string, calendarId: string, eventId: string, changes: (event?: CalendarEvent) => string[],
-  ): Promise<ConfirmationAsk | null> {
+  ): Promise<Card> {
     const account = access.account(email);
-    if (account === undefined) return null;
+    if (account === undefined) return { result: ACCOUNT_NOT_FOUND };
     const found = await lookUp(account, calendarId, eventId);
-    if (found.kind === "absent") return null;
-    if (found.kind === "unreachable") return { summary: [`${verb} ${THIS_EVENT} ?`, ...changes()].join("\n"), snapshot: "" };
-    return {
-      summary: [`${verb} ${nameForCard(found.event, timeZone)} ?`, ...changes(found.event)].join("\n"),
-      snapshot: found.event.etag ?? "",
-    };
+    if (found.kind === "failed") return { result: { text: failureText(account, found.failure), isError: true } };
+    const ask = found.kind === "unreachable"
+      ? { summary: [`${verb} ${THIS_EVENT} ?`, ...changes()].join("\n"), snapshot: "" }
+      : { summary: [`${verb} ${nameForCard(found.event, timeZone)} ?`, ...changes(found.event)].join("\n"), snapshot: found.event.etag };
+    if (ask.snapshot === undefined) return { result: { text: NO_VERSION, isError: true } };
+    if (ask.summary.length > SUMMARY_MAX) return { result: { text: TOO_LONG, isError: true } };
+    return { ask: { summary: ask.summary, snapshot: ask.snapshot } };
+  }
+
+  /** The card's question, or null when there is nothing to confirm (`run` then says why). */
+  async function ask(...params: Parameters<typeof card>): Promise<ConfirmationAsk | null> {
+    const found = await card(...params);
+    return "ask" in found ? found.ask : null;
   }
 
   /** What `run` answers when nothing was approved: why nothing will be done. */
-  async function unapproved(email: string, calendarId: string, eventId: string): Promise<ToolResult> {
-    const account = access.account(email);
-    if (account === undefined) return ACCOUNT_NOT_FOUND;
-    const found = await lookUp(account, calendarId, eventId);
-    if (found.kind === "absent") return { text: failureText(account, "not_found"), isError: true };
-    if (found.kind === "unreachable") return { text: failureText(account, "unavailable"), isError: true };
+  async function unapproved(...params: Parameters<typeof card>): Promise<ToolResult> {
+    const found = await card(...params);
+    if ("result" in found) return found.result;
+    // Google did not answer while asking: said as such (the next call asks again).
+    if (found.ask.snapshot === "") return { text: UNREACHABLE, isError: true };
     return { text: NOT_APPROVED, isError: true };
   }
 
@@ -303,7 +344,7 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
         if (to < from) return { text: "La date de fin précède la date de début.", isError: true };
         if (daysBetween(from, to) >= MAX_DAYS) return { text: `Demande au plus ${MAX_DAYS} jours à la fois.`, isError: true };
         const accounts = access.accounts();
-        if (accounts.length === 0) return { text: NO_ACCOUNT };
+        if (accounts.length === 0) return { text: NO_ACCOUNT, isError: true };
         const range = { timeMin: localMidnight(from, timeZone), timeMax: localMidnight(addDays(to, 1), timeZone) };
         const found: { at: number; line: string }[] = [];
         const problems: string[] = [];
@@ -362,7 +403,8 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
             ...(location !== undefined ? { location } : {}),
             ...(description !== undefined ? { description } : {}),
           });
-          return { text: `Événement créé : ${describeEvent(target, created, timeZone)}` };
+          // Only what Alicia wrote and the event's times: calendar names are written by whoever shares them.
+          return { text: `Événement créé : ${describeWhen(created.start, created.end, timeZone)} · « ${oneLine(title)} » · ${accountLabel(target.account)} ${reference(target, created.id)}` };
         });
       },
     }),
@@ -387,7 +429,9 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
       async run({ account: email, calendarId, eventId, ...change }, confirmed) {
         const problem = changeProblem(change, timeZone);
         if (problem !== undefined) return { text: problem, isError: true };
-        if (confirmed === undefined) return unapproved(email, calendarId, eventId);
+        if (confirmed === undefined) {
+          return unapproved("Modifier", email, calendarId, eventId, (current) => changeLines(change, current));
+        }
         if (confirmed.snapshot === "") return { text: NO_ANSWER, isError: true };
         const account = access.account(email);
         if (account === undefined) return ACCOUNT_NOT_FOUND;
@@ -409,7 +453,8 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
           }
           // If-Match: Google itself refuses the write if the event changed after the question.
           const updated = await calendar.update(account, target.calendar.id, eventId, fields, confirmed.snapshot);
-          return { text: `Événement modifié : ${describeEvent(target, updated, timeZone)}` };
+          // Times and references only: the title and place may be someone else's text.
+          return { text: `Événement modifié : ${describeWhen(updated.start, updated.end, timeZone)} · ${accountLabel(target.account)} ${reference(target, updated.id)}` };
         });
       },
     }),
@@ -423,7 +468,7 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
         return ask("Supprimer", account, calendarId, eventId, () => []);
       },
       async run({ account: email, calendarId, eventId }, confirmed) {
-        if (confirmed === undefined) return unapproved(email, calendarId, eventId);
+        if (confirmed === undefined) return unapproved("Supprimer", email, calendarId, eventId, () => []);
         if (confirmed.snapshot === "") return { text: NO_ANSWER, isError: true };
         const account = access.account(email);
         if (account === undefined) return ACCOUNT_NOT_FOUND;
@@ -431,7 +476,7 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
           const target = await findTarget(account, calendarId);
           // If-Match: nothing is deleted if the event changed after the question.
           await calendar.remove(account, target.calendar.id, eventId, confirmed.snapshot);
-          return { text: `Événement supprimé de ${describeCalendar(target)}.` };
+          return { text: `Événement supprimé (${accountLabel(target.account)}).` };
         });
       },
     }),
