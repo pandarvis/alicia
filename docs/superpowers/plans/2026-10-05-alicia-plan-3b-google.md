@@ -2562,6 +2562,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `apps/brain/src/google/mail-text.ts`, `apps/brain/src/google/mime.ts`, `apps/brain/src/google/gmail-api.ts`
 - Test: `apps/brain/test/mail-text.test.ts`, `apps/brain/test/mime.test.ts`, `apps/brain/test/gmail-api.test.ts`
 
+> **Alignement (mise en œuvre) :**
+> - **Aucune voie d'envoi** : `gmail-api.test.ts` parcourt toutes les sources du cerveau (sauf `fake-google.ts`, qui nomme les URL d'envoi pour les refuser) et refuse `/send`, `messages.send`, `drafts.send`, `gmail.send`, `mail.google.com` ; `GmailApi` n'a aucune méthode qui envoie, transfère, répond, supprime ou modifie.
+> - **Injection d'en-têtes** : toute valeur d'en-tête est refusée si elle contient un caractère de contrôle (`\p{Cc}` : CR, LF, NUL, tabulation, DEL, C1 dont « next line ») ou un séparateur Unicode de ligne / paragraphe. `From` / `To` / `Cc` : adresses nues (`z.email()`, ASCII, ni nom affiché, ni liste, ni groupe), une par ligne repliée, jamais en mots encodés. `In-Reply-To` / `References` viennent du mail d'origine (contenu extérieur) : seuls les identifiants bien formés `<gauche@droite>` sont gardés. Un sujet ASCII trop long passe en mots encodés (lignes ≤ 998).
+> - **Contenu extérieur borné** : corps coupé à 200 000 caractères avant nettoyage, profondeur MIME lue limitée à 32, au plus 64 noms de pièces jointes, un `<script>` / `<style>` non fermé ne laisse rien passer après lui. Le cadrage « non fiable » (`frameUntrusted`) est fait par les outils (tâche 11).
+> - Identifiants de message par `pathSegment` (déplacé de `calendar-api.ts` vers `http.ts`, partagé) : `""`, `"."`, `".."` refusés sans appel. `search` lit au plus `MAX_SEARCH` = 25 mails.
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 `apps/brain/test/mail-text.test.ts` :

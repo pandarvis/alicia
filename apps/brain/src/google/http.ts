@@ -36,6 +36,15 @@ export interface GoogleRequester {
   empty(account: GoogleAccount, request: ApiRequest): Promise<void>;
 }
 
+/**
+ * An id as one path segment. "", "." and ".." survive encodeURIComponent and are then resolved by the URL parser:
+ * an event id ".." would turn `…/events/..` into a call on the calendar itself. They are refused before any call.
+ */
+export function pathSegment(id: string): string {
+  if (id === "" || id === "." || id === "..") throw new GoogleApiError("invalid");
+  return encodeURIComponent(id);
+}
+
 export function buildUrl(request: ApiRequest): string {
   const url = new URL(request.url);
   for (const [name, value] of Object.entries(request.query ?? {})) {

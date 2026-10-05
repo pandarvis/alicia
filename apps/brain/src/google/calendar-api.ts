@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { GoogleAccount } from "./account-store.ts";
-import { GoogleApiError, type GoogleRequester } from "./http.ts";
+import { type GoogleRequester, pathSegment } from "./http.ts";
 import { IsoDate, Rfc3339DateTime } from "./time.ts";
 
 const BASE = "https://www.googleapis.com/calendar/v3";
@@ -79,17 +79,8 @@ export interface EventList {
 /** No e-mail may leave because of Alicia: Google must never notify attendees of a change. */
 const NO_NOTIFICATIONS = { sendUpdates: "none" } as const;
 
-/**
- * One path segment. "", "." and ".." survive encodeURIComponent and are then resolved by the URL parser: an event
- * id ".." would turn `…/events/..` into a call on the calendar itself. They are refused before any call.
- */
-function segment(id: string): string {
-  if (id === "" || id === "." || id === "..") throw new GoogleApiError("invalid");
-  return encodeURIComponent(id);
-}
-
-const eventsUrl = (calendarId: string): string => `${BASE}/calendars/${segment(calendarId)}/events`;
-const eventUrl = (calendarId: string, eventId: string): string => `${eventsUrl(calendarId)}/${segment(eventId)}`;
+const eventsUrl = (calendarId: string): string => `${BASE}/calendars/${pathSegment(calendarId)}/events`;
+const eventUrl = (calendarId: string, eventId: string): string => `${eventsUrl(calendarId)}/${pathSegment(eventId)}`;
 
 /** A conditional write: only on the version that was read. */
 function ifMatch(etag: string | undefined): { headers?: Readonly<Record<string, string>> } {
