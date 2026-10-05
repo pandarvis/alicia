@@ -81,14 +81,17 @@ export function answeringPorts(outcome: ConfirmationOutcome) {
 }
 
 /**
- * A turn context for tool tests: every confirmation gets `outcome` (or what `answer` resolves to); `end` ends
- * the turn, as handleSend does when it finishes.
+ * A turn context for tool tests: every confirmation gets `outcome` (or what it resolves to, given the question's
+ * signal); `end` ends the turn, as handleSend does when it finishes. `untrusted`: the conversation already let
+ * outside content in; `onUntrusted`: called when the turn marks it.
  */
 export function createTestTurn(
   person: Person,
   conversationId: string,
-  outcome: ConfirmationOutcome | (() => Promise<ConfirmationOutcome>) = "approved",
-  paths: { attachmentsDir?: string; skillsDir?: string; userText?: string } = {},
+  outcome: ConfirmationOutcome | ((signal: AbortSignal) => Promise<ConfirmationOutcome>) = "approved",
+  paths: {
+    attachmentsDir?: string; skillsDir?: string; userText?: string; untrusted?: boolean; onUntrusted?: () => void;
+  } = {},
 ) {
   const asked: ConfirmationRequest[] = [];
   const scope = new AbortController();
@@ -99,10 +102,12 @@ export function createTestTurn(
     attachmentsDir: paths.attachmentsDir ?? join(tmpdir(), "alicia-none", conversationId),
     skillsDir: paths.skillsDir ?? join(tmpdir(), "alicia-none", "skills"),
     userText: paths.userText ?? "",
+    ...(paths.untrusted !== undefined ? { untrusted: paths.untrusted } : {}),
+    ...(paths.onUntrusted !== undefined ? { onUntrusted: paths.onUntrusted } : {}),
     signal: scope.signal,
-    confirm: (request) => {
+    confirm: (request, signal) => {
       asked.push(request);
-      return typeof outcome === "function" ? outcome() : Promise.resolve(outcome);
+      return typeof outcome === "function" ? outcome(signal) : Promise.resolve(outcome);
     },
   });
   return {
@@ -126,7 +131,7 @@ export function createTempDir(prefix = "alicia-test-"): string {
 /** Guard refusing every built-in tool (tests that do not use them). */
 export const DENY_NATIVE: NativeToolGuard = {
   check: () => Promise.resolve({ allow: false, reason: "Cet outil n'est pas disponible." }),
-  reminder: () => undefined,
+  after: () => undefined,
 };
 
 /** An engine request for tests: no tools, built-in tools refused, nothing readable. */

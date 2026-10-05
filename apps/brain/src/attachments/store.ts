@@ -183,11 +183,16 @@ export class AttachmentStore {
           // Stays in the conversation's folder; its row is pending all the same, and purged after a day.
         }
       }
-      this.#db
-        .update(attachments)
-        .set({ conversationId: null, messageId: null })
-        .where(and(inArray(attachments.id, [...ids]), eq(attachments.personId, personId)))
-        .run();
+      try {
+        this.#db
+          .update(attachments)
+          .set({ conversationId: null, messageId: null })
+          .where(and(inArray(attachments.id, [...ids]), eq(attachments.personId, personId)))
+          .run();
+      } catch (error) {
+        // The rows stay with the conversation (its folder holds what was moved): the turn still reports a failure.
+        console.error(`Attachment claim rollback failed (${ids.join(", ")}):`, error);
+      }
       return { status: "failed" };
     }
     return { status: "claimed", attachments: taken.map((a) => ({ ...a, conversationId, messageId })) };

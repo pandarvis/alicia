@@ -29,6 +29,8 @@ export const conversations = sqliteTable(
     personId: text("person_id").notNull().references(() => people.id),
     title: text("title").notNull(),
     sessionId: text("session_id"),
+    /** When outside content (page, search, mail, attachment) first entered the conversation; never cleared. */
+    untrustedAt: integer("untrusted_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },

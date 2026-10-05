@@ -155,9 +155,14 @@ importées. Idempotent (relançable sans doublons).
   fichiers de référence d'un skill) ; toute autre lecture est refusée.
 - **Garde-fou contre l'injection de consignes** : un mail, une page web ou un document peut
   contenir des instructions piégées visant à faire fuiter la mémoire ou les mails. Dès
-  qu'un contenu non fiable est entré dans le tour (`gmail_lire`, `WebFetch`,
-  `document_lire`, `Read` d'une pièce jointe), tout `WebFetch` vers une adresse absente du
-  message de l'utilisateur demande une **confirmation**. Les contenus non fiables sont
+  qu'un contenu non fiable est entré dans la **conversation** (`gmail_lire`, `WebFetch`,
+  `WebSearch`, `document_lire`, une pièce jointe), la conversation le reste pour de bon
+  (le contenu survit dans la session reprise, le contexte de reprise et la mémoire) ; dès
+  lors, tout `WebFetch` vers une adresse absente du message de l'utilisateur et des
+  résultats de recherche du tour, toute `WebSearch` (la requête est montrée) et toute
+  écriture en mémoire (`memory_remember`, `memory_update`, texte exact montré) demandent
+  une **confirmation**. Une adresse du réseau de la maison (box, domotique, adresses
+  privées ou locales) demande toujours une confirmation. Les contenus non fiables sont
   présentés à Alicia comme des données, jamais comme des consignes.
 - Les **confirmations** passent par `canUseTool` : le cerveau émet `demande_confirmation`,
   l'app affiche une carte Oui / Non dans le chat, la réponse débloque ou refuse l'outil.

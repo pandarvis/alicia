@@ -7,6 +7,8 @@ import type { TurnContext } from "./turn.ts";
 export interface ToolScope {
   person: Person;
   conversationId: string;
+  /** Read when a tool runs (it changes during the turn): outside content entered the turn or the conversation. */
+  readonly untrusted: boolean;
 }
 
 /** A family of tools (memory, weather, documents, later Google), built for each turn and bound to its scope. */
@@ -34,8 +36,8 @@ export class ToolCatalog {
   }
 
   /** At startup: two providers giving the same tool name are a programming error, found before any turn. */
-  checkNames(scope: ToolScope): void {
-    this.#build(scope);
+  checkNames(scope: Omit<ToolScope, "untrusted">): void {
+    this.#build({ ...scope, untrusted: false });
   }
 
   #build(scope: ToolScope): ToolDefinition[] {

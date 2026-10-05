@@ -97,7 +97,12 @@ export function preToolUseHook(guard: NativeToolGuard): HookCallback {
 export function postToolUseHook(guard: NativeToolGuard): HookCallback {
   return (input) => {
     if (input.hook_event_name !== "PostToolUse" || input.tool_name.startsWith(MCP_PREFIX)) return Promise.resolve({});
-    const reminder = guard.reminder(input.tool_name, input.tool_input);
+    let reminder: string | undefined;
+    try {
+      reminder = guard.after(input.tool_name, input.tool_input, input.tool_response);
+    } catch {
+      reminder = undefined;
+    }
     return Promise.resolve(
       reminder === undefined ? {} : { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: reminder } },
     );

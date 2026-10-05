@@ -36,6 +36,13 @@
       "when": 1791165268226,
       "tag": "0004_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791170059820,
+      "tag": "0005_untrusted_conversations",
+      "breakpoints": true
     }
   ]
 }

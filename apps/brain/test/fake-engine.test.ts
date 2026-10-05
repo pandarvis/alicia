@@ -63,7 +63,7 @@ test("callNative asks the turn's guard, like the SDK's hook would", async () => 
         asked.push([tool, input]);
         return Promise.resolve({ allow: false, reason: "Non." });
       },
-      reminder: () => undefined,
+      after: () => undefined,
     },
   });
   expect(await callNative(request, "WebFetch", { url: "https://exemple.fr" })).toEqual({ allow: false, reason: "Non." });

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { displayUrl, urlKey, userUrls } from "../src/tools/urls.ts";
+import { displayUrl, isLocalHost, parseWebUrl, urlKey, userUrls } from "../src/tools/urls.ts";
 
 describe("urlKey", () => {
   test.each([
     ["https://Example.com/Page/", "example.com/Page"],
+    // Only one trailing slash is dropped: "/a//" is another address than "/a".
+    ["https://example.com/a//", "example.com/a/"],
     ["http://example.com:80/a?b=1#haut", "example.com/a?b=1"],
     ["https://example.com", "example.com"],
     ["www.impots.gouv.fr/portail", "www.impots.gouv.fr/portail"],
@@ -22,6 +24,12 @@ describe("urlKey", () => {
   );
 });
 
+test("parseWebUrl: http(s) with a host only", () => {
+  expect(parseWebUrl("https://example.com/a")?.href).toBe("https://example.com/a");
+  expect(parseWebUrl("www.example.com")?.host).toBe("www.example.com");
+  for (const raw of ["file:///C:/x", "javascript:alert(1)", "mailto:a@b.fr", "x y"]) expect(parseWebUrl(raw), raw).toBeUndefined();
+});
+
 test("userUrls finds the addresses written in the message, without trailing punctuation", () => {
   expect(userUrls("Regarde https://meteo.fr/paris, et aussi www.Impots.gouv.fr/portail. Merci !")).toEqual(
     new Set(["meteo.fr/paris", "www.impots.gouv.fr/portail"]),
@@ -30,7 +38,46 @@ test("userUrls finds the addresses written in the message, without trailing punc
   expect(userUrls("Rien ici")).toEqual(new Set());
 });
 
-test("displayUrl cuts long addresses", () => {
-  expect(displayUrl(`https://example.com/${"a".repeat(200)}`)).toHaveLength(120);
-  expect(displayUrl("https://example.com/a")).toBe("https://example.com/a");
+describe("displayUrl", () => {
+  const show = (raw: string): string => {
+    const url = parseWebUrl(raw);
+    if (url === undefined) throw new Error(raw);
+    return displayUrl(url);
+  };
+
+  test("the address as parsed: punycode host, invisible and direction characters percent-encoded", () => {
+    expect(show("https://аpple.com/")).toBe("https://xn--pple-43d.com/");
+    expect(show("https://example.com/\u202Egnp.exe")).toBe("https://example.com/%E2%80%AEgnp.exe");
+    expect(show("https://example.com/a")).toBe("https://example.com/a");
+  });
+
+  test("long addresses are cut at the end (the host is never what is cut)", () => {
+    const shown = show(`https://example.com/${"a".repeat(400)}`);
+    expect(shown).toHaveLength(200);
+    expect(shown.startsWith("https://example.com/")).toBe(true);
+    expect(shown.endsWith("…")).toBe(true);
+  });
+});
+
+describe("isLocalHost", () => {
+  test.each([
+    "http://localhost:8123/", "http://app.localhost/", "http://127.0.0.1/", "http://127.1/", "http://0x7f000001/",
+    "http://0.0.0.0/", "http://10.0.0.5/", "http://172.16.0.1/", "http://172.31.255.255/", "http://192.168.1.1/",
+    "http://100.64.0.1/", "http://100.127.255.255/", "http://169.254.169.254/latest/meta-data",
+    "http://[::1]/", "http://[::]/", "http://[fe80::1]/", "http://[fd12:3456::1]/", "http://[fc00::1]/",
+    "http://[::ffff:192.168.1.1]/", "http://[::ffff:127.0.0.1]/",
+    "http://box.local/", "http://homeassistant:8123/", "http://nas.lan/", "http://imprimante.home.arpa/",
+    "http://service.internal/", "https://alicia.mon-reseau.ts.net/",
+  ])("%s is local", (raw) => {
+    const url = parseWebUrl(raw);
+    expect(url === undefined ? undefined : isLocalHost(url)).toBe(true);
+  });
+
+  test.each([
+    "https://example.com/", "http://172.32.0.1/", "http://172.15.0.1/", "http://100.128.0.1/", "http://100.63.0.1/",
+    "http://8.8.8.8/", "http://[2001:db8::1]/", "http://[::ffff:8.8.8.8]/", "https://local.example.com/",
+  ])("%s is not", (raw) => {
+    const url = parseWebUrl(raw);
+    expect(url === undefined ? undefined : isLocalHost(url)).toBe(false);
+  });
 });

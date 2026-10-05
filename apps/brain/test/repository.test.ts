@@ -17,6 +17,17 @@ describe("ConversationRepository", () => {
     expect(repository.get(c.id, "kevin")?.title).toBe("Volets");
   });
 
+  test("a conversation starts trusted; the first outside content marks it, for good", () => {
+    const { repository, time } = createRepository();
+    const c = repository.create("kevin", "Volets");
+    expect(c.untrustedAt).toBeNull();
+    const first = time.clock();
+    repository.markUntrusted(c.id);
+    time.advance(60_000);
+    repository.markUntrusted(c.id);
+    expect(repository.get(c.id, "kevin")?.untrustedAt).toBe(first);
+  });
+
   test("addMessage returns the new message id", () => {
     const { repository } = createRepository();
     const c = repository.create("kevin", "Volets");

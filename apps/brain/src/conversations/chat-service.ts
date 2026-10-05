@@ -7,7 +7,7 @@ import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
 import { buildSheet } from "../memory/sheet.ts";
 import type { MemoryStore } from "../memory/store.ts";
-import { truncate } from "../text.ts";
+import { defuseMentions, truncate } from "../text.ts";
 import { labelOf, type ToolCatalog } from "../tools/catalog.ts";
 import {
   type ConfirmationOutcome, type ConfirmationRequest, type ConfirmationWhere, TOOL_RUN_BUDGET_MS,
@@ -49,7 +49,8 @@ const ATTACHMENT_FAILED = "Impossible de joindre les fichiers pour l'instant : r
 const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
 
 function resumeLine(m: Message, note: string | undefined): string {
-  const text = truncate(m.text, RESUME_MESSAGE_CHARS);
+  // Earlier text may hold outside content: no `@path` in it may make the SDK attach a file.
+  const text = defuseMentions(truncate(m.text, RESUME_MESSAGE_CHARS));
   return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${note === undefined ? text : `${text} ${note}`}`;
 }
 
@@ -154,9 +155,16 @@ export async function* handleSend(
     attachmentsDir: deps.attachments.dirOf(conversationId),
     skillsDir: deps.skillsDir,
     userText: message.text,
+    // Outside content of an earlier turn is still there (session, resume prompt, memory): the mark lasts.
+    untrusted: conversation.untrustedAt !== null,
+    onUntrusted: () => {
+      deps.repository.markUntrusted(conversationId);
+    },
     signal: turnSignal,
-    confirm: (request) => ports.confirm({ conversationId, messageId }, request, turnSignal),
+    confirm: (request, scope) => ports.confirm({ conversationId, messageId }, request, scope),
   });
+  // Attachments are outside content from the start: their names are already in the prompt.
+  if (attached.length > 0) turn.markUntrusted();
   const tools = deps.tools.forTurn(turn);
   const body = [message.text.trim(), describeAttachments(attached, deps.attachments.dirOf(conversationId))]
     .filter((part) => part !== "")

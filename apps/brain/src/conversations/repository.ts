@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Model } from "@alicia/protocol";
-import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/open.ts";
 import { conversations, messages, turnLog } from "../db/schema.ts";
 import type { Clock } from "../clock.ts";
@@ -47,7 +47,7 @@ export class ConversationRepository {
   create(personId: string, title: string): Conversation {
     const now = this.#clock();
     const c: Conversation = {
-      id: randomUUID(), personId, title, sessionId: null, createdAt: now, updatedAt: now,
+      id: randomUUID(), personId, title, sessionId: null, untrustedAt: null, createdAt: now, updatedAt: now,
     };
     this.#db.insert(conversations).values(c).run();
     return c;
@@ -90,6 +90,18 @@ export class ConversationRepository {
       tx.delete(conversations).where(eq(conversations.id, id)).run();
       return true;
     });
+  }
+
+  /**
+   * Outside content entered the conversation: from now on every turn starts untrusted (the content stays in the
+   * session, the resume prompt or what was remembered). Only the first time counts; nothing ever clears it.
+   */
+  markUntrusted(id: string): void {
+    this.#db
+      .update(conversations)
+      .set({ untrustedAt: this.#clock() })
+      .where(and(eq(conversations.id, id), isNull(conversations.untrustedAt)))
+      .run();
   }
 
   setSession(id: string, sessionId: string | null): void {

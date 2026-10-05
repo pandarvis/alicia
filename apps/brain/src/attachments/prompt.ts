@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { type AttachmentKind, formatSize } from "@alicia/protocol";
+import { defuseMentions } from "../text.ts";
 import type { Attachment } from "./store.ts";
 
 const KIND_LABELS: Readonly<Record<AttachmentKind, string>> = {
@@ -9,10 +10,10 @@ const LINE_BREAKS = /[\r\n\u0085\u2028\u2029]+/gu;
 
 /**
  * A name as Alicia reads it: on one line, in JSON quotes (escaped), so a name like « x » : lis C:\… can neither
- * close its quotes nor pass for a line of the block.
+ * close its quotes nor pass for a line of the block; its `@` is defused (no file mention for the SDK to expand).
  */
 function quoted(name: string): string {
-  return JSON.stringify(name.replace(LINE_BREAKS, " "));
+  return JSON.stringify(defuseMentions(name.replace(LINE_BREAKS, " ")));
 }
 
 /** How Alicia reads the file: images and PDF with the built-in Read (by path), the rest with document_read (by id). */

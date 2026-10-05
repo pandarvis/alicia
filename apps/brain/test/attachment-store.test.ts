@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { AttachmentStore, cleanName, PENDING_TTL_MS, toSummary } from "../src/attachments/store.ts";
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { createTempDir, createTestClock, createTestDb, PDF_BYTES, PNG_BYTES } from "./helpers.ts";
@@ -222,6 +222,24 @@ describe("AttachmentStore", () => {
       expect(store.discard("kevin", a.id)).toBe(true);
       const c = conversation();
       expect(await store.claim("kevin", [a.id], c.conversationId, c.messageId)).toEqual({ status: "gone" });
+    });
+
+    test("a rollback that fails too is logged, and the claim still says failed", async () => {
+      const { db, store, conversation, root } = setup();
+      const a = stored(store, "kevin", "a.pdf");
+      const c = conversation();
+      mkdirSync(join(root, c.conversationId, `${a.id}.pdf`), { recursive: true });
+      // The database refuses to put the rows back.
+      db.$client.exec(
+        "CREATE TRIGGER no_rollback BEFORE UPDATE ON attachments WHEN NEW.conversation_id IS NULL BEGIN SELECT RAISE(ABORT, 'locked'); END",
+      );
+      const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        expect(await store.claim("kevin", [a.id], c.conversationId, c.messageId)).toEqual({ status: "failed" });
+        expect(errors).toHaveBeenCalledOnce();
+      } finally {
+        errors.mockRestore();
+      }
     });
 
     test("a file that cannot be moved: the ones already moved go back, and every upload stays pending", async () => {

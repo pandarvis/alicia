@@ -320,7 +320,7 @@ const PARAMS: SdkEngineParams = {
 };
 const guard = (decision: NativeDecision | Error, reminder?: string): NativeToolGuard => ({
   check: () => (decision instanceof Error ? Promise.reject(decision) : Promise.resolve(decision)),
-  reminder: () => reminder,
+  after: () => reminder,
 });
 const options = () => buildOptions(
   testRequest({ tools: [echoTool], readableDirs: ["/data/attachments/c1"] }), PARAMS, new AbortController(),
@@ -416,7 +416,7 @@ describe("preToolUseHook", () => {
         seen.push(tool, input, signal);
         return Promise.resolve({ allow: true });
       },
-      reminder: () => undefined,
+      after: () => undefined,
     };
     await preToolUseHook(watching)(pre("Read", { file_path: "C:/a.pdf" }), "t1", SIGNAL);
     expect(seen).toEqual(["Read", { file_path: "C:/a.pdf" }, SIGNAL.signal]);
@@ -429,6 +429,20 @@ describe("postToolUseHook", () => {
     expect(await hook(post("WebFetch"), "t1", SIGNAL)).toEqual({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "Rappel." } });
     expect(await hook(post("mcp__alicia__echo"), "t1", SIGNAL)).toEqual({});
     expect(await postToolUseHook(guard({ allow: true }))(post("WebSearch"), "t1", SIGNAL)).toEqual({});
+  });
+  test("the guard gets the tool's input and response; a failing guard adds nothing", async () => {
+    const seen: unknown[] = [];
+    const watching: NativeToolGuard = {
+      check: () => Promise.resolve({ allow: true }),
+      after: (tool, input, response) => {
+        seen.push(tool, input, response);
+        return undefined;
+      },
+    };
+    await postToolUseHook(watching)(post("WebSearch"), "t1", SIGNAL);
+    expect(seen).toEqual(["WebSearch", {}, "…"]);
+    const failing: NativeToolGuard = { check: () => Promise.resolve({ allow: true }), after: () => { throw new Error("boom"); } };
+    expect(await postToolUseHook(failing)(post("WebSearch"), "t1", SIGNAL)).toEqual({});
   });
 });
 

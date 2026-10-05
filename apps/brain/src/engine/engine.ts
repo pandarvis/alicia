@@ -8,8 +8,11 @@ export type NativeDecision = { allow: true } | { allow: false; reason: string };
 export interface NativeToolGuard {
   /** Called before every built-in tool call; may wait for the person's confirmation. */
   check(tool: string, input: unknown, signal: AbortSignal): Promise<NativeDecision>;
-  /** French reminder added after a built-in tool brought outside content in (undefined: nothing to add). */
-  reminder(tool: string, input: unknown): string | undefined;
+  /**
+   * Called after every built-in tool call with its response (search results: addresses then fetchable). Returns the
+   * French reminder to add when the tool brought outside content in (undefined: nothing to add).
+   */
+  after(tool: string, input: unknown, response: unknown): string | undefined;
 }
 
 export interface EngineRequest {

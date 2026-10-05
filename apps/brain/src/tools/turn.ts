@@ -15,10 +15,20 @@ export interface TurnParams {
   skillsDir: string;
   /** The person's message: the addresses it contains may be fetched without asking. */
   userText: string;
+  /**
+   * The conversation already let outside content in (an earlier turn): it is still in the session, the resume
+   * prompt or what was remembered, so this turn starts untrusted. Default false.
+   */
+  untrusted?: boolean;
+  /** Called once when this turn makes a trusted conversation untrusted (the conversation keeps it). */
+  onUntrusted?: () => void;
   /** Aborts when the turn ends, whatever the reason: nothing it asked may run afterwards. */
   signal: AbortSignal;
-  /** Asks the person on the device that sent the message (settles "cancelled" when the turn ends). */
-  confirm: (request: ConfirmationRequest) => Promise<ConfirmationOutcome>;
+  /**
+   * Asks the person on the device that sent the message; must settle "cancelled" when `signal` aborts (it aborts
+   * with the turn, and with whatever else the asker waits on).
+   */
+  confirm: (request: ConfirmationRequest, signal: AbortSignal) => Promise<ConfirmationOutcome>;
 }
 
 /** What a turn's tools and guards share: who speaks, where, and whether outside content entered the turn. */
@@ -29,9 +39,11 @@ export class TurnContext {
   readonly skillsDir: string;
   /** The addresses of the person's message, in comparable form (see urlKey). */
   readonly userUrls: ReadonlySet<string>;
+  readonly #searchUrls = new Set<string>();
   readonly #signal: AbortSignal;
   readonly #confirm: TurnParams["confirm"];
-  #untrusted = false;
+  readonly #onUntrusted: (() => void) | undefined;
+  #untrusted: boolean;
 
   constructor(params: TurnParams) {
     this.person = params.person;
@@ -39,11 +51,13 @@ export class TurnContext {
     this.attachmentsDir = params.attachmentsDir;
     this.skillsDir = params.skillsDir;
     this.userUrls = userUrls(params.userText);
+    this.#untrusted = params.untrusted ?? false;
+    this.#onUntrusted = params.onUntrusted;
     this.#signal = params.signal;
     this.#confirm = params.confirm;
   }
 
-  /** True once outside content (document, web page, mail…) entered the turn. */
+  /** True once outside content (document, web page, search results, mail…) entered the turn or the conversation. */
   get untrusted(): boolean {
     return this.#untrusted;
   }
@@ -54,14 +68,28 @@ export class TurnContext {
   }
 
   markUntrusted(): void {
+    if (this.#untrusted) return;
     this.#untrusted = true;
+    this.#onUntrusted?.();
   }
 
-  confirm(request: ConfirmationRequest): Promise<ConfirmationOutcome> {
-    if (this.ended) return Promise.resolve("cancelled");
+  /** Addresses a web search of this turn returned (comparable form): they may be opened without asking. */
+  addSearchUrls(keys: Iterable<string>): void {
+    for (const key of keys) this.#searchUrls.add(key);
+  }
+
+  /** An address the person wrote, or one a search of this turn returned (comparable form). */
+  knowsUrl(key: string): boolean {
+    return this.userUrls.has(key) || this.#searchUrls.has(key);
+  }
+
+  /** Asks the person; `signal` (e.g. the SDK hook's) cancels the question too, besides the end of the turn. */
+  confirm(request: ConfirmationRequest, signal?: AbortSignal): Promise<ConfirmationOutcome> {
+    if (this.ended || signal?.aborted === true) return Promise.resolve("cancelled");
     const summary = request.summary.trim() === ""
       ? `Alicia voudrait utiliser l'outil « ${request.tool} ». D'accord ?`
       : request.summary;
-    return this.#confirm({ tool: request.tool, summary: truncate(summary, SUMMARY_MAX) });
+    const scope = signal === undefined ? this.#signal : AbortSignal.any([this.#signal, signal]);
+    return this.#confirm({ tool: request.tool, summary: truncate(summary, SUMMARY_MAX) }, scope);
   }
 }

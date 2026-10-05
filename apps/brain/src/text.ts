@@ -9,3 +9,11 @@ export function truncate(text: string, max: number): string {
   if (last >= 0xd8_00 && last <= 0xdb_ff) end -= 1;
   return `${text.slice(0, end)}…`;
 }
+
+/**
+ * Text written by someone else than the person speaking now (a file name, an earlier message), defused before it
+ * goes into a prompt: an `@path` in it would make the SDK attach that file. `@` becomes a full-width `＠`.
+ */
+export function defuseMentions(text: string): string {
+  return text.replaceAll("@", "＠");
+}

