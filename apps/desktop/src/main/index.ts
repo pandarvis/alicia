@@ -117,6 +117,8 @@ function start(): void {
       discovery.setVisible(visible);
     },
     isFocused: (window) => os.isFocused(window),
+    // Tests never put a window in front of the person using the PC.
+    unobtrusive: osIntegrationOff,
     // A page reloaded or crashed while Réglages captured a new shortcut can never resume it: done here.
     onMainReset: () => {
       settings.resumeShortcut();

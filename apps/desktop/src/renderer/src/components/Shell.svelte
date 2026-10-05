@@ -138,6 +138,21 @@
     void store.open(conversationId);
   }
 
+  /** Whether Alicia floats on the desktop (Holo): the same setting as the tray menu and Réglages. */
+  let holoShown = $state<boolean | null>(null);
+
+  async function toggleHolo(): Promise<void> {
+    if (holoShown === null) return;
+    const wanted = !holoShown;
+    // Shown at once; the main process says what was really kept (it may not save the choice).
+    holoShown = wanted;
+    try {
+      holoShown = (await window.alicia.settings.update({ showHolo: wanted })).snapshot.settings.showHolo;
+    } catch {
+      holoShown = !wanted;
+    }
+  }
+
   /** Asks the composer for the focus (see Composer). */
   let composerFocus = $state(0);
 
@@ -162,6 +177,9 @@
   }
 
   onMount(() => {
+    window.alicia.settings.get().then((snapshot) => {
+      holoShown = snapshot.settings.showHolo;
+    }, () => undefined);
     hub.start();
     void store.refreshConversations();
     // For the menu's dot from the start.
@@ -176,6 +194,10 @@
       window.alicia.brain.onConversationsChanged(() => {
         void store.refreshConversations();
       }),
+      // Changed from the tray menu, Réglages, or the Holo closed with Alt+F4.
+      window.alicia.settings.onChange((snapshot) => {
+        holoShown = snapshot.settings.showHolo;
+      }),
     ];
     return () => {
       for (const off of offs) off();
@@ -187,7 +209,10 @@
 </script>
 
 <div class="app">
-  <TitleBar {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar} />
+  <TitleBar
+    {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar}
+    {holoShown} onToggleHolo={() => void toggleHolo()}
+  />
   {#if awaiting !== null}
     {@const where = awaiting}
     {@const here = where === store.activeId}

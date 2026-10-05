@@ -33,6 +33,12 @@ export interface WindowManagerOptions {
   isFocused(window: BrowserWindow): boolean;
   /** The main page lost its state (reloaded, crashed, closed): what it had set up must be undone. */
   onMainReset(): void;
+  /**
+   * End-to-end tests only (unpackaged, OS integration off): the windows exist and are "shown" for the tests, but
+   * never take the focus, are fully transparent, let the mouse through and stay out of the taskbar — the person
+   * using the PC meanwhile neither sees them nor can grab them.
+   */
+  unobtrusive?: boolean;
 }
 
 /** Only web links leave the app; anything else (file:, custom schemes) is refused. */
@@ -157,9 +163,11 @@ export class WindowManager {
       this.#quitting = true;
       this.#options.onSessionEnd();
     });
+    this.#keepOutOfSight(window);
     if (options.show) {
       window.once("ready-to-show", () => {
-        window.show();
+        if (this.#options.unobtrusive === true) window.showInactive();
+        else window.show();
       });
     }
     onPageReset(window.webContents, () => {
@@ -179,8 +187,7 @@ export class WindowManager {
     const window = this.#main;
     if (!isAlive(window)) return;
     if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
+    this.#bringForward(window);
   }
 
   /** Asks the main window to show a conversation (it is already shown by then). */
@@ -240,8 +247,7 @@ export class WindowManager {
     this.#cancelHide(window);
     const { areas, primary } = workAreas();
     window.setBounds(spotlightBounds(nearestWorkArea(this.#options.cursor(), areas, primary)));
-    window.show();
-    window.focus();
+    this.#bringForward(window);
     this.#sendWhenLoaded(window, PUSH.shown, this.#nextShowing(window));
   }
 
@@ -310,7 +316,7 @@ export class WindowManager {
     this.#expanded = expanded;
     const view = this.#layoutHolo();
     const holo = this.#holo;
-    if (expanded && isAlive(holo)) holo.focus();
+    if (expanded && isAlive(holo) && this.#options.unobtrusive !== true) holo.focus();
     return view;
   }
 
@@ -391,6 +397,7 @@ export class WindowManager {
       webPreferences: secureWebPreferences(),
     });
     window.setAlwaysOnTop(true, "floating");
+    this.#keepOutOfSight(window);
     // A new page has been told nothing yet.
     this.#holoView = null;
     window.on("close", (event) => {
@@ -423,6 +430,7 @@ export class WindowManager {
       webPreferences: secureWebPreferences(),
     });
     window.setAlwaysOnTop(true, "pop-up-menu");
+    this.#keepOutOfSight(window);
     // Like Spotlight: clicking anywhere else closes the bar.
     window.on("blur", () => {
       if (window.isVisible()) this.#requestHide(window);
@@ -435,6 +443,24 @@ export class WindowManager {
     this.#load(window, "spotlight");
     this.#spotlight = window;
     return window;
+  }
+
+  /** Shows a window in front with the focus (in tests: shown without taking the focus). */
+  #bringForward(window: BrowserWindow): void {
+    if (this.#options.unobtrusive === true) {
+      window.showInactive();
+      return;
+    }
+    window.show();
+    window.focus();
+  }
+
+  /** In tests only: invisible and out of the way of the person using the PC (see `unobtrusive`). */
+  #keepOutOfSight(window: BrowserWindow): void {
+    if (this.#options.unobtrusive !== true) return;
+    window.setOpacity(0);
+    window.setIgnoreMouseEvents(true);
+    window.setSkipTaskbar(true);
   }
 
   /** Asks the page to play its exit; it calls hideSelf when done (or the window hides anyway shortly after). */

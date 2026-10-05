@@ -2,17 +2,23 @@
   import House from "@lucide/svelte/icons/house";
   import Menu from "@lucide/svelte/icons/menu";
   import MessageCircle from "@lucide/svelte/icons/message-circle";
+  import PictureInPicture2 from "@lucide/svelte/icons/picture-in-picture-2";
   import { fade } from "svelte/transition";
   import { motion } from "../lib/motion.ts";
   import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
 
-  let { title, personName, status, sidebarOpen, onToggleSidebar }: {
+  let { title, personName, status, sidebarOpen, onToggleSidebar, holoShown, onToggleHolo }: {
     title: string;
     personName: string;
     status: ConnectionStatus;
     sidebarOpen: boolean;
     onToggleSidebar: () => void;
+    /** Whether Alicia floats on the desktop (the Holo); null until the settings are read. */
+    holoShown: boolean | null;
+    onToggleHolo: () => void;
   } = $props();
+
+  const holoLabel = $derived(holoShown === true ? "Rattacher Alicia" : "Détacher Alicia");
 
   const STATUS_LABEL: Readonly<Record<ConnectionStatus, string>> = {
     connecting: "Connexion…",
@@ -34,6 +40,16 @@
     <span class="status" data-testid="connection-status" transition:fade={{ duration: motion(150) }}>{STATUS_LABEL[status]}</span>
   {/if}
   <span class="spacer"></span>
+  <button
+    class="icon holo"
+    class:on={holoShown === true}
+    onclick={onToggleHolo}
+    disabled={holoShown === null}
+    title={holoLabel}
+    aria-label={holoLabel}
+    aria-pressed={holoShown === true}
+    data-testid="titlebar-holo"
+  ><PictureInPicture2 size={17} aria-hidden="true" /></button>
 </header>
 
 <style>
@@ -46,6 +62,10 @@
   button { -webkit-app-region: no-drag; }
   .icon { display: grid; place-items: center; color: var(--cream-muted); background: none; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; transition: background var(--duration) ease; }
   .icon:hover { background: var(--surface); }
+  .icon:disabled { opacity: 0.5; cursor: default; }
+  .holo { transition: background var(--duration) ease, color var(--duration) ease, opacity var(--duration) ease; }
+  .holo.on { color: var(--sage); background: var(--surface); }
+  .holo.on:hover { background: var(--surface-raised); }
   .segment { display: flex; background: var(--surface); border-radius: 8px; padding: 2px; }
   .segment button { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 3px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
   .segment button.on { background: var(--surface-raised); color: var(--cream); }

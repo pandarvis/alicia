@@ -542,3 +542,47 @@ test("Google consent: opened in the browser (only recorded here), answered on th
     .rejects.toThrow();
   expect((await recorded(app)).browser).toHaveLength(2);
 });
+
+test("the title bar detaches and reattaches Alicia (the Holo), the same choice as the tray menu, kept after a restart", async () => {
+  const brain = await startBrain();
+  const userData = tempDir("alicia-e2e-profile-");
+  const { app, page } = await launch(userData);
+  await pair(page, brain);
+  const button = page.getByTestId("titlebar-holo");
+  const trayChecked = async (): Promise<boolean | null | undefined> =>
+    (await recorded(app)).tray.find((item) => item.id === "toggle-holo")?.checked;
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+  await expect.poll(() => button.getAttribute("aria-pressed"), POLL).toBe("true");
+  expect(await button.getAttribute("title")).toBe("Rattacher Alicia");
+
+  await button.click();
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(false);
+  await expect.poll(() => button.getAttribute("aria-pressed"), POLL).toBe("false");
+  expect(await button.getAttribute("title")).toBe("Détacher Alicia");
+  await expect.poll(trayChecked, POLL).toBe(false);
+
+  // Changed from the tray: the button follows.
+  await callHook(app, "trayAction", "toggle-holo");
+  await expect.poll(() => button.getAttribute("aria-pressed"), POLL).toBe("true");
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+
+  await button.click();
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(false);
+  await app.close();
+
+  const again = await launch(userData);
+  const restored = again.page.getByTestId("titlebar-holo");
+  await expect.poll(() => restored.getAttribute("aria-pressed"), POLL).toBe("false");
+  expect(await windowVisible(again.app, "holo")).toBe(false);
+});
+
+test("tests never get in the way of the person using the PC: windows invisible to them, never focused", async () => {
+  const brain = await startBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
+  const windows = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().map((window) => ({ opacity: window.getOpacity(), focused: window.isFocused() })));
+  expect(windows.length).toBeGreaterThanOrEqual(3);
+  for (const window of windows) expect(window).toEqual({ opacity: 0, focused: false });
+});
