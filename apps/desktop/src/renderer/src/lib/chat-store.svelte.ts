@@ -86,11 +86,12 @@ const SUCCESS_MS = 1500;
 const FILES_RESENT = "Une pièce jointe n'était plus disponible : les fichiers sont renvoyés, envoie à nouveau ton message.";
 const ALERT_MS = 2000;
 
-type TurnEvent = Extract<ServerEvent, { type: "text_delta" | "tool_call" | "tool_result" | "done" }>;
+type TurnEvent = Extract<ServerEvent, { type: "text_delta" | "tool_call" | "tool_result" | "account_reconnect" | "done" }>;
 
 function isTurnEvent(event: ServerEvent): event is TurnEvent {
   return (
-    event.type === "text_delta" || event.type === "tool_call" || event.type === "tool_result" || event.type === "done"
+    event.type === "text_delta" || event.type === "tool_call" || event.type === "tool_result" ||
+    event.type === "account_reconnect" || event.type === "done"
   );
 }
 
@@ -104,6 +105,8 @@ export class ChatStore {
   opus = $state(false);
   activity = $state<string | null>(null);
   notice = $state<string | null>(null);
+  /** Google accounts to reconnect, reported by the last turn (« Reconnecter le compte » cards, under the thread). */
+  reconnect = $state<{ id: string; email: string }[]>([]);
   mascot = $state<MascotState>("idle");
   /**
    * Files waiting in the composer. They survive switching conversations: a pending upload belongs to none until a
@@ -156,6 +159,7 @@ export class ChatStore {
     this.#cards = this.#cards.filter((card) => card.conversationId === conversationId);
     this.activeId = conversationId;
     this.notice = null;
+    this.reconnect = [];
     this.messages = [];
     this.#setMascot("idle");
     await this.#loadHistory(conversationId);
@@ -208,7 +212,13 @@ export class ChatStore {
     this.activeId = null;
     this.messages = [];
     this.notice = null;
+    this.reconnect = [];
     this.#setMascot("idle");
+  }
+
+  /** The account is connected again: its card goes. */
+  dismissReconnect(accountId: string): void {
+    this.reconnect = this.reconnect.filter((account) => account.id !== accountId);
   }
 
   /** Something to send (text or a ready file), no file still uploading, Alicia free. */
@@ -269,6 +279,7 @@ export class ChatStore {
     // « Réfléchir » is for one message: the next one goes back to the default model.
     this.opus = false;
     this.notice = null;
+    this.reconnect = [];
     this.activity = null;
     // Sent: the ready files now belong to the message; failed ones are dropped with them.
     this.#sentFiles = ready.flatMap((d) => {
@@ -357,8 +368,9 @@ export class ChatStore {
         return;
       case "tool_result":
         return;
-      // The « Reconnecter » card comes with plan 3b's chat card (task 19).
+      // Outlives the turn: the card stays until the account is back, or the next message.
       case "account_reconnect":
+        this.reconnect = event.accounts;
         return;
       case "done":
         this.#endTurn();

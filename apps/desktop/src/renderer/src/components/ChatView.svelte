@@ -1,16 +1,19 @@
 <script lang="ts">
   import Paperclip from "@lucide/svelte/icons/paperclip";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import { fade, fly } from "svelte/transition";
   import { motion, scrollBehavior } from "../lib/motion.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
   import ConfirmCard from "./ConfirmCard.svelte";
   import Mascot from "./Mascot.svelte";
 
-  let { store, personName, onAnswered }: {
+  let { store, personName, onAnswered, onReconnect }: {
     store: ChatStore;
     personName: string;
     /** A card was answered: the focus goes back to the composer (the pressed button turns off). */
     onAnswered: () => void;
+    /** « Reconnecter le compte »: Comptes opens and runs Google's consent again. */
+    onReconnect: (accountId: string) => void;
   } = $props();
 
   const SUGGESTIONS = [
@@ -69,7 +72,7 @@
     if (list === null || spacer === null) return;
     const last = store.messages.at(-1);
     const growth = last?.role === "confirmation" ? last.status : (last?.text.length ?? 0);
-    const layout = `${store.messages.length}:${growth}:${waiting}:${store.activity ?? ""}:${viewportHeight}`;
+    const layout = `${store.messages.length}:${growth}:${waiting}:${store.activity ?? ""}:${viewportHeight}:${store.reconnect.length}`;
     const fresh = list !== seenList;
     if (!fresh && layout === seenLayout) return;
     seenList = list;
@@ -183,6 +186,14 @@
         </div>
       {/if}
       {#if store.activity}<p class="activity" transition:fade={{ duration: motion(150) }}>{store.activity}</p>{/if}
+      {#each store.reconnect as account (account.id)}
+        <div class="reconnect" role="status" data-testid="reconnect-card" transition:fade={{ duration: motion(180) }}>
+          <span>Le compte <strong>{account.email}</strong> doit être reconnecté pour qu'Alicia y accède.</span>
+          <button onclick={() => { onReconnect(account.id); }} data-testid="reconnect-card-button">
+            <RefreshCw size={14} aria-hidden="true" />Reconnecter le compte
+          </button>
+        </div>
+      {/each}
       <div class="spacer" bind:this={spacer} aria-hidden="true"></div>
     </div>
   {/if}
@@ -193,6 +204,15 @@
 
 <style>
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .reconnect {
+    margin: 0 0 8px 52px; padding: 10px 14px; border-radius: var(--radius); background: var(--night-deep);
+    border: 1px solid var(--amber); display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .reconnect button {
+    flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--surface-raised); color: var(--amber); font-weight: 700; transition: background var(--duration) ease;
+  }
+  .reconnect button:hover { background: var(--surface); }
   .center { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; }
   h1 { margin: 0; font-size: 24px; text-align: center; }
   .loading { margin: 0; color: var(--muted); }

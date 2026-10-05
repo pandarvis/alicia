@@ -5792,6 +5792,8 @@ Après 3a, le fil du chat est une liste d'items (messages et cartes de confirmat
 - Modify: `apps/desktop/src/renderer/src/lib/chat-store.svelte.ts`, `apps/desktop/src/renderer/src/components/ChatView.svelte`
 - Test: `apps/desktop/test/chat-store.test.ts`
 
+> **Alignement (mise en œuvre) :** code du plan. Le hub et le routage de l'app portaient déjà `account_reconnect` (tâche 1) ; la mini-discussion de l'Holo et la Spotlight l'ignorent. Un tour ne compte qu'une fois que le cerveau a nommé sa conversation (`conversation` avant tout) : les tests ouvrent donc chaque tour par cet événement, et vérifient aussi qu'un `dismissReconnect` d'un autre compte ne retire rien et qu'ouvrir une autre conversation efface la carte. `reconnectAccount` (coquille, tâche 18) est branché ici, avec la prop `onReconnect` de `ChatView`.
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 Ajouter à `apps/desktop/test/chat-store.test.ts` (réutilise `setup()` et `CONV` du fichier) :

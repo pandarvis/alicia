@@ -85,6 +85,14 @@
     remove: (id) => guarded(() => api.removeGoogleAccount(id)),
   });
 
+  /** From a chat card: open Comptes and run the flow again; the card goes once the account is back. */
+  function reconnectAccount(accountId: string): void {
+    view = "accounts";
+    void accounts.reconnect(accountId).then(() => {
+      if (accounts.accounts.find((a) => a.id === accountId)?.status === "connected") store.dismissReconnect(accountId);
+    });
+  }
+
   function handleEvent(event: ServerEvent): void {
     // Google refused an account during the turn: the menu's dot follows.
     if (event.type === "account_reconnect") void accounts.load();
@@ -229,7 +237,7 @@
     <main>
       <!-- The chat stays mounted while Souvenirs is shown: its draft and scroll position are kept. -->
       <div class="pane chat" class:hidden={view !== "chat"} inert={view !== "chat"}>
-        <ChatView {store} personName={session.person.name} onAnswered={() => { composerFocus++; }} />
+        <ChatView {store} personName={session.person.name} onAnswered={() => { composerFocus++; }} onReconnect={reconnectAccount} />
         <Composer {store} status={shownStatus} focusRequests={composerFocus} />
       </div>
       {#if view === "memories"}

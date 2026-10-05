@@ -1,4 +1,4 @@
-import type { ConfirmMessage, ConversationSummary, HistoryMessage, SendMessage } from "@alicia/protocol";
+import type { ConfirmMessage, ConversationSummary, HistoryMessage, SendMessage, ServerEvent } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
 import type { UploadResult } from "../src/renderer/src/lib/brain-client.ts";
 import { type ChatItem, ChatStore, type ChatPorts } from "../src/renderer/src/lib/chat-store.svelte.ts";
@@ -867,5 +867,55 @@ describe("attachments", () => {
     await store.open(CONV);
     expect(store.messages[0]).toMatchObject({ attachments: [{ name: "facture.pdf", kind: "pdf" }] });
     expect(store.messages[1]).not.toHaveProperty("attachments");
+  });
+});
+
+describe("reconnect cards", () => {
+  const ACCOUNT_ID = "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e";
+  const CARD: ServerEvent = { type: "account_reconnect", conversationId: CONV, accounts: [{ id: ACCOUNT_ID, email: "famille@example.com" }] };
+  const DONE = { type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 } as const;
+
+  /** Sends a message and lets the brain name its conversation (CONV), as a real turn begins. */
+  function turn(store: ChatStore, sent: SendMessage[], text: string): void {
+    store.send(text);
+    store.handle({ type: "conversation", requestId: sent.at(-1)?.requestId ?? "", conversationId: CONV });
+  }
+
+  test("an account to reconnect shows a card that outlives the turn, until it is connected again", () => {
+    const { store, sent } = setup();
+    turn(store, sent, "On a quoi samedi ?");
+    store.handle(CARD);
+    expect(store.reconnect).toEqual([{ id: ACCOUNT_ID, email: "famille@example.com" }]);
+    store.handle(DONE);
+    expect(store.reconnect).toHaveLength(1);
+    store.dismissReconnect("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(store.reconnect).toHaveLength(1);
+    store.dismissReconnect(ACCOUNT_ID);
+    expect(store.reconnect).toEqual([]);
+  });
+
+  test("ignored outside this window's turn; cleared by the next message, a new conversation or another one", async () => {
+    const { store, sent } = setup();
+    store.handle(CARD);
+    expect(store.reconnect).toEqual([]);
+
+    turn(store, sent, "On a quoi samedi ?");
+    store.handle(CARD);
+    store.handle(DONE);
+    store.send("Et dimanche ?");
+    expect(store.reconnect).toEqual([]);
+    store.handle(DONE);
+
+    turn(store, sent, "Encore ?");
+    store.handle(CARD);
+    store.handle(DONE);
+    store.startNew();
+    expect(store.reconnect).toEqual([]);
+
+    turn(store, sent, "Et lundi ?");
+    store.handle(CARD);
+    store.handle(DONE);
+    await store.open(CONV_B);
+    expect(store.reconnect).toEqual([]);
   });
 });
