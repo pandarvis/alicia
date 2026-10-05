@@ -1,6 +1,7 @@
 import { GOOGLE_SCOPES, type GoogleConnectRequest, type Person } from "@alicia/protocol";
 import type { z } from "zod";
 import type { Clock } from "../clock.ts";
+import type { ToolScope } from "../tools/catalog.ts";
 import type { ConnectResult, GoogleAccount, GoogleAccountStore } from "./account-store.ts";
 import { type ApiRequest, buildUrl, failureOf, GoogleApiError, type GoogleRequester, isAllowedRoute } from "./http.ts";
 import { fetchProfileEmail, GoogleAuthError, type GoogleOAuth, type Tokens } from "./oauth.ts";
@@ -38,6 +39,8 @@ export class GoogleClient {
   readonly #deps: GoogleClientDependencies;
   readonly #tokens = new Map<string, CachedToken>();
   readonly #refreshing = new Map<string, Promise<string>>();
+  /** Per conversation: the accounts its current turn found needing a reconnection. */
+  readonly #turns = new Map<string, Map<string, ReconnectNotice>>();
 
   constructor(deps: GoogleClientDependencies) {
     this.clientId = deps.clientId;
@@ -92,6 +95,35 @@ export class GoogleClient {
    */
   forPerson(person: Person, signal?: AbortSignal): GoogleAccess {
     return new GoogleAccess(this, person, signal);
+  }
+
+  /**
+   * Google for one turn (its tools share it). What it finds needing a reconnection is kept under the conversation
+   * until `endTurn`, for the chat's « Reconnecter » card — and only that: building the tools without a turn (the
+   * startup name check) or a turn that finds nothing leaves nothing behind. One turn at a time per conversation
+   * (the server's locks).
+   */
+  forTurn(scope: Pick<ToolScope, "person" | "conversationId" | "signal">): GoogleAccess {
+    const { conversationId, signal } = scope;
+    return new GoogleAccess(this, scope.person, signal, (notice) => {
+      // Found once the turn is over: nobody will collect it, so it is not kept.
+      if (signal.aborted) return;
+      const held = this.#turns.get(conversationId) ?? new Map<string, ReconnectNotice>();
+      held.set(notice.id, notice);
+      this.#turns.set(conversationId, held);
+    });
+  }
+
+  /** Accounts found needing a reconnection during the conversation's turn; forgets them. */
+  endTurn(conversationId: string): ReconnectNotice[] {
+    const held = this.#turns.get(conversationId);
+    this.#turns.delete(conversationId);
+    return [...(held?.values() ?? [])];
+  }
+
+  /** Turns whose findings wait for `endTurn` (none once every turn has ended). */
+  get turnsHeld(): number {
+    return this.#turns.size;
   }
 
   /** One authorized call. The person's reach is checked on every call, cached token or not. */
@@ -191,11 +223,14 @@ export class GoogleAccess implements GoogleRequester {
   readonly #person: Person;
   readonly #signal: AbortSignal | undefined;
   readonly #flagged = new Map<string, ReconnectNotice>();
+  readonly #onReconnect: ((notice: ReconnectNotice) => void) | undefined;
 
-  constructor(client: GoogleClient, person: Person, signal?: AbortSignal) {
+  /** `onReconnect`: told of each account found needing a reconnection (the turn's card). */
+  constructor(client: GoogleClient, person: Person, signal?: AbortSignal, onReconnect?: (notice: ReconnectNotice) => void) {
     this.#client = client;
     this.#person = person;
     this.#signal = signal;
+    this.#onReconnect = onReconnect;
   }
 
   accounts(): GoogleAccount[] {
@@ -231,7 +266,11 @@ export class GoogleAccess implements GoogleRequester {
       if (error instanceof GoogleApiError && error.failure === "reconnect") {
         // Named as stored, whatever the object the tool held says.
         const stored = this.accounts().find((a) => a.id === account.id);
-        if (stored !== undefined) this.#flagged.set(stored.id, { id: stored.id, email: stored.email });
+        if (stored !== undefined) {
+          const notice = { id: stored.id, email: stored.email };
+          this.#flagged.set(stored.id, notice);
+          this.#onReconnect?.(notice);
+        }
       }
       throw error;
     }

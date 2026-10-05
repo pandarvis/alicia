@@ -3676,6 +3676,11 @@ git commit -m "feat(brain): calendar tools — list, create without attendees, u
 
 > **Alignement (tâche 0) :** `client.forTurn(scope)` reçoit le `ToolScope` réel de 3a (`person`, `conversationId`, `untrusted`, `signal`) et passe `scope.signal` au `GoogleAccess` (voir la note de la tâche 6). `ToolCatalog.checkNames()` construit une fois tous les fournisseurs au démarrage avec un identifiant de conversation aléatoire, sans `endTurn` : `forTurn` ne doit donc **rien** retenir tant qu'aucun appel Google n'a été fait : l'accès n'est enregistré sous la conversation qu'à son premier appel (test dédié : « building the tools without a turn leaves nothing behind » ; `endTurn` d'un identifiant inconnu rend `[]`).
 
+> **Alignement (mise en œuvre) :**
+> - `forTurn(scope)` prend `Pick<ToolScope, "person" | "conversationId" | "signal">` et ne retient **que les comptes à reconnecter** trouvés pendant le tour (pas l'accès entier) : `GoogleAccess` reçoit un rappel `onReconnect`, et `GoogleClient` garde, par conversation, une table id → `{ id, email }`. Un tour qui ne trouve rien, ou des outils construits sans tour (`checkNames`), ne laissent rien ; ce qui est trouvé une fois le `signal` du tour interrompu n'est pas gardé (personne ne le relèverait). `turnsHeld` (nombre de conversations en attente d'`endTurn`) sert aux tests de fuite.
+> - Revue des tâches 8–10 (commit « fix(brain): 3b review — linear mail parsing, whole cards, Gmail route allowlist », avant cette tâche) : `gmail_draft` ne prend le fil (`threadId`) et les en-têtes de réponse que dans un mail **lu dans le compte du brouillon** ; un identifiant d'un autre compte donne « Introuvable » et rien n'est écrit (test). `GoogleClient.send` refuse avant tout appel les routes Gmail autres que profil, recherche, lecture d'un mail et création de brouillon.
+> - Tests : la balise fermante du cadre porte l'identifiant (`</donnees_exterieures id="…">`) : compter `/<\/donnees_exterieures/` ; pas d'`expect.stringMatching` dans un `toEqual` (lint) ; l'objet sur une ligne refuse aussi U+0085, U+2028, U+2029.
+
 - [ ] **Step 1: Écrire les tests (échouent)**
 
 Ajouter à `apps/brain/test/google-client.test.ts` :

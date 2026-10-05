@@ -281,6 +281,56 @@ describe("GoogleClient", () => {
     expect(google.revoked).toHaveLength(1);
     expect(client.list(KEVIN).map((a) => a.email)).toEqual(["famille@example.com"]);
   });
+
+  test("a turn's access is kept until the turn ends, with the accounts it found to reconnect", async () => {
+    const { client, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    const access = client.forTurn({ person: KEVIN, conversationId: "c1", signal: new AbortController().signal });
+    google.revokeGrant("kevin@example.com");
+    google.expireAccessTokens();
+    expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("reconnect");
+    expect(client.turnsHeld).toBe(1);
+    expect(client.endTurn("c1")).toEqual([{ id: account.id, email: "kevin@example.com" }]);
+    expect(client.endTurn("c1")).toEqual([]);
+    expect(client.turnsHeld).toBe(0);
+  });
+
+  test("building a turn's access, even using it, leaves nothing behind while nothing needs reconnecting", async () => {
+    const { client, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    // As the startup name check does: tools built for a made-up conversation, never ended.
+    client.forTurn({ person: KEVIN, conversationId: "startup", signal: new AbortController().signal });
+    await client.forTurn({ person: KEVIN, conversationId: "c1", signal: new AbortController().signal }).json(account, PROFILE, Profile);
+    expect(client.turnsHeld).toBe(0);
+    expect(client.endTurn("unknown")).toEqual([]);
+  });
+
+  test("what a turn finds once it is over is not kept for the conversation's next turn", async () => {
+    const { client, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    const turn = new AbortController();
+    const access = client.forTurn({ person: KEVIN, conversationId: "c1", signal: turn.signal });
+    google.revokeGrant("kevin@example.com");
+    google.expireAccessTokens();
+    expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("reconnect");
+    expect(client.endTurn("c1")).toHaveLength(1);
+    turn.abort();
+    expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("reconnect");
+    expect(client.turnsHeld).toBe(0);
+    expect(client.endTurn("c1")).toEqual([]);
+  });
+
+  test("two turns in two conversations keep their findings apart", async () => {
+    const { client, google, accounts } = await createFamilyGoogle();
+    const kevinTurn = client.forTurn({ person: KEVIN, conversationId: "c-kevin", signal: new AbortController().signal });
+    const elodieTurn = client.forTurn({ person: ELODIE, conversationId: "c-elodie", signal: new AbortController().signal });
+    google.revokeGrant("kevin@example.com");
+    google.expireAccessTokens();
+    expect(await failureOf(kevinTurn.json(accounts.kevin, PROFILE, Profile))).toBe("reconnect");
+    expect(await failureOf(elodieTurn.json(accounts.kevin, PROFILE, Profile))).toBe("not_found");
+    expect(client.endTurn("c-elodie")).toEqual([]);
+    expect(client.endTurn("c-kevin")).toEqual([{ id: accounts.kevin.id, email: "kevin@example.com" }]);
+  });
 });
 
 describe("what may reach Google", () => {
