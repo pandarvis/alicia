@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "./attachments.ts";
 import { Model } from "./identity.ts";
 
 export const AuthenticateMessage = z.strictObject({
@@ -7,13 +8,18 @@ export const AuthenticateMessage = z.strictObject({
 });
 export type AuthenticateMessage = z.infer<typeof AuthenticateMessage>;
 
-export const SendMessage = z.strictObject({
-  type: z.literal("send"),
-  requestId: z.uuid(),
-  conversationId: z.uuid().optional(),
-  text: z.string().max(20_000).refine((s) => s.trim().length > 0, "Empty message"),
-  model: Model.optional(),
-});
+export const SendMessage = z
+  .strictObject({
+    type: z.literal("send"),
+    requestId: z.uuid(),
+    conversationId: z.uuid().optional(),
+    text: z.string().max(20_000),
+    model: Model.optional(),
+    /** Pending uploads (POST /attachments) carried by this message, by id: never a path. */
+    attachments: z.array(z.uuid()).min(1).max(MAX_ATTACHMENTS_PER_MESSAGE).optional(),
+  })
+  // Text may only be empty when files are sent.
+  .refine((m) => m.text.trim().length > 0 || m.attachments !== undefined, "Empty message");
 export type SendMessage = z.infer<typeof SendMessage>;
 
 /** The person's answer to a confirmation card. */

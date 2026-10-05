@@ -1,6 +1,7 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
+import { describeAttachments } from "../attachments/prompt.ts";
 import type { AttachmentStore } from "../attachments/store.ts";
 import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
@@ -41,6 +42,7 @@ const TITLE_LENGTH = 60;
 const RESUME_MESSAGE_COUNT = 10;
 const RESUME_MESSAGE_CHARS = 1_000;
 const RESUME_TOTAL_CHARS = 8_000;
+const ATTACHMENT_GONE = "Pièce jointe introuvable ou expirée : joins-la à nouveau.";
 const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
 
 function resumeLine(m: Message): string {
@@ -83,19 +85,25 @@ export async function* handleSend(
 ): AsyncGenerator<ServerEvent> {
   const start = deps.clock();
 
-  let conversation: Conversation;
+  let existing: Conversation | undefined;
   if (message.conversationId !== undefined) {
-    const found = deps.repository.get(message.conversationId, person.id);
-    if (found === undefined) {
+    existing = deps.repository.get(message.conversationId, person.id);
+    if (existing === undefined) {
       yield {
         type: "error", requestId: message.requestId, code: "invalid_request", message: "Conversation introuvable.",
       };
       return;
     }
-    conversation = found;
-  } else {
-    conversation = deps.repository.create(person.id, titleFrom(message.text));
   }
+  // Only the person's own pending uploads, checked before anything is created: a bad id (unknown, someone
+  // else's, already sent, expired) must not leave an empty conversation behind.
+  const pending = deps.attachments.pending(person.id, message.attachments ?? []);
+  if (pending === undefined) {
+    yield { type: "error", requestId: message.requestId, code: "invalid_request", message: ATTACHMENT_GONE };
+    return;
+  }
+  const conversation =
+    existing ?? deps.repository.create(person.id, titleFrom(message.text) || (pending[0]?.name ?? "Pièce jointe"));
   const conversationId = conversation.id;
   let announced = false;
   try {
@@ -109,6 +117,7 @@ export async function* handleSend(
 
   const history = deps.repository.lastMessages(conversationId, RESUME_MESSAGE_COUNT);
   const messageId = deps.repository.addMessage(conversationId, "user", message.text);
+  const attached = deps.attachments.claim(pending, conversationId, messageId);
 
   const model = chooseModel(message.model, message.text);
   const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
@@ -124,7 +133,12 @@ export async function* handleSend(
     confirm: (request) => ports.confirm({ conversationId, messageId }, request, turnSignal),
   });
   const tools = deps.tools.forTurn(turn);
-  const prompt = timestamp(message.text, new Date(start), deps.timezone);
+  const body = [message.text.trim(), describeAttachments(attached, deps.attachments.dirOf(conversationId))]
+    .filter((part) => part !== "")
+    .join("\n\n");
+  const prompt = timestamp(body, new Date(start), deps.timezone);
+  // This conversation's folder only (when it has files): the built-in Read may reach nothing else.
+  const readableDirs = deps.attachments.readableDirs(conversationId);
 
   let text = "";
   let inputTokens = 0;
@@ -146,7 +160,7 @@ export async function* handleSend(
       try {
         stream = deps.engine.run(
           {
-            prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs: [],
+            prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs,
             toolTimeoutMs: ports.confirmationTimeoutMs + TOOL_RUN_BUDGET_MS,
           },
           signal,

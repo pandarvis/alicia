@@ -238,3 +238,16 @@ describe("HistoryMessage", () => {
     expect(HistoryMessage.safeParse({ ...base, attachments: [{ ...file, path: "C:/x.pdf", kind: "exe" }] }).success).toBe(false);
   });
 });
+
+describe("send with attachments", () => {
+  test("attachments by id; text may be empty only with attachments", () => {
+    const base = { type: "send", requestId: "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192" };
+    const id = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
+    expect(ClientMessage.safeParse({ ...base, text: "", attachments: [id] }).success).toBe(true);
+    expect(ClientMessage.safeParse({ ...base, text: "  " }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...base, text: "x", attachments: [] }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...base, text: "x", attachments: Array.from({ length: 11 }, () => id) }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...base, text: "x", attachments: ["pas-un-uuid"] }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...base, text: "x", attachments: [{ path: "C:/Windows/win.ini" }] }).success).toBe(false);
+  });
+});
