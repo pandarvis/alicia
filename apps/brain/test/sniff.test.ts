@@ -21,6 +21,10 @@ test.each([
   [".docx", PDF, false],
   [".webp", ascii("RIFF\u0000\u0000\u0000\u0000WAVEfmt "), false],
   [".txt", bytes(0x41, 0x00, 0x42), false],
+  // UTF-16 (Notepad, some Excel exports): NUL bytes are expected after its byte order mark.
+  [".txt", bytes(0xff, 0xfe, 0x41, 0x00, 0xe9, 0x00), true],
+  [".csv", bytes(0xfe, 0xff, 0x00, 0x41, 0x00, 0x3b), true],
+  [".txt", bytes(0xff, 0xfe, 0x41, 0x00, 0xe9), false],
   [".exe", PDF, false],
 ])("%s with these bytes → %s", (extension, content, expected) => {
   expect(contentMatches(extension, content)).toBe(expected);

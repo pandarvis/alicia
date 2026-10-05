@@ -455,16 +455,23 @@ describe("checkIsolation", () => {
     ["an API key while on the subscription", { apiKeySource: "ANTHROPIC_API_KEY" }],
     ["a missing skill", { skills: [] }],
     ["another cwd", { cwd: "/elsewhere" }],
-    ["an unexpected skill", { skills: ["lire-un-document", "update-config"] }],
-    ["an agent", { agents: ["general-purpose"] }],
     ["another permission mode", { permissionMode: "bypassPermissions" }],
   ])("fails on %s", (_label, overrides) => {
     expect(checkIsolation(init(overrides), expected).ok).toBe(false);
   });
-  test("unexpected skills and agents are named in the report", () => {
-    const report = checkIsolation(init({ skills: ["lire-un-document", "update-config"], agents: ["Explore"] }), expected);
-    expect(report.lines.join("\n")).toContain("update-config");
-    expect(report.lines.join("\n")).toContain("Explore");
+  test("the CLI's own skills and agents are listed but unusable (skills allow-list, no Agent tool): reported only", () => {
+    const report = checkIsolation(
+      init({ skills: ["lire-un-document", "update-config", "simplify"], agents: ["general-purpose", "Explore"] }), expected,
+    );
+    expect(report.ok).toBe(true);
+    expect(report.lines.join("\n")).toContain("update-config, simplify");
+    expect(report.lines.join("\n")).toContain("general-purpose, Explore");
+  });
+  test("agents fail the check once a tool can start them", () => {
+    const tools = [...expected.tools, "Agent"];
+    const report = checkIsolation(init({ tools, agents: ["general-purpose"] }), { ...expected, tools });
+    expect(report.ok).toBe(false);
+    expect(report.lines.join("\n")).toContain("general-purpose");
   });
   test("an init without an agent list (older CLI) passes", () => {
     expect(checkIsolation(init({ agents: undefined }), expected).ok).toBe(true);

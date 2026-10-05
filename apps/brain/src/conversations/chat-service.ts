@@ -2,7 +2,7 @@ import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
 import { describeAttachments } from "../attachments/prompt.ts";
-import type { AttachmentStore } from "../attachments/store.ts";
+import type { AttachmentStore, ClaimResult } from "../attachments/store.ts";
 import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
 import { buildSheet } from "../memory/sheet.ts";
@@ -43,6 +43,7 @@ const RESUME_MESSAGE_COUNT = 10;
 const RESUME_MESSAGE_CHARS = 1_000;
 const RESUME_TOTAL_CHARS = 8_000;
 const ATTACHMENT_GONE = "Pièce jointe introuvable ou expirée : joins-la à nouveau.";
+const ATTACHMENT_FAILED = "Impossible de joindre les fichiers pour l'instant : réessaie.";
 const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
 
 function resumeLine(m: Message): string {
@@ -117,7 +118,20 @@ export async function* handleSend(
 
   const history = deps.repository.lastMessages(conversationId, RESUME_MESSAGE_COUNT);
   const messageId = deps.repository.addMessage(conversationId, "user", message.text);
-  const attached = deps.attachments.claim(pending, conversationId, messageId);
+  // The check above was only a check: the claim decides, atomically (another message may have taken a file).
+  const claim: ClaimResult = pending.length === 0
+    ? { status: "claimed", attachments: [] }
+    : await deps.attachments.claim(person.id, message.attachments ?? [], conversationId, messageId);
+  if (claim.status !== "claimed") {
+    // Nothing of this turn stays: neither its message, nor the conversation created for it.
+    if (existing === undefined) deps.repository.delete(conversationId, person.id);
+    else deps.repository.deleteMessage(conversationId, messageId);
+    yield claim.status === "gone"
+      ? { type: "error", requestId: message.requestId, code: "invalid_request", message: ATTACHMENT_GONE }
+      : { type: "error", requestId: message.requestId, conversationId, code: "internal", message: ATTACHMENT_FAILED };
+    return;
+  }
+  const attached = claim.attachments;
 
   const model = chooseModel(message.model, message.text);
   const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
@@ -163,12 +177,14 @@ export async function* handleSend(
             prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs,
             toolTimeoutMs: ports.confirmationTimeoutMs + TOOL_RUN_BUDGET_MS,
           },
-          signal,
+          // The turn's own scope: whatever the engine still does once the turn is over is stopped.
+          turnSignal,
         )[Symbol.asyncIterator]();
       } catch (cause) {
         error = toEngineError(cause);
       }
 
+      let drained = false;
       try {
         while (stream !== undefined) {
           let next: IteratorResult<EngineEvent>;
@@ -208,8 +224,11 @@ export async function* handleSend(
               break;
           }
         }
+        drained = true;
       } finally {
-        // Early exit (consumer stopped, repository failure): release the engine stream.
+        // Early exit (consumer stopped, repository failure): the turn is over first, so nothing it started may
+        // still run while the engine stream is released.
+        if (!drained) turnScope.abort();
         await stream?.return?.();
       }
 

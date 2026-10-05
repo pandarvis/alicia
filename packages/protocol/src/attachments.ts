@@ -35,8 +35,11 @@ export function attachmentTypeOf(name: string): AttachmentType | undefined {
   return ATTACHMENT_TYPES.find((t) => t.extension === extension);
 }
 
-export type AttachmentRefusalReason = "unsupported" | "too_large" | "empty";
-export type AttachmentCheck = { ok: true; type: AttachmentType } | { ok: false; reason: AttachmentRefusalReason };
+/** "too_many": the person already has too many files waiting to be sent (decided by the brain). */
+export type AttachmentRefusalReason = "unsupported" | "too_large" | "empty" | "too_many";
+export type AttachmentCheck =
+  | { ok: true; type: AttachmentType }
+  | { ok: false; reason: Exclude<AttachmentRefusalReason, "too_many"> };
 
 /** Checked by the app before uploading and by the brain on receipt. */
 export function checkAttachment(name: string, size: number): AttachmentCheck {

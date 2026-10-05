@@ -46,6 +46,7 @@ export const HttpErrorCode = z.enum([
   "too_large",
   "unsupported",
   "empty",
+  "too_many",
   "internal",
 ]);
 export type HttpErrorCode = z.infer<typeof HttpErrorCode>;

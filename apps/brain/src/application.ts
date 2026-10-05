@@ -40,6 +40,8 @@ export interface Application {
   pairing: PairingService;
   /** Nightly job (backup, journal rotation): started by `start` only, never by the maintenance commands. */
   maintenance: Maintenance;
+  /** Files sent with the messages. */
+  attachments: AttachmentStore;
   /** Stops the nightly job, closes the server (and its WebSockets), then the database. */
   close(): Promise<void>;
 }
@@ -56,10 +58,10 @@ export function createSdkEngine(config: Config, auth: Authentication): Engine {
  */
 function openCore(config: Config, embedder?: Embedder) {
   mkdirSync(config.dataDir, { recursive: true });
-  const db = openDb(join(config.dataDir, "alicia.db"));
+  const db = openDb(join(resolve(config.dataDir), "alicia.db"));
   try {
     syncPeople(db, config.people);
-    const memory = new MemoryStore(db, embedder ?? new TransformersEmbedder(join(config.dataDir, "models")), systemClock);
+    const memory = new MemoryStore(db, embedder ?? new TransformersEmbedder(resolve(config.dataDir, "models")), systemClock);
     memory.rebuildIndex();
     memory.purgeForgotten();
     return { db, memory };
@@ -88,16 +90,18 @@ export async function buildApplication(
     mkdirSync(updatesDir, { recursive: true });
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);
+    // Files sent with the messages (absolute: their paths go to Alicia and to the SDK); uploads never sent are
+    // dropped after a day (here, and nightly).
+    const attachments = new AttachmentStore(db, resolve(config.dataDir, "attachments"), systemClock);
+    attachments.purgePending();
     const maintenance = new Maintenance({
       sqlite: db.$client,
       repository,
-      backupDir: join(config.dataDir, "backups"),
+      attachments,
+      backupDir: resolve(config.dataDir, "backups"),
       timezone: config.timezone,
       clock: systemClock,
     });
-    // Files sent with the messages; uploads never sent are dropped after a day (here, and nightly later).
-    const attachments = new AttachmentStore(db, join(config.dataDir, "attachments"), systemClock);
-    attachments.purgePending();
     const tools = new ToolCatalog([memoryTools(memory)]);
     // Two tools with one name would only fail on the first turn: refuse to start instead.
     const someone = config.people[0];
@@ -117,6 +121,7 @@ export async function buildApplication(
       memory,
       pairing,
       maintenance,
+      attachments,
       close: async () => {
         await maintenance.stop();
         await server.close();

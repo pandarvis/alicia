@@ -94,8 +94,11 @@ export class WindowManager {
   #dragCursor: Point | null = null;
   /** The last view the Holo page was given (JSON), to push it again only when it changes. */
   #holoView: string | null = null;
-  /** Each floating window's current showing (counted up at every show); its page closes that one only. */
-  readonly #showings = new Map<BrowserWindow, number>();
+  /**
+   * Each floating window's current showing (counted up at every show); its page closes that one only. Weak: a
+   * destroyed window takes its entry with it.
+   */
+  readonly #showings = new WeakMap<BrowserWindow, number>();
   /** Windows asked to fade out, with their fallback timer. */
   readonly #hiding = new Map<BrowserWindow, ReturnType<typeof setTimeout>>();
 

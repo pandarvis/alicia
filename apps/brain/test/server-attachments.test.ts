@@ -141,10 +141,10 @@ describe("DELETE /attachments/:id", () => {
     expect((await ctx.app.inject({ method: "DELETE", url: `/attachments/${id}` })).statusCode).toBe(401);
     const c = ctx.deps.repository.create("kevin", "Factures");
     const messageId = ctx.deps.repository.addMessage(c.id, "user", "Regarde");
-    ctx.deps.attachments.claim(ctx.deps.attachments.pending("kevin", [id]) ?? [], c.id, messageId);
+    await ctx.deps.attachments.claim("kevin", [id], c.id, messageId);
     const res = await ctx.app.inject({ method: "DELETE", url: `/attachments/${id}`, headers: { authorization: `Bearer ${ctx.kevin}` } });
     expect(res.statusCode).toBe(404);
-    expect(ctx.deps.attachments.pathOf(c.id, id)).toBeDefined();
+    expect(ctx.deps.attachments.pathOf("kevin", c.id, id)).toBeDefined();
   });
 });
 
@@ -155,7 +155,7 @@ describe("history and deletion", () => {
     const c = ctx.deps.repository.create("kevin", "Factures");
     const messageId = ctx.deps.repository.addMessage(c.id, "user", "Regarde");
     ctx.deps.repository.addMessage(c.id, "assistant", "Vu.");
-    ctx.deps.attachments.claim(ctx.deps.attachments.pending("kevin", [id]) ?? [], c.id, messageId);
+    await ctx.deps.attachments.claim("kevin", [id], c.id, messageId);
     const headers = { authorization: `Bearer ${ctx.kevin}` };
     const history = z.array(HistoryMessage).parse((await ctx.app.inject({ method: "GET", url: `/conversations/${c.id}/messages`, headers })).json());
     expect(history.map((m) => m.attachments.map((a) => a.name))).toEqual([["a.pdf"], []]);

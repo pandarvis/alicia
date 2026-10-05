@@ -24,6 +24,17 @@ describe("ConversationRepository", () => {
     expect(repository.messages(c.id)[0]?.id).toBe(id);
   });
 
+  test("deleteMessage removes one message of that conversation only", () => {
+    const { repository } = createRepository();
+    const c = repository.create("kevin", "Volets");
+    const other = repository.create("kevin", "Autre");
+    const kept = repository.addMessage(c.id, "user", "garde");
+    const dropped = repository.addMessage(c.id, "user", "retire");
+    expect(repository.deleteMessage(other.id, dropped)).toBe(false);
+    expect(repository.deleteMessage(c.id, dropped)).toBe(true);
+    expect(repository.messages(c.id).map((m) => m.id)).toEqual([kept]);
+  });
+
   test("isolation: Élodie does not see Kévin's conversation", () => {
     const { repository } = createRepository();
     const c = repository.create("kevin", "Privé");

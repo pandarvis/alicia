@@ -412,6 +412,40 @@ describe("handleSend", () => {
     await send(deps, KEVIN, { text: "Salut" }, { ...answeringPorts("approved").ports, confirmationTimeoutMs: 1_000 });
     expect(engine.requests[0]?.toolTimeoutMs).toBe(1_000 + TOOL_RUN_BUDGET_MS);
   });
+
+  test("the engine runs under the turn's own signal: aborted once the turn is over", async () => {
+    const signals: AbortSignal[] = [];
+    const engine: Engine = {
+      async *run(_request, signal) {
+        signals.push(signal);
+        yield await Promise.resolve({ type: "done", inputTokens: 1, outputTokens: 1 } as const);
+      },
+    };
+    const deps = createChatDeps(createTestDb(), createTestClock().clock, engine);
+    await send(deps, KEVIN, { text: "Salut" });
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
+  test("the consumer stops in the middle: the turn is over before the engine is told to stop", async () => {
+    let abortedWhenReleased: boolean | undefined;
+    const engine: Engine = {
+      async *run(_request, signal) {
+        try {
+          yield await Promise.resolve({ type: "text", text: "Il fait " } as const);
+          yield { type: "text", text: "19 °C." } as const;
+        } finally {
+          abortedWhenReleased = signal.aborted;
+        }
+      },
+    };
+    const deps = createChatDeps(createTestDb(), createTestClock().clock, engine);
+    const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Salut" };
+    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal, answeringPorts("approved").ports)) {
+      if (e.type === "text_delta") break;
+    }
+    expect(abortedWhenReleased).toBe(true);
+  });
 });
 
 describe("buildResumePrompt", () => {
@@ -480,7 +514,7 @@ describe("attachments", () => {
     const first = events[0];
     if (first?.type !== "conversation") throw new Error("expected a conversation event first");
     const dir = deps.attachments.dirOf(first.conversationId);
-    expect(deps.attachments.pathOf(first.conversationId, id)).toBeDefined();
+    expect(deps.attachments.pathOf("kevin", first.conversationId, id)).toBeDefined();
     expect(engine.requests[0]?.readableDirs).toEqual([dir]);
     expect(engine.requests[0]?.prompt).toContain("« facture.pdf » (PDF, ");
     expect(engine.requests[0]?.prompt).toContain(join(dir, `${id}.pdf`));
@@ -504,6 +538,34 @@ describe("attachments", () => {
     const { deps, engine } = createContext(SIMPLE_REPLY);
     await send(deps, KEVIN, { text: "Bonjour" });
     expect(engine.requests[0]?.readableDirs).toEqual([]);
+  });
+
+  test("taken by another message meanwhile: refused, and neither the message nor a new conversation stays", async () => {
+    const { deps, engine } = createContext(SIMPLE_REPLY);
+    const id = uploadFor(deps, "kevin");
+    vi.spyOn(deps.attachments, "claim").mockResolvedValue({ status: "gone" });
+    const events = await send(deps, KEVIN, { text: "Regarde", attachments: [id] });
+    expect(events.slice(1)).toEqual([{
+      type: "error", requestId: REQUEST_ID, code: "invalid_request",
+      message: "Pièce jointe introuvable ou expirée : joins-la à nouveau.",
+    }]);
+    expect(deps.repository.list("kevin")).toEqual([]);
+    expect(engine.requests).toEqual([]);
+  });
+
+  test("files that cannot be moved, in an existing conversation: an error, the message is not kept", async () => {
+    const { deps, engine } = createContext(SIMPLE_REPLY);
+    const firsts = await send(deps, KEVIN, { text: "Bonjour" });
+    const conversationId = firsts[0]?.type === "conversation" ? firsts[0].conversationId : "";
+    const id = uploadFor(deps, "kevin");
+    vi.spyOn(deps.attachments, "claim").mockResolvedValue({ status: "failed" });
+    const events = await send(deps, KEVIN, { text: "Regarde", conversationId, attachments: [id] });
+    expect(events.slice(1)).toEqual([{
+      type: "error", requestId: REQUEST_ID, conversationId, code: "internal",
+      message: "Impossible de joindre les fichiers pour l'instant : réessaie.",
+    }]);
+    expect(deps.repository.messages(conversationId).map((m) => m.text)).toEqual(["Bonjour", "Il fait 19 °C."]);
+    expect(engine.requests).toHaveLength(1);
   });
 
   test("an unknown, someone else's or already sent attachment: refused before anything is created", async () => {

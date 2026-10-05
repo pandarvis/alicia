@@ -86,6 +86,10 @@ people: [{ id: kevin, name: Kévin }]
 engine: { mode: subscription }
 `);
   const app = await buildApplication(config, new FakeEngine(() => []), { embedder: new FakeEmbedder() });
+  // The attachments' folder is absolute too: its paths go to Alicia and to the SDK (whose cwd is the workspace).
+  const conversationDir = app.attachments.dirOf("3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192");
+  expect(isAbsolute(conversationDir)).toBe(true);
+  expect(conversationDir.startsWith(dir)).toBe(true);
   writeFileSync(join(dir, "updates", "latest.yml"), "version: 0.2.0\n");
   const res = await app.server.inject({ method: "GET", url: "/updates/latest.yml" });
   await app.close();

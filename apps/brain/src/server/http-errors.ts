@@ -17,6 +17,7 @@ const MESSAGES: Readonly<Record<HttpErrorCode, string>> = {
   too_large: "Fichier trop gros : 25 Mo au maximum.",
   unsupported: "Type de fichier non pris en charge : images, PDF, Word (.docx), Excel (.xlsx) et texte (.txt, .csv).",
   empty: "Fichier vide.",
+  too_many: "Trop de pièces jointes en attente : envoie ou retire celles qui sont déjà jointes.",
   internal: "Erreur interne du cerveau.",
 };
 

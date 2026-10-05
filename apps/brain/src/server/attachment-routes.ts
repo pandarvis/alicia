@@ -9,7 +9,9 @@ export interface AttachmentRouteDeps {
 }
 
 const RAW = "application/octet-stream";
-const REFUSAL_STATUS: Readonly<Record<AttachmentRefusalReason, number>> = { unsupported: 415, too_large: 413, empty: 400 };
+const REFUSAL_STATUS: Readonly<Record<AttachmentRefusalReason, number>> = {
+  unsupported: 415, too_large: 413, empty: 400, too_many: 429,
+};
 /** Percent-encoded, a 200-character name (the most the store keeps) stays well under this. */
 const NAME_HEADER_MAX = 1000;
 

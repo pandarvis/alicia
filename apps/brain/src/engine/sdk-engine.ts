@@ -350,12 +350,19 @@ export function checkIsolation(init: SDKSystemMessage, expected: IsolationExpect
   if (init.apiKeySource !== keySource) problems.push(`Source d'authentification : ${init.apiKeySource} (attendu : ${keySource})`);
   if (!samePath(init.cwd, expected.workspaceDir)) problems.push(`Dossier de travail : ${init.cwd}`);
   if (init.permissionMode !== "default") problems.push(`Mode de permission : ${init.permissionMode} (attendu : default)`);
+  // The CLI (2.1.288, checked in its bundle) lists in `init.skills` every skill it discovered, its own bundled ones
+  // included (update-config, simplify…): the `skills` option is an allow-list applied to the model's listing and
+  // to the Skill tool ("not in this session's skills allowlist"), not to discovery. Only our names are usable,
+  // so the others are reported, not failed. Same for `init.agents` (its built-in agents): only a tool that starts
+  // agents (Agent, Task) would make them usable, and such a tool already fails the tools check above.
   const extra = init.skills.filter((s) => !expected.skills.includes(s));
-  if (extra.length > 0) problems.push(`Skills inattendus : ${extra.join(", ")}`);
   const agents = init.agents ?? [];
-  if (agents.length > 0) problems.push(`Agents chargés : ${agents.join(", ")}`);
+  const agentTool = init.tools.some((t) => t === "Agent" || t === "Task");
+  if (agentTool && agents.length > 0) problems.push(`Agents utilisables : ${agents.join(", ")}`);
   const lines = [
     ...problems.map((p) => `ÉCHEC  ${p}`),
+    ...(extra.length > 0 ? [`info   Skills découverts mais bloqués par la liste autorisée : ${extra.join(", ")}`] : []),
+    ...(!agentTool && agents.length > 0 ? [`info   Agents intégrés listés, inutilisables sans outil Agent : ${agents.join(", ")}`] : []),
     problems.length === 0 ? "OK     Isolation conforme." : `${problems.length} problème(s).`,
   ];
   return { ok: problems.length === 0, lines };
@@ -393,6 +400,8 @@ export class SdkEngine implements Engine {
       yield* translateTurn(query({ prompt: request.prompt, options }), secretOf(this.#params.auth), signal);
     } finally {
       signal.removeEventListener("abort", abort);
+      // Done, failed or stopped: the SDK process and anything it still runs for this turn go too.
+      controller.abort();
     }
   }
 }

@@ -8,7 +8,7 @@ const FIRST = "00000000-0000-4000-8000-000000000000";
 const MESSAGE = "9b1d2c3e-4f5a-4b6c-8d7e-0f1a2b3c4d5e";
 const WHERE = { conversationId: CONV, messageId: MESSAGE };
 
-function setup(options: { failSend?: (e: ServerEvent) => boolean } = {}) {
+function setup(options: { failSend?: (e: ServerEvent) => boolean; closed?: boolean } = {}) {
   const sent: ServerEvent[] = [];
   const timers: { run: () => void; ms: number; cancelled: boolean }[] = [];
   let counter = 0;
@@ -16,6 +16,7 @@ function setup(options: { failSend?: (e: ServerEvent) => boolean } = {}) {
     send: (e) => {
       if (options.failSend?.(e) === true) throw new Error("socket gone");
       sent.push(e);
+      return options.closed !== true;
     },
     newId: () => `00000000-0000-4000-8000-00000000000${counter++}`,
     now: () => Date.UTC(2026, 9, 5, 10, 0),
@@ -31,6 +32,12 @@ function setup(options: { failSend?: (e: ServerEvent) => boolean } = {}) {
 }
 
 describe("ConfirmationBroker", () => {
+  test("a connection that is no longer open (send says false): cancelled at once, nothing to wait for", async () => {
+    const { broker, timers } = setup({ closed: true });
+    expect(await broker.ask(WHERE, ASK, new AbortController().signal)).toBe("cancelled");
+    expect(timers[0]?.cancelled).toBe(true);
+  });
+
   test("asks, then the person approves", async () => {
     const { broker, sent, timers } = setup();
     const outcome = broker.ask(WHERE, ASK, new AbortController().signal);
@@ -113,7 +120,7 @@ describe("ConfirmationBroker", () => {
   test("a custom delay", () => {
     const { timers } = setup();
     const broker = new ConfirmationBroker({
-      send: () => undefined, newId: () => FIRST, now: () => 0, timeoutMs: 50,
+      send: () => true, newId: () => FIRST, now: () => 0, timeoutMs: 50,
       schedule: (run, ms) => {
         timers.push({ run, ms, cancelled: false });
         return () => undefined;

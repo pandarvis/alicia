@@ -1,6 +1,8 @@
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const JPEG = [0xff, 0xd8, 0xff];
 const ZIP = [0x50, 0x4b, 0x03, 0x04];
+const UTF16_LE = [0xff, 0xfe];
+const UTF16_BE = [0xfe, 0xff];
 
 const ascii = (text: string): Uint8Array => new TextEncoder().encode(text);
 const startsWith = (bytes: Uint8Array, signature: ArrayLike<number>, offset = 0): boolean => {
@@ -13,7 +15,8 @@ const startsWith = (bytes: Uint8Array, signature: ArrayLike<number>, offset = 0)
 
 /**
  * Does the content look like what its extension claims? Magic numbers for binary formats (.docx and .xlsx are
- * ZIP archives); text must not contain NUL bytes (UTF-8 or Windows-1252, like CSV files saved by a French Excel).
+ * ZIP archives); text must not contain NUL bytes (UTF-8 or Windows-1252, like CSV files saved by a French Excel),
+ * unless it is UTF-16 with its byte order mark (Notepad, some exports): then whole code units only.
  */
 export function contentMatches(extension: string, bytes: Uint8Array): boolean {
   switch (extension) {
@@ -33,6 +36,7 @@ export function contentMatches(extension: string, bytes: Uint8Array): boolean {
       return startsWith(bytes, ZIP);
     case ".txt":
     case ".csv":
+      if (startsWith(bytes, UTF16_LE) || startsWith(bytes, UTF16_BE)) return bytes.length % 2 === 0;
       return !bytes.includes(0);
     default:
       return false;

@@ -12,6 +12,8 @@ export const NIGHTLY_HOUR = 3;
 export interface MaintenanceOptions {
   sqlite: Db["$client"];
   repository: ConversationRepository;
+  /** Uploads never sent in a message (dropped after a day). */
+  attachments?: { purgePending(): number };
   /** `<dataDir>/backups`. */
   backupDir: string;
   /** The household's time zone (config `timezone`): "nightly" and backup names follow it. */
@@ -50,6 +52,7 @@ export function localTime(ms: number, timeZone: string): { day: string; hour: nu
 export class Maintenance {
   readonly #sqlite: Db["$client"];
   readonly #repository: ConversationRepository;
+  readonly #attachments: MaintenanceOptions["attachments"];
   readonly #backupDir: string;
   readonly #timezone: string;
   readonly #clock: Clock;
@@ -62,6 +65,7 @@ export class Maintenance {
   constructor(options: MaintenanceOptions) {
     this.#sqlite = options.sqlite;
     this.#repository = options.repository;
+    this.#attachments = options.attachments;
     this.#backupDir = options.backupDir;
     this.#timezone = options.timezone;
     this.#clock = options.clock;
@@ -100,11 +104,12 @@ export class Maintenance {
   /** Rotation, backup of the day (replacing today's if any) and pruning, now. Returns the backup path. */
   async runNow(): Promise<string> {
     const purged = this.#repository.purgeTurnLog();
+    const unsent = this.#attachments?.purgePending() ?? 0;
     const { day } = localTime(this.#clock(), this.#timezone);
     const path = await backupDatabase(this.#sqlite, this.#backupDir, day);
     const removed = pruneBackups(this.#backupDir, basename(path));
     this.#log(
-      `Sauvegarde écrite : ${path} (journal : ${purged} entrées de plus de 90 jours supprimées ; ${removed.length} anciennes sauvegardes supprimées).`,
+      `Sauvegarde écrite : ${path} (journal : ${purged} entrées de plus de 90 jours supprimées ; ${removed.length} anciennes sauvegardes supprimées ; ${unsent} pièces jointes jamais envoyées supprimées).`,
     );
     return path;
   }

@@ -312,6 +312,18 @@ export class MemoryStore {
     return true;
   }
 
+  /**
+   * Soft forget of exactly the version the person approved (`updatedAt` as shown on the card), checked by the same
+   * statement: false if it changed, was forgotten meanwhile, or cannot be reached.
+   */
+  forgetIf(personId: string, id: string, expectedUpdatedAt: number): boolean {
+    return this.#db
+      .update(memories)
+      .set({ forgottenAt: this.#clock() })
+      .where(and(eq(memories.id, id), this.#reachable(personId), eq(memories.updatedAt, expectedUpdatedAt)))
+      .run().changes === 1;
+  }
+
   /** Deletes memories forgotten more than 30 days ago; returns how many. */
   purgeForgotten(): number {
     return this.#db

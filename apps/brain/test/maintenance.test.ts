@@ -35,7 +35,14 @@ function setup(options: { blockBackups?: boolean; start?: number } = {}) {
   const intervals: { ms: number; run: () => void; stopped: boolean }[] = [];
   const logs: string[] = [];
   const errors: string[] = [];
+  const purges: number[] = [];
   const maintenance = new Maintenance({
+    attachments: {
+      purgePending: () => {
+        purges.push(1);
+        return 2;
+      },
+    },
     sqlite: db.$client,
     repository,
     backupDir,
@@ -55,7 +62,7 @@ function setup(options: { blockBackups?: boolean; start?: number } = {}) {
       errors.push(message);
     },
   });
-  return { db, time, repository, maintenance, intervals, logs, errors, backups: () => listBackups(backupDir) };
+  return { db, time, repository, maintenance, intervals, logs, errors, purges, backups: () => listBackups(backupDir) };
 }
 
 describe("localTime", () => {
@@ -104,6 +111,13 @@ describe("Maintenance", () => {
     time.advance(91 * DAY);
     await maintenance.runNow();
     expect(db.select().from(turnLog).all()).toEqual([]);
+  });
+
+  test("the nightly job drops the uploads never sent", async () => {
+    const { maintenance, purges, logs } = setup();
+    await maintenance.runNow();
+    expect(purges).toEqual([1]);
+    expect(logs.at(-1)).toContain("2 pièces jointes jamais envoyées supprimées");
   });
 
   test("start catches up at once, then ticks every hour; stop ends it", async () => {

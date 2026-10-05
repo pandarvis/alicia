@@ -112,6 +112,14 @@ export class ConversationRepository {
     return id;
   }
 
+  /** Removes one message of this conversation (a message whose turn could not even start). */
+  deleteMessage(conversationId: string, id: string): boolean {
+    return this.#db
+      .delete(messages)
+      .where(and(eq(messages.id, id), eq(messages.conversationId, conversationId)))
+      .run().changes === 1;
+  }
+
   messages(conversationId: string): Message[] {
     return this.#db
       .select()

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { type AttachmentRefusalReason, type AttachmentSummary, checkAttachment } from "@alicia/protocol";
-import { and, asc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, inArray, isNull, lt, sql, sum, TransactionRollbackError } from "drizzle-orm";
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/open.ts";
 import { attachments } from "../db/schema.ts";
@@ -12,27 +12,72 @@ export type Attachment = typeof attachments.$inferSelect;
 export type UploadResult =
   | { status: "stored"; attachment: Attachment }
   | { status: "refused"; reason: AttachmentRefusalReason };
+/**
+ * "gone": an id is unknown, someone else's, already sent, expired or repeated (nothing is claimed); "failed": a
+ * file could not be moved (everything is put back, still pending).
+ */
+export type ClaimResult = { status: "claimed"; attachments: Attachment[] } | { status: "gone" } | { status: "failed" };
 
 /** An upload not sent in a message within a day is dropped. */
 export const PENDING_TTL_MS = 24 * 3_600_000;
+/** What one person may leave waiting (uploaded, not sent yet). */
+export const PENDING_MAX_FILES = 20;
+export const PENDING_MAX_BYTES = 250 * 1024 * 1024;
 const PENDING_DIR = "pending";
 const NAME_MAX = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Moving a file may meet a lock (antivirus, indexer on Windows): it is tried again a few times. */
+const MOVE_ATTEMPTS = 3;
+const MOVE_RETRY_MS = 50;
+const RETRIABLE = new Set(["EBUSY", "EPERM", "EACCES"]);
+/**
+ * Characters that can disguise a name: controls, and every invisible format character (direction overrides and
+ * marks, zero-width spaces…) but the joiners (ZWNJ, ZWJ: emoji and some scripts need them) and the emoji tag
+ * characters (subdivision flags).
+ */
+const DISGUISE = /[[\p{Cc}\p{Cf}]--[‌‍\u{E0020}-\u{E007F}]]/gv;
+const graphemes = new Intl.Segmenter("fr", { granularity: "grapheme" });
 
-/** Display name: last path segment, NFC, no control or formatting characters, at most 200 characters (extension kept). */
+/**
+ * Display name: last path segment, well-formed, NFC, without control or disguising characters, at most 200
+ * characters, cut between graphemes (the extension is kept).
+ */
 export function cleanName(raw: string): string {
-  const base = raw.split(/[\\/]/u).at(-1) ?? "";
-  const clean = base.normalize("NFC").replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  const base = raw.toWellFormed().split(/[\\/]/u).at(-1) ?? "";
+  const clean = base.normalize("NFC").replace(DISGUISE, "").trim();
   if (clean.length <= NAME_MAX) return clean;
   const dot = clean.lastIndexOf(".");
   const extension = dot > 0 ? clean.slice(dot) : "";
-  return `${clean.slice(0, NAME_MAX - extension.length)}${extension}`;
+  let kept = "";
+  for (const { segment } of graphemes.segment(clean.slice(0, clean.length - extension.length))) {
+    if (kept.length + segment.length + extension.length > NAME_MAX) break;
+    kept += segment;
+  }
+  return `${kept}${extension}`;
 }
 
 const fileName = (a: Pick<Attachment, "id" | "extension">): string => `${a.id}${a.extension}`;
 
 export function toSummary(a: Attachment): AttachmentSummary {
   return { id: a.id, name: a.name, kind: a.kind, size: a.size };
+}
+
+const pause = (ms: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+
+/** Moves a file, trying again when it is briefly locked. */
+async function move(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (error) {
+      const code: unknown = error instanceof Error ? Reflect.get(error, "code") : undefined;
+      if (attempt >= MOVE_ATTEMPTS || typeof code !== "string" || !RETRIABLE.has(code)) throw error;
+      await pause(MOVE_RETRY_MS * attempt);
+    }
+  }
 }
 
 /**
@@ -48,7 +93,9 @@ export class AttachmentStore {
 
   constructor(db: Db, root: string, clock: Clock) {
     this.#db = db;
-    this.#root = root;
+    // Absolute whatever the config says (`./data` by default): its paths go to Alicia and to the SDK, whose
+    // working directory is the workspace.
+    this.#root = resolve(root);
     this.#clock = clock;
   }
 
@@ -70,13 +117,23 @@ export class AttachmentStore {
     if (!check.ok) return { status: "refused", reason: check.reason };
     // A file whose content is not what its extension says is refused like an unsupported type.
     if (!contentMatches(check.type.extension, bytes)) return { status: "refused", reason: "unsupported" };
+    if (!this.#roomFor(personId, bytes.byteLength)) return { status: "refused", reason: "too_many" };
     const attachment: Attachment = {
       id: randomUUID(), personId, conversationId: null, messageId: null, name,
       kind: check.type.kind, extension: check.type.extension, size: bytes.byteLength, createdAt: this.#clock(),
     };
     mkdirSync(join(this.#root, PENDING_DIR), { recursive: true });
     const path = this.#pendingPath(attachment);
-    writeFileSync(path, bytes, { flag: "wx" });
+    // Created here or not at all ("wx"); a write that fails half-way leaves nothing behind.
+    const fd = openSync(path, "wx");
+    try {
+      writeFileSync(fd, bytes);
+    } catch (error) {
+      closeSync(fd);
+      rmSync(path, { force: true });
+      throw error;
+    }
+    closeSync(fd);
     try {
       this.#db.insert(attachments).values(attachment).run();
     } catch (error) {
@@ -86,42 +143,62 @@ export class AttachmentStore {
     return { status: "stored", attachment };
   }
 
-  /** The person's pending uploads with these ids, in this order; undefined if any is unknown, someone else's, sent or expired. */
+  /**
+   * The person's pending uploads with these ids, in this order; undefined if any is unknown, someone else's, sent,
+   * expired or repeated. A check only: `claim` decides, atomically.
+   */
   pending(personId: string, ids: readonly string[]): Attachment[] | undefined {
     if (ids.length === 0) return [];
     if (new Set(ids).size !== ids.length) return undefined;
-    const rows = this.#db
-      .select()
-      .from(attachments)
-      .where(and(
-        inArray(attachments.id, [...ids]),
-        eq(attachments.personId, personId),
-        isNull(attachments.conversationId),
-        gte(attachments.createdAt, this.#clock() - PENDING_TTL_MS),
-      ))
-      .all();
+    const rows = this.#db.select().from(attachments).where(this.#ownPending(personId, ids)).all();
     const ordered = ids.map((id) => rows.find((r) => r.id === id));
     return ordered.every((a): a is Attachment => a !== undefined) ? ordered : undefined;
   }
 
-  /** Moves pending uploads into the conversation, linked to the user message carrying them. */
-  claim(pending: readonly Attachment[], conversationId: string, messageId: string): Attachment[] {
-    if (pending.length === 0) return [];
+  /**
+   * Moves the person's pending uploads into the conversation, linked to the user message carrying them: all of
+   * them or none. Ownership is checked here, by the very statement that takes them: nobody else's upload, and an
+   * upload is never claimed twice, even by two messages at once.
+   */
+  async claim(personId: string, ids: readonly string[], conversationId: string, messageId: string): Promise<ClaimResult> {
+    if (ids.length === 0 || new Set(ids).size !== ids.length) return { status: "gone" };
     const dir = this.dirOf(conversationId);
-    mkdirSync(dir, { recursive: true });
-    for (const a of pending) renameSync(this.#pendingPath(a), join(dir, fileName(a)));
-    this.#db.transaction((tx) => {
-      for (const a of pending) tx.update(attachments).set({ conversationId, messageId }).where(eq(attachments.id, a.id)).run();
-    });
-    return pending.map((a) => ({ ...a, conversationId, messageId }));
+    const taken = this.#take(personId, ids, conversationId, messageId);
+    if (taken === undefined) return { status: "gone" };
+    const moved: Attachment[] = [];
+    try {
+      mkdirSync(dir, { recursive: true });
+      for (const a of taken) {
+        await move(this.#pendingPath(a), join(dir, fileName(a)));
+        moved.push(a);
+      }
+    } catch {
+      // Everything goes back as it was: the files in pending/, the rows pending again.
+      for (const a of moved) {
+        try {
+          renameSync(join(dir, fileName(a)), this.#pendingPath(a));
+        } catch {
+          // Stays in the conversation's folder; its row is pending all the same, and purged after a day.
+        }
+      }
+      this.#db
+        .update(attachments)
+        .set({ conversationId: null, messageId: null })
+        .where(and(inArray(attachments.id, [...ids]), eq(attachments.personId, personId)))
+        .run();
+      return { status: "failed" };
+    }
+    return { status: "claimed", attachments: taken.map((a) => ({ ...a, conversationId, messageId })) };
   }
 
-  /** An attachment of this conversation and its file; undefined for anything else. */
-  pathOf(conversationId: string, id: string): { attachment: Attachment; path: string } | undefined {
+  /** An attachment of this person in this conversation, and its file; undefined for anything else. */
+  pathOf(personId: string, conversationId: string, id: string): { attachment: Attachment; path: string } | undefined {
     const attachment = this.#db
       .select()
       .from(attachments)
-      .where(and(eq(attachments.id, id), eq(attachments.conversationId, conversationId)))
+      .where(and(
+        eq(attachments.id, id), eq(attachments.conversationId, conversationId), eq(attachments.personId, personId),
+      ))
       .get();
     return attachment === undefined ? undefined : { attachment, path: join(this.dirOf(conversationId), fileName(attachment)) };
   }
@@ -172,6 +249,46 @@ export class AttachmentStore {
       rmSync(this.#pendingPath(a), { force: true });
     }
     return expired.length;
+  }
+
+  /** The person's own uploads among `ids`, not sent yet, not expired. */
+  #ownPending(personId: string, ids: readonly string[]) {
+    return and(
+      inArray(attachments.id, [...ids]),
+      eq(attachments.personId, personId),
+      isNull(attachments.conversationId),
+      gte(attachments.createdAt, this.#clock() - PENDING_TTL_MS),
+    );
+  }
+
+  /** Takes the rows for the conversation, all in one transaction; undefined (nothing taken) if any is missing. */
+  #take(personId: string, ids: readonly string[], conversationId: string, messageId: string): Attachment[] | undefined {
+    try {
+      return this.#db.transaction((tx) => {
+        const owned = this.#ownPending(personId, ids);
+        const rows = tx.select().from(attachments).where(owned).all();
+        const result = tx.update(attachments).set({ conversationId, messageId }).where(owned).run();
+        if (rows.length !== ids.length || result.changes !== ids.length) tx.rollback();
+        return ids.map((id) => rows.find((row) => row.id === id)).filter((a): a is Attachment => a !== undefined);
+      });
+    } catch (error) {
+      if (error instanceof TransactionRollbackError) return undefined;
+      throw error;
+    }
+  }
+
+  /** Whether the person may leave one more file of this size waiting. */
+  #roomFor(personId: string, size: number): boolean {
+    const waiting = this.#db
+      .select({ files: count(), bytes: sum(attachments.size).mapWith(Number) })
+      .from(attachments)
+      .where(and(
+        eq(attachments.personId, personId),
+        isNull(attachments.conversationId),
+        gte(attachments.createdAt, this.#clock() - PENDING_TTL_MS),
+      ))
+      .get();
+    return (waiting?.files ?? 0) < PENDING_MAX_FILES && (waiting?.bytes ?? 0) + size <= PENDING_MAX_BYTES;
   }
 
   #pendingPath(a: Pick<Attachment, "id" | "extension">): string {

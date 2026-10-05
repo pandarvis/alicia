@@ -127,7 +127,10 @@ export function memoryTools(store: MemoryStore): ToolProvider {
         if (memory === undefined) return Promise.resolve(NOT_FOUND);
         // What is forgotten is what the person approved, not a memory corrected while the card waited.
         if (confirmed !== undefined && confirmed.snapshot !== snapshotOf(memory)) return Promise.resolve(CHANGED);
-        return Promise.resolve(store.forget(person.id, id) ? { text: "Oublié (récupérable 30 jours)." } : NOT_FOUND);
+        // One statement checks the version again: a change between the read above and now is not forgotten either.
+        return Promise.resolve(
+          store.forgetIf(person.id, id, memory.updatedAt) ? { text: "Oublié (récupérable 30 jours)." } : CHANGED,
+        );
       },
     }),
   ];

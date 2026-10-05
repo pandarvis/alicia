@@ -179,6 +179,22 @@ describe("MemoryStore", () => {
     expect(store.purgeForgotten()).toBe(1);
   });
 
+  test("forgetIf forgets only the version that was approved, in one statement", async () => {
+    const { store, time } = setup();
+    const result = await remember(store, "kevin", "Kévin adore les lasagnes");
+    if (result.status !== "created") throw new Error("not created");
+    const approved = result.memory.updatedAt;
+    time.advance(1_000);
+    await store.update("kevin", result.memory.id, { text: "Kévin adore les lasagnes végétariennes" });
+    expect(store.forgetIf("kevin", result.memory.id, approved)).toBe(false);
+    const current = store.get("kevin", result.memory.id);
+    expect(current?.text).toBe("Kévin adore les lasagnes végétariennes");
+    expect(store.forgetIf("elodie", result.memory.id, current?.updatedAt ?? 0)).toBe(false);
+    expect(store.forgetIf("kevin", result.memory.id, current?.updatedAt ?? 0)).toBe(true);
+    expect(store.get("kevin", result.memory.id)).toBeUndefined();
+    expect(store.forgetIf("kevin", result.memory.id, current?.updatedAt ?? 0)).toBe(false);
+  });
+
   test("unrelated query returns nothing (similarity floor)", async () => {
     const { store } = setup();
     await remember(store, "kevin", "Kévin adore les lasagnes");

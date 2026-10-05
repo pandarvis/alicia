@@ -32,8 +32,11 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
   let session: { deviceId: string; person: Person } | undefined;
   const turns = new Set<AbortController>();
 
-  const send = (event: ServerEvent): void => {
-    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
+  /** False when the socket is no longer open (the event is dropped). */
+  const send = (event: ServerEvent): boolean => {
+    if (socket.readyState !== socket.OPEN) return false;
+    socket.send(JSON.stringify(event));
+    return true;
   };
   // Confirmations belong to this connection: only the device that started the turn can answer them.
   const broker = new ConfirmationBroker({

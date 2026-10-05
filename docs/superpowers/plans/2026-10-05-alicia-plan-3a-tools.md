@@ -4023,6 +4023,11 @@ git commit -m "feat(brain): weather tool (Open-Meteo, home coordinates from the 
 - Create: `apps/brain/test/documents.ts` (fabrique de fichiers de test)
 - Test: `apps/brain/test/document-read.test.ts` (nouveau), `apps/brain/test/application.test.ts`
 
+> **Ajouté par la revue des tâches 4 à 6 (à faire dans cette tâche) :**
+> - **Bombes ZIP** : avant `mammoth` / SheetJS, lire le répertoire central du .docx / .xlsx et refuser si la somme des tailles décompressées ou le nombre d'entrées dépasse une limite raisonnable (message clair en français) ; en profiter pour vérifier `word/document.xml` (Word) contre `xl/workbook.xml` (Excel), afin que le type soit décidé sur le contenu.
+> - **OOXML chiffré** (fichier CFB, signature `D0 CF 11 E0`) : « Document protégé par mot de passe : impossible de le lire. »
+> - **Texte UTF-16** : `sniff.ts` accepte désormais .txt / .csv en UTF-16 avec BOM (`FF FE` / `FE FF`) ; les décoder ici comme tels (après UTF-8 strict puis Windows-1252 pour le reste).
+
 - [ ] **Step 1: Add the dependencies**
 
 ```bash

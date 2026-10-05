@@ -27,7 +27,8 @@ const SETTLED_MEMORY = 32;
 type ConfirmationEvent = Extract<ServerEvent, { type: "confirm_request" | "confirm_result" }>;
 
 export interface BrokerOptions {
-  send(event: ConfirmationEvent): void;
+  /** False (or a throw) when the connection cannot carry it any more (closed, failing). */
+  send(event: ConfirmationEvent): boolean;
   newId(): string;
   now(): number;
   /** Runs `run` after `ms`; returns a cancel function. */
@@ -118,8 +119,7 @@ export class ConfirmationBroker {
   /** False when the connection could not send (closed, failing). */
   #trySend(event: ConfirmationEvent): boolean {
     try {
-      this.#options.send(event);
-      return true;
+      return this.#options.send(event);
     } catch {
       return false;
     }

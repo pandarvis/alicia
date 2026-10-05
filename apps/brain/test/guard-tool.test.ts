@@ -140,4 +140,46 @@ describe("guardTool", () => {
     await guardTool(terse, turn).run({});
     expect(asked[0]?.summary).toBe("Alicia voudrait utiliser l'outil « terse ». D'accord ?");
   });
+
+  test("once the turn is over, no tool runs, not even one without confirmation", async () => {
+    const ran: string[] = [];
+    const { turn, end, asked } = createTestTurn(KEVIN, CONV, "approved");
+    const plain = defineTool({
+      name: "plain", label: "…", description: "…", input: {},
+      run: () => {
+        ran.push("plain");
+        return Promise.resolve({ text: "ok" });
+      },
+    });
+    end();
+    expect(await guardTool(plain, turn).run({})).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
+    expect(await guardTool(deletion(ran), turn).run({ id: "a" })).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
+    expect(ran).toEqual([]);
+    expect(asked).toEqual([]);
+  });
+
+  test("every field but the confirmation is kept", () => {
+    const { turn } = createTestTurn(KEVIN, CONV);
+    const reader = defineTool({
+      name: "reader", label: "…", description: "…", input: {}, untrustedOutput: true,
+      confirmation: () => Promise.resolve(null),
+      run: () => Promise.resolve({ text: "ok" }),
+    });
+    expect(Object.keys(guardTool(reader, turn)).sort()).toEqual(["description", "input", "label", "name", "run", "untrustedOutput"]);
+  });
+
+  test("a tool that takes longer than its budget: Alicia is told it may still have acted", async () => {
+    const { turn } = createTestTurn(KEVIN, CONV);
+    const slow = defineTool({
+      name: "slow", label: "…", description: "…", input: {}, untrustedOutput: true,
+      run: () => new Promise<never>(() => undefined),
+    });
+    expect(await guardTool(slow, turn, { runBudgetMs: 10 }).run({})).toEqual({
+      text: "L'outil a mis trop de temps à répondre : il a peut-être agi quand même. Vérifie avant de recommencer, et dis-le à la personne.",
+      isError: true,
+    });
+    // What it may bring later is outside content all the same.
+    expect(turn.untrusted).toBe(true);
+  });
+
 });
