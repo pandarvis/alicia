@@ -1,6 +1,7 @@
 import type { Person } from "@alicia/protocol";
 import { truncate } from "../text.ts";
 import type { ConfirmationOutcome, ConfirmationRequest } from "./confirmations.ts";
+import { userUrls } from "./urls.ts";
 
 /** The protocol caps a card's question at 500 characters. */
 const SUMMARY_MAX = 500;
@@ -12,6 +13,8 @@ export interface TurnParams {
   attachmentsDir: string;
   /** Alicia's skills folder (a skill's own files may be read). */
   skillsDir: string;
+  /** The person's message: the addresses it contains may be fetched without asking. */
+  userText: string;
   /** Aborts when the turn ends, whatever the reason: nothing it asked may run afterwards. */
   signal: AbortSignal;
   /** Asks the person on the device that sent the message (settles "cancelled" when the turn ends). */
@@ -24,6 +27,8 @@ export class TurnContext {
   readonly conversationId: string;
   readonly attachmentsDir: string;
   readonly skillsDir: string;
+  /** The addresses of the person's message, in comparable form (see urlKey). */
+  readonly userUrls: ReadonlySet<string>;
   readonly #signal: AbortSignal;
   readonly #confirm: TurnParams["confirm"];
   #untrusted = false;
@@ -33,6 +38,7 @@ export class TurnContext {
     this.conversationId = params.conversationId;
     this.attachmentsDir = params.attachmentsDir;
     this.skillsDir = params.skillsDir;
+    this.userUrls = userUrls(params.userText);
     this.#signal = params.signal;
     this.#confirm = params.confirm;
   }

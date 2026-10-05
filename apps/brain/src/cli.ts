@@ -298,6 +298,7 @@ function cliTurn(config: Config, person: Person): TurnContext {
     conversationId,
     attachmentsDir: join(resolve(config.dataDir), "attachments", conversationId),
     skillsDir: SKILLS_DIR,
+    userText: "",
     signal: new AbortController().signal,
     confirm: () => Promise.resolve("refused"),
   });

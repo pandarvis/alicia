@@ -88,7 +88,7 @@ export function createTestTurn(
   person: Person,
   conversationId: string,
   outcome: ConfirmationOutcome | (() => Promise<ConfirmationOutcome>) = "approved",
-  paths: { attachmentsDir?: string; skillsDir?: string } = {},
+  paths: { attachmentsDir?: string; skillsDir?: string; userText?: string } = {},
 ) {
   const asked: ConfirmationRequest[] = [];
   const scope = new AbortController();
@@ -98,6 +98,7 @@ export function createTestTurn(
     // Folders that do not exist unless a test makes them: nothing is readable by default.
     attachmentsDir: paths.attachmentsDir ?? join(tmpdir(), "alicia-none", conversationId),
     skillsDir: paths.skillsDir ?? join(tmpdir(), "alicia-none", "skills"),
+    userText: paths.userText ?? "",
     signal: scope.signal,
     confirm: (request) => {
       asked.push(request);

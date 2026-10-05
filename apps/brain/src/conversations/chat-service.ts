@@ -147,6 +147,7 @@ export async function* handleSend(
     conversationId,
     attachmentsDir: deps.attachments.dirOf(conversationId),
     skillsDir: deps.skillsDir,
+    userText: message.text,
     signal: turnSignal,
     confirm: (request) => ports.confirm({ conversationId, messageId }, request, turnSignal),
   });
