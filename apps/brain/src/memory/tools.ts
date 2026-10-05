@@ -32,6 +32,14 @@ function refused(reason: RefusalReason): ToolResult {
 }
 
 const NOT_FOUND: ToolResult = { text: "Souvenir introuvable.", isError: true };
+const CHANGED: ToolResult = {
+  text: "Le souvenir a changé depuis la question : rien n'a été oublié. Redemande si besoin.", isError: true,
+};
+
+/** What a forget question shows and approves: the memory as it is now. */
+function snapshotOf(memory: Memory): string {
+  return JSON.stringify([memory.updatedAt, memory.scope, memory.text]);
+}
 
 /** Memory tools bound to the person speaking: they can only ever reach "common" and that person. */
 export function memoryTools(store: MemoryStore): ToolProvider {
@@ -110,9 +118,15 @@ export function memoryTools(store: MemoryStore): ToolProvider {
       // Only a memory this person can reach is worth a question: otherwise `run` says it was not found.
       confirmation({ id }) {
         const memory = store.get(person.id, id);
-        return Promise.resolve(memory === undefined ? null : `Oublier ce souvenir : « ${oneLine(memory.text)} » ?`);
+        return Promise.resolve(
+          memory === undefined ? null : { summary: `Oublier ce souvenir : « ${oneLine(memory.text)} » ?`, snapshot: snapshotOf(memory) },
+        );
       },
-      run({ id }) {
+      run({ id }, confirmed) {
+        const memory = store.get(person.id, id);
+        if (memory === undefined) return Promise.resolve(NOT_FOUND);
+        // What is forgotten is what the person approved, not a memory corrected while the card waited.
+        if (confirmed !== undefined && confirmed.snapshot !== snapshotOf(memory)) return Promise.resolve(CHANGED);
         return Promise.resolve(store.forget(person.id, id) ? { text: "Oublié (récupérable 30 jours)." } : NOT_FOUND);
       },
     }),

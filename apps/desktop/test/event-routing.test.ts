@@ -13,7 +13,7 @@ const TURN_EVENTS: ServerEvent[] = [
   { type: "tool_call", conversationId: CONV, callId: "c", tool: "weather", label: "Alicia regarde la météo…" },
   { type: "tool_result", conversationId: CONV, callId: "c", success: true },
   {
-    type: "confirm_request", conversationId: CONV, confirmationId: REQUEST, tool: "memory_forget",
+    type: "confirm_request", conversationId: CONV, messageId: CONV, confirmationId: REQUEST, tool: "memory_forget",
     summary: "Oublier ce souvenir ?", expiresAt: "2026-10-05T10:05:00.000Z",
   },
   { type: "confirm_result", conversationId: CONV, confirmationId: REQUEST, outcome: "approved" },

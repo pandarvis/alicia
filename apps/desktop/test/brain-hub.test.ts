@@ -314,7 +314,7 @@ describe("BrainHub", () => {
 describe("BrainHub confirmations", () => {
   const CONFIRMATION = "5c3e4d1a-0c6f-4e3a-9d9c-4f7a8b92a314";
   const ASK = {
-    type: "confirm_request", conversationId: CONV, confirmationId: CONFIRMATION, tool: "memory_forget",
+    type: "confirm_request", conversationId: CONV, messageId: CONV, confirmationId: CONFIRMATION, tool: "memory_forget",
     summary: "Oublier ce souvenir ?", expiresAt: "2026-10-05T10:05:00.000Z",
   };
   const answer = (approved = true) => ({ type: "confirm" as const, confirmationId: CONFIRMATION, approved });

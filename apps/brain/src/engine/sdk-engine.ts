@@ -17,7 +17,6 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Authentication } from "../config.ts";
 import { VERSION } from "../version.ts";
-import { CONFIRMATION_TIMEOUT_MS } from "../tools/confirmations.ts";
 import {
   type Engine, type EngineEvent, type EngineRequest, INCOMPLETE_TURN_MESSAGE, type NativeDecision, type NativeToolGuard,
 } from "./engine.ts";
@@ -46,15 +45,10 @@ const QUOTA: EngineEvent = { type: "error", code: "quota", message: QUOTA_MESSAG
 const MCP_SERVER = "alicia";
 const MCP_PREFIX = `mcp__${MCP_SERVER}__`;
 
-/** Tool calls may wait for a confirmation: their own deadline comes after the broker's. */
-export const CONFIRMATION_BUDGET_MS = CONFIRMATION_TIMEOUT_MS + 60_000;
-
 /** The SDK's built-in tools Alicia may use; everything else (terminal, edits, agents…) does not exist for her. */
 export const NATIVE_TOOLS = ["WebSearch", "WebFetch", "Read", "Skill"] as const;
 /** Built-in tools needing no check. Read and WebFetch stay out: only the hook can allow them. */
 const UNCHECKED_NATIVE = ["WebSearch"];
-/** The PreToolUse hook may wait for a confirmation too. */
-const HOOK_TIMEOUT_S = CONFIRMATION_BUDGET_MS / 1000;
 const NOT_AVAILABLE = "Cet outil n'est pas disponible.";
 
 /**
@@ -186,14 +180,14 @@ export function toolHandler<Shape extends ToolDefinition["input"]>(
 }
 
 /** In-process MCP server exposing the tools of a turn. */
-export function toolServer(tools: readonly ToolDefinition[]): McpSdkServerConfigWithInstance {
+export function toolServer(tools: readonly ToolDefinition[], timeoutMs: number): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: MCP_SERVER,
     version: VERSION,
     // Never hidden behind tool search (built-in tools, ToolSearch included, are disabled).
     alwaysLoad: true,
-    // A call may wait for the person's answer (up to 5 min): never cut before the broker settles it.
-    timeout: CONFIRMATION_BUDGET_MS,
+    // A call may wait for the person's answer, then run: never cut before (EngineRequest.toolTimeoutMs).
+    timeout: timeoutMs,
     tools: tools.map((definition) =>
       tool(definition.name, definition.description, definition.input, toolHandler(definition)),
     ),
@@ -306,10 +300,11 @@ export function buildOptions(request: EngineRequest, params: SdkEngineParams, co
     permissionMode: "default",
     additionalDirectories: [...request.readableDirs],
     hooks: {
-      PreToolUse: [{ hooks: [preToolUseHook(request.guard)], timeout: HOOK_TIMEOUT_S }],
+      // The guard may wait for a confirmation too (seconds here).
+      PreToolUse: [{ hooks: [preToolUseHook(request.guard)], timeout: Math.ceil(request.toolTimeoutMs / 1000) }],
       PostToolUse: [{ hooks: [postToolUseHook(request.guard)] }],
     },
-    ...(request.tools.length > 0 ? { mcpServers: { [MCP_SERVER]: toolServer(request.tools) } } : {}),
+    ...(request.tools.length > 0 ? { mcpServers: { [MCP_SERVER]: toolServer(request.tools, request.toolTimeoutMs) } } : {}),
     includePartialMessages: true,
     canUseTool: denyAll,
     env: buildEnv(process.env, params.auth),

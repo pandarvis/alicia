@@ -96,17 +96,20 @@ export class ConversationRepository {
     this.#db.update(conversations).set({ sessionId }).where(eq(conversations.id, id)).run();
   }
 
-  addMessage(conversationId: string, role: Role, text: string): void {
+  /** Stores a message; returns its id. */
+  addMessage(conversationId: string, role: Role, text: string): string {
     const now = this.#clock();
+    const id = randomUUID();
     this.#db.transaction((tx) => {
       tx.insert(messages)
-        .values({ id: randomUUID(), conversationId, role, text, createdAt: now })
+        .values({ id, conversationId, role, text, createdAt: now })
         .run();
       tx.update(conversations)
         .set({ updatedAt: now })
         .where(eq(conversations.id, conversationId))
         .run();
     });
+    return id;
   }
 
   messages(conversationId: string): Message[] {

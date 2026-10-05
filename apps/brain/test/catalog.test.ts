@@ -30,7 +30,7 @@ describe("ToolCatalog", () => {
     const risky: ToolProvider = () => [
       defineTool({
         name: "risky", label: "Alicia ose…", description: "Ose.", input: {},
-        confirmation: () => Promise.resolve("On y va ?"),
+        confirmation: () => Promise.resolve({ summary: "On y va ?", snapshot: "" }),
         run: () => {
           ran.push("risky");
           return Promise.resolve({ text: "fait" });
@@ -47,6 +47,9 @@ describe("ToolCatalog", () => {
   test("two tools with the same name are a programming error", () => {
     const catalog = new ToolCatalog([whoAmI, whoAmI]);
     expect(() => catalog.forTurn(createTestTurn(KEVIN, CONV).turn)).toThrow(/who_am_i/);
+    // Checked at startup too, before any turn.
+    expect(() => { catalog.checkNames({ person: KEVIN, conversationId: CONV }); }).toThrow(/who_am_i/);
+    expect(() => { new ToolCatalog([whoAmI]).checkNames({ person: KEVIN, conversationId: CONV }); }).not.toThrow();
   });
 });
 

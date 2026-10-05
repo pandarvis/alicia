@@ -24,6 +24,11 @@ export interface EngineRequest {
   guard: NativeToolGuard;
   /** Existing directories the built-in Read may reach besides the workspace (this conversation's attachments). */
   readableDirs: readonly string[];
+  /**
+   * How long one of our tool calls may take, a confirmation included (the answer's delay plus the tool's own
+   * run): the engine must never cut a call before that.
+   */
+  toolTimeoutMs: number;
 }
 
 /** What the engine reports during a turn, independently of the SDK. */

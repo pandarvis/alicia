@@ -78,6 +78,22 @@ describe("memory tools", () => {
     expect(store.get("kevin", saved.memory.id)).toBeDefined();
   });
 
+  test("what is forgotten is what was approved: a memory changed meanwhile is kept, and Alicia must ask again", async () => {
+    const { store, repository } = setup();
+    const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    // While the card waits, the memory is corrected (Souvenirs screen, another turn…), then the person says yes.
+    const turn = createTestTurn(KEVIN, repository.create("kevin", "Test").id, async () => {
+      await store.update("kevin", saved.memory.id, { text: "Kévin adore les lasagnes végétariennes" });
+      return "approved";
+    });
+    const request = testRequest({ tools: new ToolCatalog([memoryTools(store)]).forTurn(turn.turn) });
+    expect(await callTool(request, "memory_forget", { id: saved.memory.id })).toEqual({
+      text: "Le souvenir a changé depuis la question : rien n'a été oublié. Redemande si besoin.", isError: true,
+    });
+    expect(store.get("kevin", saved.memory.id)?.text).toBe("Kévin adore les lasagnes végétariennes");
+  });
+
   test("forgetting someone else's memory: not found, nothing asked", async () => {
     const { store, repository } = setup();
     const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes", source: "manual" });

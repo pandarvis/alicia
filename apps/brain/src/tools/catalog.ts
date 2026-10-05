@@ -30,13 +30,22 @@ export class ToolCatalog {
 
   /** The tools of a turn, bound to its person and conversation, each guarded (confirmation, untrusted output). */
   forTurn(turn: TurnContext): ToolDefinition[] {
-    const tools = this.#providers.flatMap((provide) => provide(turn));
+    return this.#build(turn).map((t) => guardTool(t, turn));
+  }
+
+  /** At startup: two providers giving the same tool name are a programming error, found before any turn. */
+  checkNames(scope: ToolScope): void {
+    this.#build(scope);
+  }
+
+  #build(scope: ToolScope): ToolDefinition[] {
+    const tools = this.#providers.flatMap((provide) => provide(scope));
     const seen = new Set<string>();
     for (const t of tools) {
       if (seen.has(t.name)) throw new Error(`Two tools are named ${t.name}`);
       seen.add(t.name);
     }
-    return tools.map((t) => guardTool(t, turn));
+    return tools;
   }
 }
 

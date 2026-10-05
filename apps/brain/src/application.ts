@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -94,6 +95,9 @@ export async function buildApplication(
       clock: systemClock,
     });
     const tools = new ToolCatalog([memoryTools(memory)]);
+    // Two tools with one name would only fail on the first turn: refuse to start instead.
+    const someone = config.people[0];
+    if (someone !== undefined) tools.checkNames({ person: someone, conversationId: randomUUID() });
     const server = await createServer({
       pairing,
       repository,

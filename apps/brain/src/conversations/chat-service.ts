@@ -7,7 +7,9 @@ import { buildSheet } from "../memory/sheet.ts";
 import type { MemoryStore } from "../memory/store.ts";
 import { truncate } from "../text.ts";
 import { labelOf, type ToolCatalog } from "../tools/catalog.ts";
-import type { ConfirmationOutcome, ConfirmationRequest } from "../tools/confirmations.ts";
+import {
+  type ConfirmationOutcome, type ConfirmationRequest, type ConfirmationWhere, TOOL_RUN_BUDGET_MS,
+} from "../tools/confirmations.ts";
 import { createNativeGuard } from "../tools/native-guard.ts";
 import { TurnContext } from "../tools/turn.ts";
 import type { Conversation, ConversationRepository, LoggedToolCall, Message } from "./repository.ts";
@@ -24,8 +26,10 @@ export interface ChatDependencies {
 
 /** What a turn needs from the connection that started it. */
 export interface TurnPorts {
-  /** Asks the person on that device; settles "cancelled" when `signal` aborts. */
-  confirm(conversationId: string, request: ConfirmationRequest, signal: AbortSignal): Promise<ConfirmationOutcome>;
+  /** Asks the person on that device; settles "cancelled" when `signal` aborts (the turn ended). */
+  confirm(where: ConfirmationWhere, request: ConfirmationRequest, signal: AbortSignal): Promise<ConfirmationOutcome>;
+  /** How long that device has to answer. */
+  confirmationTimeoutMs: number;
 }
 
 type EngineError = Extract<EngineEvent, { type: "error" }>;
@@ -101,15 +105,20 @@ export async function* handleSend(
   }
 
   const history = deps.repository.lastMessages(conversationId, RESUME_MESSAGE_COUNT);
-  deps.repository.addMessage(conversationId, "user", message.text);
+  const messageId = deps.repository.addMessage(conversationId, "user", message.text);
 
   const model = chooseModel(message.model, message.text);
   const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
   const systemPrompt = buildSystemPrompt(person, sheet);
+  // The turn's own scope: aborted when it ends for any reason (done, error, exception, cancel), so nothing it
+  // asked can be approved, nor run, afterwards.
+  const turnScope = new AbortController();
+  const turnSignal = AbortSignal.any([signal, turnScope.signal]);
   const turn = new TurnContext({
     person,
     conversationId,
-    confirm: (request) => ports.confirm(conversationId, request, signal),
+    signal: turnSignal,
+    confirm: (request) => ports.confirm({ conversationId, messageId }, request, turnSignal),
   });
   const tools = deps.tools.forTurn(turn);
   const prompt = timestamp(message.text, new Date(start), deps.timezone);
@@ -133,7 +142,10 @@ export async function* handleSend(
       let stream: AsyncIterator<EngineEvent> | undefined;
       try {
         stream = deps.engine.run(
-          { prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs: [] },
+          {
+            prompt: currentPrompt, sessionId, model, systemPrompt, tools, guard: createNativeGuard(), readableDirs: [],
+            toolTimeoutMs: ports.confirmationTimeoutMs + TOOL_RUN_BUDGET_MS,
+          },
           signal,
         )[Symbol.asyncIterator]();
       } catch (cause) {
@@ -198,6 +210,7 @@ export async function* handleSend(
       currentPrompt = buildResumePrompt(history, prompt);
     }
   } finally {
+    turnScope.abort();
     // Always store what was said and log the turn, even if the consumer stops.
     const durationMs = deps.clock() - start;
     if (text !== "") deps.repository.addMessage(conversationId, "assistant", text);

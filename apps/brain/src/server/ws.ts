@@ -115,11 +115,10 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
       reject("Appareil révoqué.");
       return;
     }
-    // Answers arrive while a turn runs: handled before the "busy" check.
+    // Answers arrive while a turn runs: handled before the "busy" check. A stale answer (card already settled,
+    // another device's card, unknown) is no error: an error event would end a turn in the app.
     if (message.type === "confirm") {
-      if (!broker.answer(message.confirmationId, message.approved)) {
-        send({ type: "error", code: "invalid_request", message: "Cette demande de confirmation n'est plus valable." });
-      }
+      broker.answer(message.confirmationId, message.approved);
       return;
     }
     if (turns.size > 0) {
@@ -153,7 +152,8 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
     void (async () => {
       try {
         for await (const e of handleSend(deps.chat, author, message, turn.signal, {
-          confirm: (conversationId, request, signal) => broker.ask(conversationId, request, signal),
+          confirm: (where, request, signal) => broker.ask(where, request, signal),
+          confirmationTimeoutMs: broker.timeoutMs,
         })) {
           // New conversation: locked as soon as its id exists, before another device can see it.
           if (e.type === "conversation" && locked === undefined && locks.acquire(author.id, e.conversationId)) {

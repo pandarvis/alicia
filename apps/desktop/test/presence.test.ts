@@ -61,7 +61,7 @@ describe("Presence", () => {
     const { presence, moods } = setup();
     presence.sent(1);
     presence.event({
-      type: "confirm_request", conversationId: CONV, confirmationId: CONV, tool: "memory_forget",
+      type: "confirm_request", conversationId: CONV, messageId: CONV, confirmationId: CONV, tool: "memory_forget",
       summary: "Oublier ?", expiresAt: "2026-10-05T10:05:00.000Z",
     });
     presence.event({ type: "confirm_result", conversationId: CONV, confirmationId: CONV, outcome: "refused" });

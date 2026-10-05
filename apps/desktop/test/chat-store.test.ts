@@ -488,8 +488,9 @@ describe("ChatStore", () => {
 });
 
 const CONFIRMATION = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
+const ASKED = "9b1d2c3e-4f5a-4b6c-8d7e-0f1a2b3c4d5e";
 const ASK = {
-  type: "confirm_request", conversationId: CONV, confirmationId: CONFIRMATION, tool: "memory_forget",
+  type: "confirm_request", conversationId: CONV, messageId: ASKED, confirmationId: CONFIRMATION, tool: "memory_forget",
   summary: "Oublier ce souvenir : « Kévin adore les lasagnes » ?", expiresAt: "2026-10-05T10:05:00.000Z",
 } as const;
 
@@ -553,7 +554,7 @@ describe("confirmations", () => {
   });
 
   test("another window's card routed here (a Spotlight turn) shows when its conversation is open, and can be answered", async () => {
-    const history = [msg("m1", "Oublie les lasagnes")];
+    const history = [msg(ASKED, "Oublie les lasagnes")];
     const { store, confirmed } = setup(history);
     store.handle(ASK);
     expect(store.messages).toEqual([]);
@@ -575,9 +576,45 @@ describe("confirmations", () => {
   });
 
   test("a card routed here while its conversation is already open shows at once", async () => {
-    const { store } = setup([msg("m1", "Oublie les lasagnes")]);
+    const { store } = setup([msg(ASKED, "Oublie les lasagnes")]);
     await store.open(CONV);
     store.handle(ASK);
     expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", status: "pending" });
   });
+
+  test("a card routed here stays right after the message it belongs to, whatever was said since", async () => {
+    const history: HistoryMessage[] = [msg(ASKED, "Oublie les lasagnes")];
+    const { store, sent } = setup(history);
+    await store.open(CONV);
+    store.handle(ASK);
+    store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "refused" });
+    store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 });
+    // The person goes on here: a new question and its answer come after the card.
+    store.send("Et la recette ?");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
+    store.handle({ type: "done", conversationId: CONV, model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 });
+    history.push(
+      { id: "m2", role: "assistant", text: "Je le garde.", createdAt: "2026-10-04T13:31:00.000Z" },
+      { id: "m3", role: "user", text: "Et la recette ?", createdAt: "2026-10-04T13:32:00.000Z" },
+      { id: "m4", role: "assistant", text: "La voici.", createdAt: "2026-10-04T13:33:00.000Z" },
+    );
+    await store.resync();
+    expect(store.messages.map((m) => textOf(m))).toEqual([
+      "Oublie les lasagnes", ASK.summary, "Je le garde.", "Et la recette ?", "La voici.",
+    ]);
+  });
+  test("this window's own card survives a reload of the history (back online), cancelled, after its message", async () => {
+    const history: HistoryMessage[] = [];
+    const { store, sent } = setup(history);
+    store.send("Oublie les lasagnes");
+    store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV });
+    store.handle(ASK);
+    store.connectionLost();
+    history.push(msg(ASKED, "Oublie les lasagnes"));
+    await store.resync();
+    expect(store.messages.map((m) => [m.role, m.role === "confirmation" ? m.status : ""])).toEqual([
+      ["user", ""], ["confirmation", "cancelled"],
+    ]);
+  });
+
 });

@@ -1,38 +1,41 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { defineTool } from "../src/engine/tools.ts";
+import { type Confirmed, defineTool } from "../src/engine/tools.ts";
 import { guardTool } from "../src/tools/guard-tool.ts";
 import { createTestTurn, KEVIN } from "./helpers.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 
-function deletion(ran: string[]) {
+function deletion(ran: string[], seen: (Confirmed | undefined)[] = []) {
   return defineTool({
     name: "thing_delete",
     label: "Alicia supprime…",
     description: "Supprime une chose.",
     input: { id: z.string() },
-    confirmation: ({ id }) => Promise.resolve(id === "absent" ? null : `Supprimer ${id} ?`),
-    run: ({ id }) => {
+    confirmation: ({ id }) => Promise.resolve(id === "absent" ? null : { summary: `Supprimer ${id} ?`, snapshot: `v1:${id}` }),
+    run: ({ id }, confirmed) => {
       ran.push(id);
+      seen.push(confirmed);
       return Promise.resolve({ text: `Supprimé ${id}` });
     },
   });
 }
 
 describe("guardTool", () => {
-  test("approved: asks with the summary, then runs", async () => {
+  test("approved: asks with the summary, then runs with what was approved", async () => {
     const ran: string[] = [];
+    const seen: (Confirmed | undefined)[] = [];
     const { turn, asked } = createTestTurn(KEVIN, CONV, "approved");
-    expect(await guardTool(deletion(ran), turn).run({ id: "a" })).toEqual({ text: "Supprimé a" });
+    expect(await guardTool(deletion(ran, seen), turn).run({ id: "a" })).toEqual({ text: "Supprimé a" });
     expect(asked).toEqual([{ tool: "thing_delete", summary: "Supprimer a ?" }]);
     expect(ran).toEqual(["a"]);
+    expect(seen).toEqual([{ snapshot: "v1:a" }]);
   });
 
   test.each([
     ["refused", "Refusé : la personne a répondu non. N'insiste pas et ne cherche pas à contourner."],
-    ["expired", "Pas de réponse à la demande de confirmation (5 minutes) : rien n'a été fait."],
-    ["cancelled", "Demande de confirmation annulée (connexion perdue) : rien n'a été fait."],
+    ["expired", "Pas de réponse à temps à la demande de confirmation : rien n'a été fait."],
+    ["cancelled", "Demande annulée : rien n'a été fait."],
   ] as const)("%s: never runs", async (outcome, text) => {
     const ran: string[] = [];
     const { turn } = createTestTurn(KEVIN, CONV, outcome);
@@ -40,12 +43,28 @@ describe("guardTool", () => {
     expect(ran).toEqual([]);
   });
 
+  test("an approval arriving after the turn ended runs nothing", async () => {
+    const ran: string[] = [];
+    let approve: (outcome: "approved") => void = () => undefined;
+    const { turn, end, asked } = createTestTurn(KEVIN, CONV, () => new Promise((resolve) => {
+      approve = resolve;
+    }));
+    const result = guardTool(deletion(ran), turn).run({ id: "a" });
+    await vi.waitFor(() => { expect(asked).toHaveLength(1); });
+    end();
+    approve("approved");
+    expect(await result).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
+    expect(ran).toEqual([]);
+  });
+
   test("nothing to confirm (null): runs without asking", async () => {
     const ran: string[] = [];
+    const seen: (Confirmed | undefined)[] = [];
     const { turn, asked } = createTestTurn(KEVIN, CONV, "refused");
-    await guardTool(deletion(ran), turn).run({ id: "absent" });
+    await guardTool(deletion(ran, seen), turn).run({ id: "absent" });
     expect(asked).toEqual([]);
     expect(ran).toEqual(["absent"]);
+    expect(seen).toEqual([undefined]);
   });
 
   test("a tool without confirmation runs at once, keeping its name, label and input", async () => {
@@ -58,6 +77,16 @@ describe("guardTool", () => {
     expect([guarded.name, guarded.label, guarded.description, guarded.input]).toEqual(["plain", "Alicia fait…", "Fait.", plain.input]);
     expect(await guarded.run({ n: 2 })).toEqual({ text: "2" });
     expect(asked).toEqual([]);
+  });
+
+  test("a guarded tool no longer asks by itself: guarding it twice asks once", async () => {
+    const ran: string[] = [];
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "approved");
+    const twice = guardTool(guardTool(deletion(ran), turn), turn);
+    expect("confirmation" in twice).toBe(false);
+    await twice.run({ id: "a" });
+    expect(asked).toHaveLength(1);
+    expect(ran).toEqual(["a"]);
   });
 
   test("untrusted output marks the turn, even when the tool fails", async () => {
@@ -81,7 +110,7 @@ describe("guardTool", () => {
     const { turn, asked } = createTestTurn(KEVIN, CONV);
     const verbose = defineTool({
       name: "verbose", label: "…", description: "…", input: {},
-      confirmation: () => Promise.resolve("x".repeat(800)),
+      confirmation: () => Promise.resolve({ summary: "x".repeat(800), snapshot: "" }),
       run: () => Promise.resolve({ text: "ok" }),
     });
     await guardTool(verbose, turn).run({});
@@ -93,11 +122,22 @@ describe("guardTool", () => {
     const { turn, asked } = createTestTurn(KEVIN, CONV);
     const verbose = defineTool({
       name: "verbose", label: "…", description: "…", input: {},
-      confirmation: () => Promise.resolve(`${"a".repeat(498)}😀 et la suite`),
+      confirmation: () => Promise.resolve({ summary: `${"a".repeat(498)}😀 et la suite`, snapshot: "" }),
       run: () => Promise.resolve({ text: "ok" }),
     });
     await guardTool(verbose, turn).run({});
     expect(asked[0]?.summary.isWellFormed()).toBe(true);
     expect(asked[0]?.summary).toBe(`${"a".repeat(498)}…`);
+  });
+
+  test("an empty summary becomes a plain French question", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV);
+    const terse = defineTool({
+      name: "terse", label: "…", description: "…", input: {},
+      confirmation: () => Promise.resolve({ summary: "  ", snapshot: "" }),
+      run: () => Promise.resolve({ text: "ok" }),
+    });
+    await guardTool(terse, turn).run({});
+    expect(asked[0]?.summary).toBe("Alicia voudrait utiliser l'outil « terse ». D'accord ?");
   });
 });

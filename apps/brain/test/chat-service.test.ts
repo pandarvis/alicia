@@ -5,6 +5,9 @@ import type { Message } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
 import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
 import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
+import type { ToolResult } from "../src/engine/tools.ts";
+import type { MemoryStore } from "../src/memory/store.ts";
+import { type ConfirmationWhere, TOOL_RUN_BUDGET_MS } from "../src/tools/confirmations.ts";
 import { answeringPorts, createChatDeps, createTestClock, createTestDb, ELODIE, KEVIN } from "./helpers.ts";
 
 const REQUEST_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
@@ -22,6 +25,13 @@ function createContext(...scenarios: Scenario[]) {
   const engine = new FakeEngine(...scenarios);
   const deps = createChatDeps(db, time.clock, engine);
   return { db, deps, engine, repository: deps.repository, memory: deps.memory };
+}
+
+/** Kévin's memory « Kévin court le dimanche », for the forgetting turns. */
+async function seedRunning(memory: MemoryStore): Promise<string> {
+  const saved = await memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual" });
+  if (saved.status !== "created") throw new Error("not created");
+  return saved.memory.id;
 }
 
 async function send(
@@ -323,53 +333,83 @@ describe("handleSend", () => {
     expect(deps.memory.list("kevin", {})[0]?.conversationId).toBe(conversationId);
   });
 
-  test("a confirmation is asked through the ports, for the turn's conversation", async () => {
+  test("a confirmation is asked through the ports, for the turn's conversation and message", async () => {
     let memoryId = "";
-    const { deps, memory } = createContext(async (request) => {
+    const { deps, memory, repository } = createContext(async (request) => {
       const result = await callTool(request, "memory_forget", { id: memoryId });
       return [{ type: "text", text: result.isError === true ? "Je le garde." : "Oublié." }, { type: "done", inputTokens: 1, outputTokens: 1 }];
     });
-    const saved = await memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual" });
-    if (saved.status !== "created") throw new Error("not created");
-    memoryId = saved.memory.id;
-    const seen: string[] = [];
+    memoryId = await seedRunning(memory);
+    const seen: ConfirmationWhere[] = [];
     const ports: TurnPorts = {
-      confirm: (conversationId, request) => {
-        seen.push(`${conversationId}:${request.tool}`);
+      confirm: (where, request) => {
+        seen.push(where);
+        expect(request.tool).toBe("memory_forget");
         return Promise.resolve("refused");
       },
+      confirmationTimeoutMs: 300_000,
     };
     const events = await send(deps, KEVIN, { text: "Oublie que je cours" }, ports);
     const first = events[0];
     if (first?.type !== "conversation") throw new Error("expected a conversation event first");
-    expect(seen).toEqual([`${first.conversationId}:memory_forget`]);
+    const asked = repository.messages(first.conversationId).find((m) => m.role === "user");
+    expect(seen).toEqual([{ conversationId: first.conversationId, messageId: asked?.id }]);
     expect(events).toContainEqual({ type: "text_delta", conversationId: first.conversationId, text: "Je le garde." });
     expect(memory.get("kevin", memoryId)).toBeDefined();
   });
 
-  test("the turn's signal reaches the confirmation", async () => {
+  test("a confirmation still waiting when the turn fails is cancelled: the tool never runs", async () => {
     let memoryId = "";
-    const { deps, memory } = createContext(async (request) => {
-      await callTool(request, "memory_forget", { id: memoryId });
+    let pending: Promise<ToolResult> | undefined;
+    const { deps, memory } = createContext((request) => {
+      pending = callTool(request, "memory_forget", { id: memoryId });
+      return Promise.reject(new Error("boom"));
+    });
+    memoryId = await seedRunning(memory);
+    let asked: AbortSignal | undefined;
+    // Like the connection's broker: waits for an answer, settles "cancelled" when the signal aborts.
+    const ports: TurnPorts = {
+      confirm: (_where, _request, signal) => {
+        asked = signal;
+        return new Promise((resolve) => {
+          signal.addEventListener("abort", () => { resolve("cancelled"); }, { once: true });
+        });
+      },
+      confirmationTimeoutMs: 300_000,
+    };
+    const events = await send(deps, KEVIN, { text: "Oublie que je cours" }, ports);
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "engine" });
+    expect(asked?.aborted).toBe(true);
+    expect(await pending).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
+    expect(memory.get("kevin", memoryId)).toBeDefined();
+  });
+
+  test("an approval arriving after the turn ended runs nothing", async () => {
+    let memoryId = "";
+    let pending: Promise<ToolResult> | undefined;
+    const { deps, memory } = createContext((request) => {
+      pending = callTool(request, "memory_forget", { id: memoryId });
       return [{ type: "done", inputTokens: 1, outputTokens: 1 }];
     });
-    const saved = await memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual" });
-    if (saved.status !== "created") throw new Error("not created");
-    memoryId = saved.memory.id;
-    const controller = new AbortController();
-    let received: AbortSignal | undefined;
+    memoryId = await seedRunning(memory);
+    let approve: (outcome: "approved") => void = () => undefined;
     const ports: TurnPorts = {
-      confirm: (_conversationId, _request, signal) => {
-        received = signal;
-        return Promise.resolve("approved");
-      },
+      confirm: () => new Promise((resolve) => {
+        approve = resolve;
+      }),
+      confirmationTimeoutMs: 300_000,
     };
-    const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" };
-    const output: ServerEvent[] = [];
-    for await (const e of handleSend(deps, KEVIN, full, controller.signal, ports)) output.push(e);
-    expect(output.at(-1)?.type).toBe("done");
-    expect(received).toBe(controller.signal);
-    expect(memory.get("kevin", memoryId)).toBeUndefined();
+    const events = await send(deps, KEVIN, { text: "Oublie que je cours" }, ports);
+    expect(events.at(-1)?.type).toBe("done");
+    approve("approved");
+    expect(await pending).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
+    expect(memory.get("kevin", memoryId)).toBeDefined();
+  });
+
+  test("the engine is told how long one of our tool calls may take: the answer's delay plus its own run", async () => {
+    const { deps, engine } = createContext(SIMPLE_REPLY);
+    await send(deps, KEVIN, { text: "Salut" }, { ...answeringPorts("approved").ports, confirmationTimeoutMs: 1_000 });
+    expect(engine.requests[0]?.toolTimeoutMs).toBe(1_000 + TOOL_RUN_BUDGET_MS);
   });
 });
 

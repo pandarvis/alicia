@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { createInterface, type Interface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { type ClientMessage, type ConfirmationOutcome, PairingResponse, ServerEvent } from "@alicia/protocol";
+import { type ClientMessage, PairingResponse, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import { buildApplication, createSdkEngine, openMemory, SKILLS_DIR, WORKSPACE_DIR } from "./application.ts";
@@ -14,7 +14,9 @@ import { allowedToolNames, checkIsolation, NATIVE_TOOLS, readInit } from "./engi
 import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
 import { memoryTools } from "./memory/tools.ts";
 import { toText } from "./server/ws.ts";
+import { TerminalConfirmations } from "./terminal-confirmations.ts";
 import { ToolCatalog } from "./tools/catalog.ts";
+import { CONFIRMATION_TIMEOUT_MS, TOOL_RUN_BUDGET_MS } from "./tools/confirmations.ts";
 import { createNativeGuard } from "./tools/native-guard.ts";
 import { listSkills } from "./tools/skills.ts";
 import { TurnContext } from "./tools/turn.ts";
@@ -176,25 +178,27 @@ function readEvent(data: WebSocket.RawData): ServerEvent | undefined {
   }
 }
 
-/** How a confirmation that ran nothing ended, as the terminal says it. */
-const OUTCOME_LABELS: Readonly<Record<Exclude<ConfirmationOutcome, "approved">, string>> = {
-  refused: "refusé",
-  expired: "expiré",
-  cancelled: "annulé",
-};
-
 async function chat(url: string, code: string | undefined): Promise<void> {
   const token = await getToken(url, code);
   const ws = new WebSocket(url);
   let conversationId: string | undefined;
   let endTurn: (() => void) | undefined;
-  // Confirmation cards are answered in the terminal, once its prompt exists.
-  const terminal: { ask?: (question: string) => Promise<string> } = {};
   const isOpen = (): boolean => ws.readyState === WebSocket.OPEN;
-
   const send = (m: ClientMessage): void => {
     ws.send(JSON.stringify(m));
   };
+  // Confirmation cards are answered in the terminal, once its prompt exists (before: refused).
+  const prompt: { reader?: Interface } = {};
+  const cards = new TerminalConfirmations({
+    ask: (question, signal) =>
+      prompt.reader === undefined ? Promise.reject(new Error("no prompt yet")) : prompt.reader.question(question, { signal }),
+    answer: (confirmationId, approved) => {
+      if (isOpen()) send({ type: "confirm", confirmationId, approved });
+    },
+    print: (line) => {
+      console.log(line);
+    },
+  });
   const ready = new Promise<void>((resolveReady, rejectReady) => {
     ws.on("message", (data: WebSocket.RawData) => {
       const e = readEvent(data);
@@ -214,38 +218,24 @@ async function chat(url: string, code: string | undefined): Promise<void> {
         case "tool_call":
           process.stdout.write(`\n  [${e.label}]\n`);
           break;
-        case "confirm_request": {
-          const answer = (approved: boolean): void => {
-            if (isOpen()) send({ type: "confirm", confirmationId: e.confirmationId, approved });
-          };
-          if (terminal.ask === undefined) {
-            answer(false);
-            break;
-          }
-          // A closed prompt (Ctrl+C) is a no.
-          terminal.ask(`\n  [confirmation] ${e.summary} (o/n) `).then(
-            (typed) => {
-              answer(/^o(ui)?$/i.test(typed.trim()));
-            },
-            () => {
-              answer(false);
-            },
-          );
+        case "confirm_request":
+          cards.request(e.confirmationId, e.summary);
           break;
-        }
         case "confirm_result":
-          if (e.outcome !== "approved") console.log(`  [${OUTCOME_LABELS[e.outcome]}]`);
+          cards.settled(e.confirmationId, e.outcome);
           break;
         case "tool_result":
         case "heartbeat":
           break;
         case "done":
           process.stdout.write(`\n  (${e.model}, ${e.inputTokens}→${e.outputTokens} tokens, ${e.durationMs} ms)\n`);
+          cards.clear();
           endTurn?.();
           break;
         case "error":
           // "busy": a turn is already running; print it and hand back control like any other error.
           console.log(`\n  [erreur ${e.code}] ${e.message}`);
+          cards.clear();
           endTurn?.();
           if (e.code === "unauthenticated") rejectReady(new Error(e.message));
           break;
@@ -254,6 +244,7 @@ async function chat(url: string, code: string | undefined): Promise<void> {
     // Always listen to "error" (otherwise the process crashes); after "ready", rejecting has no effect.
     ws.on("error", rejectReady);
     ws.once("close", () => {
+      cards.clear();
       endTurn?.();
       rejectReady(new Error("Connexion fermée par le cerveau."));
     });
@@ -264,7 +255,7 @@ async function chat(url: string, code: string | undefined): Promise<void> {
   await ready;
 
   const reader = createInterface({ input: process.stdin, output: process.stdout });
-  terminal.ask = (question) => reader.question(question);
+  prompt.reader = reader;
   reader.on("SIGINT", () => {
     reader.close();
   });
@@ -309,6 +300,7 @@ async function checkEngine(): Promise<void> {
     tools: [],
     guard: createNativeGuard(),
     readableDirs: [],
+    toolTimeoutMs: CONFIRMATION_TIMEOUT_MS + TOOL_RUN_BUDGET_MS,
   };
   for await (const e of engine.run(request, new AbortController().signal)) console.log(e);
 }
@@ -324,12 +316,15 @@ async function checkIsolationCommand(): Promise<void> {
   try {
     const person = config.people[0];
     if (person === undefined) throw new Error("Aucune personne dans la config.");
-    const turn = new TurnContext({ person, conversationId: randomUUID(), confirm: () => Promise.resolve("refused") });
+    const turn = new TurnContext({
+      person, conversationId: randomUUID(), signal: new AbortController().signal, confirm: () => Promise.resolve("refused"),
+    });
     const tools = new ToolCatalog([memoryTools(opened.memory)]).forTurn(turn);
     const params = { auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) };
     const init = await readInit(params, {
       prompt: "Réponds juste « ok ».", sessionId: undefined, model: "sonnet",
       systemPrompt: buildSystemPrompt(person, ""), tools, guard: createNativeGuard(), readableDirs: [],
+      toolTimeoutMs: CONFIRMATION_TIMEOUT_MS + TOOL_RUN_BUDGET_MS,
     });
     const report = checkIsolation(init, {
       tools: [...NATIVE_TOOLS, ...allowedToolNames(tools)], skills: params.skills, mode: auth.mode, workspaceDir: WORKSPACE_DIR,

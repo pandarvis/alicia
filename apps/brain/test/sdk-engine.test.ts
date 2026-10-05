@@ -8,7 +8,6 @@ import {
   buildOptions,
   checkIsolation,
   classifyError,
-  CONFIRMATION_BUDGET_MS,
   ISOLATION_SETTINGS,
   NATIVE_TOOLS,
   postToolUseHook,
@@ -21,7 +20,6 @@ import {
   translateTurn,
 } from "../src/engine/sdk-engine.ts";
 import { defineTool } from "../src/engine/tools.ts";
-import { CONFIRMATION_TIMEOUT_MS } from "../src/tools/confirmations.ts";
 import { testRequest } from "./helpers.ts";
 
 /** SDK messages carry many fields that are irrelevant here: partial fixtures. */
@@ -261,9 +259,8 @@ describe("tools", () => {
     ).toEqual([{ type: "tool_call", callId: "t1", tool: "memory_search" }]);
   });
 
-  test("a tool call may wait for a confirmation: its deadline comes after the broker's", () => {
-    expect(CONFIRMATION_BUDGET_MS).toBeGreaterThan(CONFIRMATION_TIMEOUT_MS);
-    expect(toolServer([]).timeout).toBe(CONFIRMATION_BUDGET_MS);
+  test("the MCP server gets the deadline it is given", () => {
+    expect(toolServer([], 361_000).timeout).toBe(361_000);
   });
 
   test("toolNames lists the allowed MCP names", () => {
@@ -364,9 +361,11 @@ describe("buildOptions", () => {
     expect(result).toEqual({ behavior: "deny", message: "Cet outil n'est pas disponible." });
   });
 
-  test("hooks wait longer than a confirmation", () => {
-    const o = options();
-    expect(o.hooks?.PreToolUse?.[0]?.timeout).toBe(360);
+  test("our tool calls and the hooks get the turn's tool deadline (a confirmation may come first)", () => {
+    const o = buildOptions(testRequest({ tools: [echoTool], toolTimeoutMs: 360_500 }), PARAMS, new AbortController());
+    expect(o.hooks?.PreToolUse?.[0]?.timeout).toBe(361);
+    const server = o.mcpServers?.["alicia"];
+    expect(server !== undefined && "timeout" in server ? server.timeout : undefined).toBe(360_500);
     expect(o.hooks?.PostToolUse).toHaveLength(1);
   });
 

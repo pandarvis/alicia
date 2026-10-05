@@ -29,6 +29,8 @@ export const ServerEvent = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("confirm_request"),
     conversationId: z.uuid(),
+    /** The person's message this question belongs to: the card sits right after it in the conversation. */
+    messageId: z.uuid(),
     confirmationId: z.uuid(),
     tool: z.string(),
     /** The French question shown on the card. */

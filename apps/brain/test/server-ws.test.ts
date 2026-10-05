@@ -572,19 +572,16 @@ describe("WebSocket", () => {
     expect(c.received).toEqual([{ type: "error", code: "internal", message: "Erreur interne." }]);
   });
 
-  test("answering an unknown confirmation is refused, without breaking the connection", async () => {
+  test("answering an unknown confirmation is silently ignored (a stale card), the connection goes on", async () => {
     const { url, token } = await start();
     const c = connect(url);
     await c.opened;
     c.ws.send(JSON.stringify({ type: "authenticate", token }));
     await c.waitFor((e) => e.type === "ready");
     c.ws.send(JSON.stringify({ type: "confirm", confirmationId: REQUEST_ID, approved: true }));
-    await c.waitFor((e) => e.type === "error");
-    expect(c.received.at(-1)).toEqual({
-      type: "error", code: "invalid_request", message: "Cette demande de confirmation n'est plus valable.",
-    });
     c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID_2, text: "Salut" }));
     await c.waitFor((e) => e.type === "done");
+    expect(c.received.filter((e) => e.type === "error" || e.type === "confirm_result")).toEqual([]);
     c.ws.close();
   });
 
@@ -615,12 +612,9 @@ describe("WebSocket", () => {
     c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Un" }));
     await started;
     c.ws.send(JSON.stringify({ type: "confirm", confirmationId: REQUEST_ID_2, approved: false }));
-    await c.waitFor((e) => e.type === "error");
-    expect(c.received.filter((e) => e.type === "error")).toEqual([
-      { type: "error", code: "invalid_request", message: "Cette demande de confirmation n'est plus valable." },
-    ]);
     release();
     await c.waitFor((e) => e.type === "done");
+    expect(c.received.filter((e) => e.type === "error")).toEqual([]);
     c.ws.close();
   });
 
@@ -663,7 +657,10 @@ describe("WebSocket", () => {
     const request = kevin.received.find((e) => e.type === "confirm_request");
     if (request?.type !== "confirm_request") throw new Error("no confirm_request");
     elodie.ws.send(JSON.stringify({ type: "confirm", confirmationId: request.confirmationId, approved: true }));
-    await elodie.waitFor((e) => e.type === "error");
+    // Her own message comes after her answer on the same socket: once it is answered, the answer was handled.
+    elodie.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID_2, text: "Et moi ?" }));
+    await elodie.waitFor((e) => e.type === "done");
+    expect(elodie.received.filter((e) => e.type === "error")).toEqual([]);
     expect(elodie.received.some((e) => e.type === "confirm_request" || e.type === "confirm_result")).toBe(false);
     expect(memory.get("kevin", id)).toBeDefined();
     kevin.ws.send(JSON.stringify({ type: "confirm", confirmationId: request.confirmationId, approved: false }));
@@ -707,8 +704,47 @@ describe("WebSocket", () => {
     await c.waitFor((e) => e.type === "confirm_request");
     c.ws.close();
     await vi.waitFor(() => {
-      expect(observed).toEqual({ text: "Demande de confirmation annulée (connexion perdue) : rien n'a été fait.", isError: true });
+      expect(observed).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
     });
     expect(memory.get("kevin", id)).toBeDefined();
+  });
+
+  test("confirmation: an approval replayed after the turn ended runs nothing; the outcome is said again", async () => {
+    let id = "";
+    let pending: Promise<ToolResult> | undefined;
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const engine = new FakeEngine(async (request) => {
+      pending = callTool(request, "memory_forget", { id });
+      await released;
+      return [{ type: "session", sessionId: "s1" }, { type: "done", inputTokens: 1, outputTokens: 1 }];
+    });
+    const { url, token, memory } = await start({ engine });
+    id = await seedMemory(memory);
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" }));
+    await c.waitFor((e) => e.type === "confirm_request");
+    const request = c.received.find((e) => e.type === "confirm_request");
+    if (request?.type !== "confirm_request") throw new Error("no confirm_request");
+    // The turn ends while the card waits: the card is cancelled.
+    release();
+    await c.waitFor((e) => e.type === "done");
+    await c.waitFor((e) => e.type === "confirm_result");
+    expect(await pending).toEqual({ text: "Demande annulée : rien n'a été fait.", isError: true });
+    // A yes arriving afterwards (a stale card, a replay) runs nothing; the app is told how the card ended.
+    c.ws.send(JSON.stringify({ type: "confirm", confirmationId: request.confirmationId, approved: true }));
+    await c.waitFor((e) => e.type === "confirm_result" && c.received.filter((x) => x.type === "confirm_result").length === 2);
+    expect(c.received.filter((e) => e.type === "confirm_result")).toEqual([
+      { type: "confirm_result", conversationId: request.conversationId, confirmationId: request.confirmationId, outcome: "cancelled" },
+      { type: "confirm_result", conversationId: request.conversationId, confirmationId: request.confirmationId, outcome: "cancelled" },
+    ]);
+    expect(c.received.filter((e) => e.type === "error")).toEqual([]);
+    expect(memory.get("kevin", id)).toBeDefined();
+    c.ws.close();
   });
 });

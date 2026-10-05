@@ -108,13 +108,14 @@ describe("server events", () => {
   });
   test("confirm_request and confirm_result round-trip", () => {
     const request = {
-      type: "confirm_request", conversationId: UUID, confirmationId: CONFIRMATION,
+      type: "confirm_request", conversationId: UUID, messageId: UUID, confirmationId: CONFIRMATION,
       tool: "memory_forget", summary: "Oublier ce souvenir : « Kévin adore les lasagnes » ?",
       expiresAt: "2026-10-05T10:05:00.000Z",
     };
     expect(ServerEvent.parse(request)).toEqual(request);
     expect(ServerEvent.safeParse({ ...request, summary: "x".repeat(501) }).success).toBe(false);
     expect(ServerEvent.safeParse({ ...request, summary: "" }).success).toBe(false);
+    expect(ServerEvent.safeParse({ ...request, messageId: undefined }).success).toBe(false);
     for (const outcome of ["approved", "refused", "expired", "cancelled"]) {
       const result = { type: "confirm_result", conversationId: UUID, confirmationId: CONFIRMATION, outcome };
       expect(ServerEvent.parse(result)).toEqual(result);

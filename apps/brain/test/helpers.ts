@@ -64,26 +64,42 @@ export function createChatDeps(
 export function answeringPorts(outcome: ConfirmationOutcome) {
   const asked: ConfirmationRequest[] = [];
   const ports: TurnPorts = {
-    confirm: (_conversationId, request) => {
+    confirm: (_where, request) => {
       asked.push(request);
       return Promise.resolve(outcome);
     },
+    confirmationTimeoutMs: 300_000,
   };
   return { ports, asked };
 }
 
-/** A turn context for tool tests, answering every confirmation with `outcome`. */
-export function createTestTurn(person: Person, conversationId: string, outcome: ConfirmationOutcome = "approved") {
+/**
+ * A turn context for tool tests: every confirmation gets `outcome` (or what `answer` resolves to); `end` ends
+ * the turn, as handleSend does when it finishes.
+ */
+export function createTestTurn(
+  person: Person,
+  conversationId: string,
+  outcome: ConfirmationOutcome | (() => Promise<ConfirmationOutcome>) = "approved",
+) {
   const asked: ConfirmationRequest[] = [];
+  const scope = new AbortController();
   const turn = new TurnContext({
     person,
     conversationId,
+    signal: scope.signal,
     confirm: (request) => {
       asked.push(request);
-      return Promise.resolve(outcome);
+      return typeof outcome === "function" ? outcome() : Promise.resolve(outcome);
     },
   });
-  return { turn, asked };
+  return {
+    turn,
+    asked,
+    end: () => {
+      scope.abort();
+    },
+  };
 }
 
 /** A temporary directory removed when the current test ends (call it inside a test). */
@@ -105,6 +121,7 @@ export const DENY_NATIVE: NativeToolGuard = {
 export function testRequest(overrides: Partial<EngineRequest> = {}): EngineRequest {
   return {
     prompt: "x", sessionId: undefined, model: "sonnet", systemPrompt: "c", tools: [], guard: DENY_NATIVE, readableDirs: [],
+    toolTimeoutMs: 360_000,
     ...overrides,
   };
 }
