@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseConfig, readAuthentication } from "../src/config.ts";
+import { parseConfig, readAuthentication, readSecretKey } from "../src/config.ts";
 
 const MINIMAL_YAML = `
 people:
@@ -71,5 +71,45 @@ describe("readAuthentication", () => {
   });
   test("missing secret: explicit message", () => {
     expect(() => readAuthentication("subscription", {})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
+  });
+});
+
+const KEY = Buffer.alloc(32, 7).toString("base64");
+
+/** The message of what `run` throws (fails the test when it does not throw). */
+function thrown(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error("expected a throw");
+}
+
+describe("google config", () => {
+  test("google is optional", () => {
+    expect(parseConfig("people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }").google).toBeUndefined();
+    expect(parseConfig(
+      "people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }\ngoogle: { clientSecretFile: ./secrets/google.json }",
+    ).google).toEqual({ clientSecretFile: "./secrets/google.json" });
+    expect(() => parseConfig("people: [{ id: kevin, name: Kévin }]\nengine: { mode: subscription }\ngoogle: { clientSecretFile: \"\" }"))
+      .toThrow();
+  });
+
+  test("ALICIA_SECRET_KEY: 32 bytes in base64", () => {
+    expect(readSecretKey({ ALICIA_SECRET_KEY: KEY })).toEqual(Buffer.alloc(32, 7));
+    expect(readSecretKey({ ALICIA_SECRET_KEY: ` ${KEY}\n` })).toEqual(Buffer.alloc(32, 7));
+  });
+
+  test("a missing or malformed key is refused without echoing it", () => {
+    expect(() => readSecretKey({})).toThrow(/ALICIA_SECRET_KEY manquant/);
+    expect(() => readSecretKey({ ALICIA_SECRET_KEY: "  " })).toThrow(/ALICIA_SECRET_KEY manquant/);
+    const short = Buffer.alloc(16, 1).toString("base64");
+    expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: short }))).toMatch(/32 octets/);
+    expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: short }))).not.toContain(short);
+    const garbage = "pas-du-base64-du-tout!";
+    expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: garbage }))).not.toContain("pas-du-base64");
+    // Base64 with stray characters that Buffer.from would silently skip: refused too.
+    expect(() => readSecretKey({ ALICIA_SECRET_KEY: `${KEY.slice(0, 20)}!${KEY.slice(20)}` })).toThrow(/32 octets/);
   });
 });

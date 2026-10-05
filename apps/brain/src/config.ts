@@ -53,6 +53,8 @@ export const ConfigSchema = z.object({
   home: z
     .object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) })
     .optional(),
+  /** Google accounts (calendar, Gmail). Absent: the feature is off. The key stays in the environment. */
+  google: z.object({ clientSecretFile: z.string().min(1) }).optional(),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 export type EngineMode = Config["engine"]["mode"];
@@ -84,4 +86,24 @@ export function readAuthentication(
   const key = env["ANTHROPIC_API_KEY"];
   if (key === undefined || key === "") throw new Error("ANTHROPIC_API_KEY manquant.");
   return { mode, key };
+}
+
+const SECRET_KEY_BYTES = 32;
+
+/**
+ * Key that encrypts Google refresh tokens at rest (AES-256-GCM), from the environment only.
+ * Generate with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+ * Error messages never quote the value.
+ */
+export function readSecretKey(env: Readonly<Record<string, string | undefined>>): Buffer {
+  const raw = env["ALICIA_SECRET_KEY"]?.trim() ?? "";
+  if (raw === "") {
+    throw new Error("ALICIA_SECRET_KEY manquant : 32 octets aléatoires en base64 (voir README, « Comptes Google »).");
+  }
+  const key = Buffer.from(raw, "base64");
+  // Buffer.from skips invalid characters: re-encoding must give the same text back.
+  if (key.length !== SECRET_KEY_BYTES || key.toString("base64") !== raw) {
+    throw new Error("ALICIA_SECRET_KEY invalide : il faut exactement 32 octets encodés en base64.");
+  }
+  return key;
 }

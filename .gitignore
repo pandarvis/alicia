@@ -8,6 +8,8 @@ apps/brain/data/
 apps/brain/alicia.*.yaml
 !apps/brain/alicia.config.example.yaml
 apps/brain/data-*/
+# Google OAuth client secret (google.clientSecretFile): never versioned
+apps/brain/secrets/
 apps/desktop/out/
 apps/desktop/dist/
 

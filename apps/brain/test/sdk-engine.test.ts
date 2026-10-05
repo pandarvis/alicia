@@ -75,6 +75,14 @@ describe("buildEnv", () => {
   test("allow-listed variables missing from the parent: not created", () => {
     expect(buildEnv({}, { mode: "subscription", token: "j" })).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "j" });
   });
+  test("the Google token key never reaches the SDK process", () => {
+    const parent = { ...PARENT, ALICIA_SECRET_KEY: Buffer.alloc(32, 7).toString("base64") };
+    for (const auth of [{ mode: "subscription", token: "j" }, { mode: "api_key", key: "k" }] as const) {
+      const env = buildEnv(parent, auth);
+      expect(env, auth.mode).not.toHaveProperty("ALICIA_SECRET_KEY");
+      expect(Object.values(env), auth.mode).not.toContain(parent.ALICIA_SECRET_KEY);
+    }
+  });
 });
 
 describe("translateMessage", () => {

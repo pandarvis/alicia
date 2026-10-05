@@ -21,3 +21,8 @@ allowedOrigins: []
 # home:
 #   latitude: 48.85
 #   longitude: 2.35
+
+# Comptes Google (agenda, Gmail) : client OAuth « Application de bureau » dédié à Alicia.
+# La clé de chiffrement des jetons va dans .env (ALICIA_SECRET_KEY).
+# google:
+#   clientSecretFile: "./secrets/google_client_secret.json"
