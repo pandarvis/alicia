@@ -75,7 +75,10 @@ describe("calendar tools", () => {
       ["calendar_delete", "Alicia supprime l'événement…"],
     ]);
     expect(kevinTools.filter((t) => t.untrustedOutput === true).map((t) => t.name)).toEqual(["calendar_list"]);
-    expect(kevinTools.filter((t) => t.confirmation !== undefined).map((t) => t.name)).toEqual(["calendar_update", "calendar_delete"]);
+    // calendar_create only asks after outside content, for a calendar the account does not own.
+    expect(kevinTools.filter((t) => t.confirmation !== undefined).map((t) => t.name)).toEqual([
+      "calendar_create", "calendar_update", "calendar_delete",
+    ]);
   });
 });
 
@@ -475,5 +478,72 @@ describe("review fixes: cards, failures, echoes", () => {
     const deleted = await asTurn(family.kevinTools, "calendar_delete", { ...where, eventId: "trapevt" });
     expect(deleted.result.text).toMatch(/supprimé/);
     for (const text of [created.text, updated.result.text, deleted.result.text]) expect(text).not.toContain(trap);
+  });
+});
+
+describe("calendar_create after outside content", () => {
+  const SHARED = { account: "famille@example.com", calendarId: "club@group.example.com" };
+  const DINNER = { ...SHARED, title: "Dîner chez Mamie", start: "2026-10-12T20:00" };
+
+  /** Kévin's tools in a turn outside content already entered, with a calendar someone else shares with Famille. */
+  async function untrustedSetup(summary = "Club de foot") {
+    const family = await setup();
+    family.google.addCalendar("famille@example.com", { id: SHARED.calendarId, summary, accessRole: "writer", selected: true });
+    return { ...family, tools: calendarTools(family.kevinAccess, PARIS, { untrusted: true }) };
+  }
+
+  test("into a calendar the account does not own, a card shows the event and the calendar; Non writes nothing", async () => {
+    const { tools, google } = await untrustedSetup();
+    const refused = await asTurn(tools, "calendar_create", DINNER, () => Promise.resolve("refused"));
+    expect(refused.asked).toEqual([
+      "Ajouter « Dîner chez Mamie » à l'agenda partagé ?\nlun. 12 oct., 20:00–21:00\nFamille (famille@example.com) · agenda « Club de foot »",
+    ]);
+    expect(refused.result.isError).toBe(true);
+    expect(writesTo(google.requests)).toEqual([]);
+
+    const approved = await asTurn(tools, "calendar_create", DINNER);
+    expect(approved.asked).toHaveLength(1);
+    expect(approved.result.text).toMatch(/^Événement créé/);
+    expect(google.events("famille@example.com", SHARED.calendarId).map((e) => e["summary"])).toEqual(["Dîner chez Mamie"]);
+  });
+
+  test("into the account's own calendar, or in a trusted turn, no card", async () => {
+    const { tools, kevinTools, google } = await untrustedSetup();
+    const own = await asTurn(tools, "calendar_create", { ...DINNER, calendarId: "famille@example.com" });
+    expect(own.asked).toEqual([]);
+    expect(own.result.text).toMatch(/^Événement créé/);
+    const trusted = await asTurn(kevinTools, "calendar_create", DINNER);
+    expect(trusted.asked).toEqual([]);
+    expect(trusted.result.text).toMatch(/^Événement créé/);
+    expect(writesTo(google.requests)).toHaveLength(2);
+  });
+
+  test("without the card's yes, run writes nothing", async () => {
+    const { tools, google } = await untrustedSetup();
+    const result = await runTool(tools, "calendar_create", DINNER);
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/demande l'accord de la personne/);
+    expect(writesTo(google.requests)).toEqual([]);
+  });
+
+  test("a calendar name with invisible characters is not shown as such on the card", async () => {
+    const { tools } = await untrustedSetup("Club\u200b de foot");
+    const { asked } = await asTurn(tools, "calendar_create", DINNER, () => Promise.resolve("refused"));
+    expect(asked[0]).toContain("agenda « (nom illisible) »");
+  });
+
+  test("a yes for another calendar does not write into this one", async () => {
+    const { tools, google } = await untrustedSetup();
+    const { tool, args } = argsOf(tools, "calendar_create", DINNER);
+    const result = await tool.run(args, { snapshot: JSON.stringify(["famille@example.com", "famille@example.com"]) });
+    expect(result.isError).toBe(true);
+    expect(writesTo(google.requests)).toEqual([]);
+  });
+
+  test("the title being approved is shown whole, however long", async () => {
+    const { tools } = await untrustedSetup();
+    const title = "Dîner ".repeat(33).trim();
+    const { asked } = await asTurn(tools, "calendar_create", { ...DINNER, title }, () => Promise.resolve("refused"));
+    expect(asked[0]).toContain(`« ${title} »`);
   });
 });

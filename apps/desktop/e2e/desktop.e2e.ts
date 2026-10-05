@@ -555,18 +555,18 @@ test("the title bar detaches and reattaches Alicia (the Holo), the same choice a
   const trayChecked = async (): Promise<boolean | null | undefined> =>
     (await recorded(app)).tray.find((item) => item.id === "toggle-holo")?.checked;
   await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
-  await expect.poll(() => button.getAttribute("aria-pressed"), POLL).toBe("true");
+  await expect.poll(() => button.getAttribute("aria-label"), POLL).toBe("Rattacher Alicia");
   expect(await button.getAttribute("title")).toBe("Rattacher Alicia");
 
   await button.click();
   await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(false);
-  await expect.poll(() => button.getAttribute("aria-pressed"), POLL).toBe("false");
+  await expect.poll(() => button.getAttribute("aria-label"), POLL).toBe("Détacher Alicia");
   expect(await button.getAttribute("title")).toBe("Détacher Alicia");
   await expect.poll(trayChecked, POLL).toBe(false);
 
   // Changed from the tray: the button follows.
   await callHook(app, "trayAction", "toggle-holo");
-  await expect.poll(() => button.getAttribute("aria-pressed"), POLL).toBe("true");
+  await expect.poll(() => button.getAttribute("aria-label"), POLL).toBe("Rattacher Alicia");
   await expect.poll(() => windowVisible(app, "holo"), POLL).toBe(true);
 
   await button.click();
@@ -575,7 +575,8 @@ test("the title bar detaches and reattaches Alicia (the Holo), the same choice a
 
   const again = await launch(userData);
   const restored = again.page.getByTestId("titlebar-holo");
-  await expect.poll(() => restored.getAttribute("aria-pressed"), POLL).toBe("false");
+  await expect.poll(() => restored.isEnabled(), POLL).toBe(true);
+  expect(await restored.getAttribute("aria-label")).toBe("Détacher Alicia");
   expect(await windowVisible(again.app, "holo")).toBe(false);
 });
 

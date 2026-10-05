@@ -88,13 +88,19 @@ mémoire… », « Alicia retient ça… »).
   à part (512 Mo de mémoire, 30 s au plus) : un document trop lourd est refusé sans gêner le cerveau. Le type vient
   du contenu, pas de l'extension. Un document protégé par mot de passe est signalé comme tel. Le texte est coupé à
   60 000 caractères.
+- **Agendas Google** (quand Google est configuré, voir « Comptes Google ») : `calendar_list` (lire, 31 jours au
+  plus), `calendar_create` (ajouter, jamais d'invités), `calendar_update` / `calendar_delete` (modifier, supprimer
+  après un « Oui »). Seulement les comptes Famille et ceux de la personne qui parle.
+- **Gmail** : `gmail_search`, `gmail_read` (lire), `gmail_draft` (préparer un brouillon dans Gmail). Aucun outil
+  n'envoie de mail : la personne envoie elle-même le brouillon depuis Gmail.
 - **Outils natifs du SDK**, et eux seuls : `WebSearch`, `WebFetch`, `Read` (images et PDF joints à la conversation,
   et les fichiers des skills — rien d'autre : ni le reste du disque, ni une autre conversation) et `Skill`. Pas de
   terminal, pas d'écriture de fichiers, pas d'agents.
 - **Skills** (`apps/brain/workspace/.claude/skills/`) : `ranger-un-souvenir`, `lire-un-document`,
-  `verifier-avant-d-agir`, des consignes en français, sans aucun outil propre. `verifier-avant-d-agir` reprend
-  l'idée du skill « discernment nudge » (anthropics/skills), réécrite pour Alicia (le crédit vit ici : tout ce qui
-  est dans un skill, commentaires compris, part au modèle).
+  `verifier-avant-d-agir`, `preparer-la-semaine` (agendas + météo → récap, conflits, oublis) et `tri-des-mails`
+  (résumé, urgent, brouillons proposés), des consignes en français, sans aucun outil propre.
+  `verifier-avant-d-agir` reprend l'idée du skill « discernment nudge » (anthropics/skills), réécrite pour Alicia
+  (le crédit vit ici : tout ce qui est dans un skill, commentaires compris, part au modèle).
 
 Pendant un tour, l'app affiche ce qu'Alicia fait (« Alicia regarde la météo… », « Alicia lit le document… »).
 
@@ -105,15 +111,20 @@ Une carte **Oui / Non** s'affiche dans la conversation, sur l'appareil qui a env
 
 - **Toujours** : oublier un souvenir ; ouvrir une adresse du réseau de la maison (box, domotique, le cerveau
   lui-même : adresses locales et privées, Tailscale compris, `.local`, `.lan`, nom sans point…). Une adresse qui
-  contient un identifiant ou un mot de passe est refusée d'office.
+  contient un identifiant ou un mot de passe est refusée d'office. Modifier ou supprimer un événement d'agenda
+  (`calendar_update`, `calendar_delete` : la carte montre l'événement tel que Google l'a, occurrence ou série
+  entière, et les changements ; rien n'est fait s'il a changé entre-temps).
 - **Une fois qu'un contenu extérieur est entré dans la conversation** (page web, résultats de recherche,
-  document, pièce jointe, plus tard un mail) : chercher sur le web (la carte montre la requête entière ; une requête
+  document, pièce jointe, mail, agenda) : chercher sur le web (la carte montre la requête entière ; une requête
   trop longue ou contenant des caractères invisibles est refusée) ; ouvrir une page
   dont l'adresse ne vient ni du message de la personne ni d'une recherche du même tour (la carte montre le site
-  sur sa propre ligne, puis l'adresse complète) ; retenir ou modifier un souvenir (la carte montre le texte exact).
+  sur sa propre ligne, puis l'adresse complète) ; retenir ou modifier un souvenir (la carte montre le texte exact) ;
+  ajouter un événement dans un agenda que le compte ne possède pas, partagé par quelqu'un d'autre (la carte montre
+  le titre entier, l'horaire et l'agenda).
 
-C'est le **garde-fou contre l'injection de consignes** : un document ou une page piégés ne peuvent pas faire
-fuiter la mémoire par une recherche ou une adresse, ni glisser une « règle » dans la mémoire sans qu'on le voie.
+C'est le **garde-fou contre l'injection de consignes** : un document, une page ou un mail piégés ne peuvent pas
+faire fuiter la mémoire par une recherche, une adresse ou un agenda partagé, ni glisser une « règle » dans la mémoire
+sans qu'on le voie.
 La marque « contenu extérieur » appartient à la **conversation** et ne s'efface jamais (le contenu reste dans
 la session reprise et dans ce qu'Alicia a pu retenir) : pour repartir de zéro, ouvrir une nouvelle conversation.
 Les contenus extérieurs sont présentés à Alicia comme des données encadrées, jamais comme des consignes.
@@ -129,6 +140,10 @@ Les contenus extérieurs sont présentés à Alicia comme des données encadrée
   marqué, les anciennes conversations restent de confiance. Seul un cerveau qui a fait tourner une version de
   développement de cette étape avant sa fusion peut avoir des conversations marquées ; dans celles-là, les
   recherches, les pages inconnues et les souvenirs demandent désormais un « Oui ».
+- **Migration `0006_google_accounts`** (au premier démarrage) : elle ne fait qu'ajouter la table des comptes
+  Google, vide ; rien d'existant n'est touché. Sans `google` dans la config, rien ne change.
+- **Apps 0.1.0 / 0.2.0** : elles ignorent la carte « Reconnecter le compte » (`account_reconnect`) ; Alicia dit
+  quand même en une phrase qu'un compte est à reconnecter, et l'écran Comptes n'existe que dans les apps à jour.
 
 ### Pièces jointes
 
@@ -320,9 +335,11 @@ Pour finir : arrêter le cerveau de test et l'app de développement, supprimer `
 2. **Sur la machine du cerveau** (PC de test, puis Pi / Mac mini) :
    - copier le JSON en `apps/brain/secrets/google_client_secret.json` (dossier ignoré par git) ;
    - dans `apps/brain/alicia.config.yaml` : `google: { clientSecretFile: "./secrets/google_client_secret.json" }` ;
-   - générer la clé (commande plus haut, « Comptes Google »), l'ajouter **sur une ligne** dans `apps/brain/.env` :
-     `ALICIA_SECRET_KEY=<clé>`, et la ranger dans le gestionnaire de mots de passe ;
-   - redémarrer le cerveau → attendu : « Comptes Google : activés. » (sinon le message dit pourquoi).
+   - générer la clé : `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`,
+     l'ajouter **sur une ligne** dans `apps/brain/.env` : `ALICIA_SECRET_KEY=<clé>`, et la ranger dans le
+     gestionnaire de mots de passe ;
+   - redémarrer le cerveau : `cd apps/brain && pnpm exec tsx --env-file=.env src/cli.ts start` → attendu :
+     « Comptes Google : activés. » (sinon le message dit pourquoi).
 3. **Dans l'app, sur le PC de Kévin** : « Comptes » → « Ajouter un compte Famille » → se connecter au compte
    Google de la famille dans le navigateur, **tout cocher**, valider → page « C'est fait ! » → le compte apparaît
    « Connecté ». Puis « Ajouter mon compte » avec le compte perso de Kévin.
@@ -336,7 +353,12 @@ Pour finir : arrêter le cerveau de test et l'app de développement, supprimer `
    « accès bloqué » → scope ou API manquants dans la console ; compte « À reconnecter » au bout d'une semaine →
    l'écran de consentement est resté « En test » : « Google Auth Platform » → « Audience » → **« Publier
    l'application »**, puis reconnecter les comptes une dernière fois (carte « Reconnecter le compte » ou écran
-   Comptes).
+   Comptes) ; le JSON du client a fuité (envoyé, versionné, copié ailleurs) → dans la console, « Identifiants » →
+   le client « Alicia » → **réinitialiser le code secret du client** (ou en ajouter un nouveau puis désactiver
+   l'ancien), remplacer `apps/brain/secrets/google_client_secret.json` par le nouveau JSON et redémarrer le cerveau
+   (un compte qui passe « À reconnecter » se reconnecte depuis Comptes) ; machine du cerveau perdue ou `ALICIA_SECRET_KEY` perdue → « Retirer » ne peut plus révoquer (il
+   faut un jeton déchiffrable) : retirer l'accès d'Alicia à la main sur https://myaccount.google.com/permissions,
+   pour chaque compte, puis reconnecter les comptes sur le nouveau cerveau.
 
 ## App de bureau (Windows)
 
@@ -389,7 +411,10 @@ prépare des **brouillons** : elle **n'envoie jamais** de mail (aucun outil ne l
   navigateur sur Google (« Annuler » arrête l'attente) ; « Reconnecter » quand Google n'accepte plus l'accès
   (une pastille ambre le signale dans le menu) ; « Retirer » révoque l'accès d'Alicia. Quand un compte doit
   être reconnecté pendant une conversation, une carte « Reconnecter le compte » apparaît dans le chat : un
-  clic ouvre Comptes et relance la connexion.
+  clic ouvre Comptes et relance la connexion. Une question posée depuis l'Holo y affiche la carte (un clic ouvre
+  la fenêtre principale sur Comptes et relance la connexion) ; posée depuis Spotlight, la carte attend dans sa conversation, dans la
+  fenêtre principale. Dans les deux cas, la pastille s'allume aussitôt, et la fenêtre principale affiche « Un compte
+  Google doit être reconnecté » tant que la conversation concernée n'est pas ouverte.
 - **API** (jeton d'appareil, vérifié avant de lire le corps) : `GET /google/oauth-client`,
   `GET /google/accounts`, `POST /google/accounts` (code + vérificateur PKCE + URI de boucle locale),
   `DELETE /google/accounts/:id`. `503 google_unavailable` quand Google n'est pas configuré.

@@ -5,7 +5,6 @@ import { type GoogleAuthorizeRequest, GoogleAuthorizeResult } from "../shared/go
 
 /** Google's consent page: the only place the consent URL ever points to (built here, never by a page). */
 export const GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const GOOGLE_ACCOUNTS_ORIGIN = "https://accounts.google.com";
 /** How long the browser has to come back to the app. */
 export const CONSENT_TIMEOUT_MS = 5 * 60_000;
 const LOOPBACK_HOST = "127.0.0.1";
@@ -159,6 +158,8 @@ export function authorizeWithLoopback(request: GoogleAuthorizeRequest, options: 
         return;
       }
       redirectUri = `http://${LOOPBACK_HOST}:${address.port}`;
+      // Always Google's own page in the person's browser: the address is GOOGLE_AUTHORIZATION_URL, only its query is built
+      // (and URLSearchParams encodes every value, so nothing from the request can change where it points).
       const consent = new URL(GOOGLE_AUTHORIZATION_URL);
       consent.search = new URLSearchParams({
         client_id: request.clientId,
@@ -173,11 +174,6 @@ export function authorizeWithLoopback(request: GoogleAuthorizeRequest, options: 
         prompt: "consent",
         ...(request.loginHint !== undefined ? { login_hint: request.loginHint } : {}),
       }).toString();
-      // Only ever Google's own page in the person's browser.
-      if (consent.origin !== GOOGLE_ACCOUNTS_ORIGIN) {
-        finish({ ok: false, reason: "failed" });
-        return;
-      }
       timer = setTimeout(() => {
         finish({ ok: false, reason: "timeout" });
       }, options.timeoutMs ?? CONSENT_TIMEOUT_MS);

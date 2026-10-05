@@ -10,6 +10,9 @@ apps/brain/alicia.*.yaml
 apps/brain/data-*/
 # Google OAuth client secret (google.clientSecretFile): never versioned
 apps/brain/secrets/
+# ...nor the JSON downloaded from the console, wherever it lands (its default name, or renamed)
+apps/brain/google_client_secret*.json
+client_secret_*.json
 apps/desktop/out/
 apps/desktop/dist/
 

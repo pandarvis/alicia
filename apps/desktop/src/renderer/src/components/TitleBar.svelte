@@ -18,6 +18,7 @@
     onToggleHolo: () => void;
   } = $props();
 
+  // The label names the action (it flips with the state): no aria-pressed on top, which would say it twice.
   const holoLabel = $derived(holoShown === true ? "Rattacher Alicia" : "Détacher Alicia");
 
   const STATUS_LABEL: Readonly<Record<ConnectionStatus, string>> = {
@@ -47,7 +48,6 @@
     disabled={holoShown === null}
     title={holoLabel}
     aria-label={holoLabel}
-    aria-pressed={holoShown === true}
     data-testid="titlebar-holo"
   ><PictureInPicture2 size={17} aria-hidden="true" /></button>
 </header>

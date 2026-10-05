@@ -90,12 +90,14 @@ function inside(rect: Rect, area: Rect): boolean {
 }
 
 /**
- * The rectangle, moved by at most a few DIP (never out of `within`) so that the OS gives it exactly its size in
- * physical pixels: the window keeps its canonical size wherever it goes, instead of growing by a pixel on some
- * places of a fractional-scale screen. Unchanged when it is already exact, when no place nearby is better, or
- * without a grid.
+ * The rectangle, moved by at most a few DIP (never out of `within`, and only to places `allowed` accepts) so that
+ * the OS gives it exactly its size in physical pixels: the window keeps its canonical size wherever it goes, instead
+ * of growing by a pixel on some places of a fractional-scale screen. Unchanged when it is already exact, when no
+ * allowed place nearby is better, or without a grid.
  */
-export function pixelExact(rect: Rect, within: Rect, grid: PixelGrid | null): Rect {
+export function pixelExact(
+  rect: Rect, within: Rect, grid: PixelGrid | null, allowed: (candidate: Rect) => boolean = () => true,
+): Rect {
   if (grid === null) return rect;
   const scale = grid.scaleOf(rect);
   const width = Math.round(rect.width * scale);
@@ -109,7 +111,7 @@ export function pixelExact(rect: Rect, within: Rect, grid: PixelGrid | null): Re
   for (const nudge of NUDGES) {
     if (bestMisses === 0) break;
     const candidate = { ...rect, x: rect.x + nudge.x, y: rect.y + nudge.y };
-    if (!inside(candidate, within)) continue;
+    if (!inside(candidate, within) || !allowed(candidate)) continue;
     const candidateMisses = misses(candidate);
     if (candidateMisses < bestMisses) {
       best = candidate;
@@ -138,7 +140,8 @@ const EXPANDED_HEIGHT = Math.max(HOLO_SIZE.height, HOLO_PANEL.height);
  * mascot is placed from the edges that stay put — in both states, so that whichever of the window and the page
  * changes first, it does not move. On a screen too narrow for the mini-chat on either side, the window is kept
  * on screen and the mascot moves with it, still beside its mini-chat. With a grid, the expanded window is nudged to
- * its exact size in pixels (pixelExact) and the mascot placed so that it does not move.
+ * its exact size in pixels (pixelExact), only in directions the mascot's place inside the window can make up for: the
+ * mascot never moves (against an edge of the screen, the window may stay a pixel larger instead).
  */
 export function holoLayout(anchor: Point, expanded: boolean, workArea: Rect, grid: PixelGrid | null = null): HoloLayout {
   const panelSide: PanelSide = anchor.x - workArea.x >= HOLO_PANEL.width + HOLO_PANEL.gap ? "left" : "right";
@@ -154,15 +157,22 @@ export function holoLayout(anchor: Point, expanded: boolean, workArea: Rect, gri
     workArea.x + workArea.width - width,
   );
   const y = clamp(growsUp ? anchor.y + HOLO_SIZE.height - height : anchor.y, workArea.y, workArea.y + workArea.height - height);
-  const bounds = pixelExact({ x, y, width, height }, workArea, grid);
   // Sideways the mascot stays against its edge, beside the mini-chat (or as far in as the window was nudged out);
-  // vertically it keeps its height on screen.
-  const nudged = edgeX === "left" ? x - bounds.x : bounds.x - x;
-  const top = anchor.y - bounds.y;
+  // vertically it keeps its height on screen. A window nudged the other way would leave it no place inside.
+  const place = (frame: Rect): Point => ({ x: edgeX === "left" ? x - frame.x : frame.x - x, y: anchor.y - frame.y });
+  const roomX = width - HOLO_SIZE.width;
+  const roomY = height - HOLO_SIZE.height;
+  const bounds = pixelExact({ x, y, width, height }, workArea, grid, (candidate) => {
+    const at = place(candidate);
+    return at.x >= 0 && at.x <= roomX && at.y >= 0 && at.y <= roomY;
+  });
+  const at = place(bounds);
+  // Always inside the window, whatever the screen: a mascot cut by its own window would be worse than one moved.
+  const top = clamp(at.y, 0, roomY);
   return {
     bounds,
     panelSide,
-    mascot: { edgeX, x: Math.max(0, nudged), edgeY, y: edgeY === "top" ? top : height - top - HOLO_SIZE.height },
+    mascot: { edgeX, x: clamp(at.x, 0, roomX), edgeY, y: edgeY === "top" ? top : roomY - top },
   };
 }
 

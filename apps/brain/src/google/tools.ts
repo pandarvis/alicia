@@ -7,6 +7,7 @@ import type { GoogleClient } from "./google-client.ts";
 export function googleTools(client: GoogleClient, timeZone: string): ToolProvider {
   return (scope) => {
     const access = client.forTurn(scope);
-    return [...calendarTools(access, timeZone), ...gmailTools(access, timeZone)];
+    // The scope itself: whether the turn is trusted is read when a tool runs.
+    return [...calendarTools(access, timeZone, scope), ...gmailTools(access, timeZone)];
   };
 }

@@ -128,6 +128,33 @@ describe("Holo layout", () => {
     expect(mascotOnScreen(layout)).toEqual({ x: 1760, y: 200 });
   });
 
+  test("with a fractional scale, the expanded window is only nudged where the mascot can follow it", () => {
+    const anchor = { x: 1702, y: 866 };
+    const layout = holoLayout(anchor, true, SCREEN, EVERY_4);
+    // At 1374, 598, between two pixels: right and down (left or up would take the mascot along).
+    expect(layout).toEqual({
+      bounds: { x: 1376, y: 600, width: 464, height: 420 },
+      panelSide: "left",
+      mascot: { edgeX: "right", x: 2, edgeY: "bottom", y: 2 },
+    });
+    expect(EVERY_4.toPhysical(layout.bounds)).toMatchObject({ width: 464, height: 420 });
+    expect(mascotOnScreen(layout)).toEqual(anchor);
+  });
+
+  test("against the edges of the screen, a nudge the mascot cannot follow is never taken: the window stays a pixel larger", () => {
+    // Bottom-right corner: only left and up stay on screen. Top-left corner: only right and down.
+    for (const [anchor, screen] of [
+      [{ x: 1786, y: 890 }, { x: 0, y: 0, width: 1922, height: 1042 }],
+      [{ x: 2, y: 2 }, { x: 2, y: 2, width: 1920, height: 1040 }],
+    ] as const) {
+      const plain = holoLayout(anchor, true, screen);
+      const layout = holoLayout(anchor, true, screen, EVERY_4);
+      expect(layout, JSON.stringify(anchor)).toEqual(plain);
+      expect(mascotOnScreen(layout), JSON.stringify(anchor)).toEqual(anchor);
+      expect(EVERY_4.toPhysical(layout.bounds)).toMatchObject({ width: 465, height: 421 });
+    }
+  });
+
   test("on a screen too narrow for either side, the expanded window stays on screen, beside the mascot", () => {
     const narrow = { x: 0, y: 0, width: 600, height: 1040 };
     expect(holoLayout({ x: 200, y: 864 }, true, narrow)).toEqual({

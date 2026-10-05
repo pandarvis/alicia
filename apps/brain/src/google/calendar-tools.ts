@@ -37,6 +37,10 @@ const TOO_LONG =
 const UNREACHABLE = "Google ne répond pas pour l'instant : rien n'a été fait. Propose de réessayer plus tard.";
 const NO_VERSION =
   "Google n'a pas donné la version de cet événement : rien n'a été fait, la modification ne pourrait pas être vérifiée.";
+const UNREADABLE_CALENDAR = "(nom illisible)";
+const CREATE_TOO_LONG =
+  "Titre trop long à afficher sur la carte de confirmation : rien n'a été fait. Raccourcis le titre (le détail peut aller dans la description).";
+const CALENDAR_CHANGED = "L'agenda n'est plus celui que la personne a approuvé : rien n'a été fait. Rappelle l'outil.";
 
 const When = z.union([IsoDate, LocalDateTime]);
 const CalendarId = z.string().min(1).max(300);
@@ -76,6 +80,18 @@ function calendarName(calendar: CalendarEntry): string {
 
 function describeCalendar(target: Target): string {
   return `${accountLabel(target.account)} · agenda « ${oneLine(calendarName(target.calendar))} »`;
+}
+
+/** A calendar on a card: its name is written by whoever shares it, so never with characters the card could not show. */
+function cardCalendar(target: Target): string {
+  const name = calendarName(target.calendar);
+  const shown = hasHiddenCharacters(name) ? UNREADABLE_CALENDAR : truncate(oneLine(name), CARD_TITLE_MAX);
+  return `${accountLabel(target.account)} · agenda « ${shown} »`;
+}
+
+/** What a creation's card approves: this account's calendar, nothing else. */
+function targetSnapshot(target: Target): string {
+  return JSON.stringify([target.account.email, target.calendar.id]);
 }
 
 /** The parameters to pass back to the tools, under their own names. */
@@ -194,8 +210,19 @@ function changeProblem(change: Change, timeZone: string): string | undefined {
   return empty ? "Rien à modifier." : undefined;
 }
 
-/** Calendar tools for the person a GoogleAccess is bound to. */
-export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefinition[] {
+/** Whether outside content entered the turn: read when a tool runs (it changes during the turn). */
+export interface TurnTrust {
+  readonly untrusted: boolean;
+}
+
+const TRUSTED: TurnTrust = { untrusted: false };
+
+/**
+ * Calendar tools for the person a GoogleAccess is bound to. Once outside content entered the turn (`trust`), an
+ * event is only created in a calendar the account does not own (shared by someone else, who would read it) after a
+ * yes on a card: an injected instruction could otherwise write what it read into someone else's calendar.
+ */
+export function calendarTools(access: GoogleAccess, timeZone: string, trust: TurnTrust = TRUSTED): ToolDefinition[] {
   const calendar = new CalendarApi(access);
 
   /** The one writable calendar meant, or an answer for Alicia (not found, or a choice to ask the person). */
@@ -252,6 +279,23 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
         untrusted: true,
       },
     };
+  }
+
+  /** A creation needs a yes: outside content entered the turn and the calendar is not the account's own. */
+  function createNeedsYes(target: Target): boolean {
+    return trust.untrusted && target.calendar.accessRole !== "owner";
+  }
+
+  /** The card of a creation: the event as it will be written (title whole) and the calendar it goes to. */
+  function createCard(target: Target, title: string, times: { start: EventTimeInput; end: EventTimeInput }): Card {
+    const summary = [
+      `Ajouter « ${oneLine(title)} » à l'agenda partagé ?`,
+      describeWhen(times.start, times.end, timeZone),
+      cardCalendar(target),
+    ].join("\n");
+    // The title is what is approved: shown whole, or not asked at all.
+    if (summary.length > SUMMARY_MAX) return { result: { text: CREATE_TOO_LONG, isError: true } };
+    return { ask: { summary, snapshot: targetSnapshot(target) } };
   }
 
   /** The writable calendar of this account with this id; GoogleApiError("not_found") when there is none. */
@@ -391,7 +435,19 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
         // Only here to be refused clearly: an invitation would be an e-mail sent.
         attendees: z.array(z.string()).optional(),
       },
-      async run({ title, start, end, account, calendarId, location, description, attendees }) {
+      // Only after outside content, and only for a calendar the account does not own (see calendarTools).
+      async confirmation({ title, start, end, account, calendarId, location, description, attendees }) {
+        if (!trust.untrusted || (attendees !== undefined && attendees.length > 0) || hidesText({ title, location, description })) {
+          return null;
+        }
+        const times = eventTimes(start, end, timeZone);
+        if ("error" in times) return null;
+        const resolved = await resolveTarget(account, calendarId);
+        if ("result" in resolved || !createNeedsYes(resolved.target)) return null;
+        const card = createCard(resolved.target, title, times);
+        return "ask" in card ? card.ask : null;
+      },
+      async run({ title, start, end, account, calendarId, location, description, attendees }, confirmed) {
         if (attendees !== undefined && attendees.length > 0) return { text: NO_INVITES, isError: true };
         if (hidesText({ title, location, description })) return { text: HIDDEN, isError: true };
         const times = eventTimes(start, end, timeZone);
@@ -399,6 +455,11 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
         const resolved = await resolveTarget(account, calendarId);
         if ("result" in resolved) return resolved.result;
         const { target } = resolved;
+        if (confirmed !== undefined && confirmed.snapshot !== targetSnapshot(target)) return { text: CALENDAR_CHANGED, isError: true };
+        if (confirmed === undefined && createNeedsYes(target)) {
+          const card = createCard(target, title, times);
+          return "result" in card ? card.result : { text: NOT_APPROVED, isError: true };
+        }
         return guarded(target.account, async () => {
           const created = await calendar.insert(target.account, target.calendar.id, {
             summary: title,
