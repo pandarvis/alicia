@@ -145,6 +145,14 @@ describe("GoogleClient", () => {
     expect(message).not.toMatch(/secret plans|access-|refresh-/);
   });
 
+  test("extra headers pass, but never replace the account's own authorization", async () => {
+    const { client, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    const request = { ...PROFILE, headers: { authorization: "Bearer someone-else", "if-match": "\"etag-1\"" } };
+    expect(await client.forPerson(KEVIN).json(account, request, Profile)).toEqual({ emailAddress: "kevin@example.com" });
+    expect(google.requests.at(-1)?.email).toBe("kevin@example.com");
+  });
+
   test("Google's answers map to failures", async () => {
     const { client, google, connect } = createGoogleFixture();
     const account = await connect(KEVIN, "personal", "kevin@example.com");

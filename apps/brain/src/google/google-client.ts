@@ -116,7 +116,8 @@ export class GoogleClient {
     try {
       return await fetchFn(buildUrl(request), {
         method: request.method,
-        headers: { authorization: `Bearer ${token}`, ...(json ? { "content-type": "application/json" } : {}) },
+        // The token last: no extra header can replace it.
+        headers: { ...request.headers, ...(json ? { "content-type": "application/json" } : {}), authorization: `Bearer ${token}` },
         ...(json ? { body: JSON.stringify(request.body) } : {}),
         signal: signal === undefined ? AbortSignal.timeout(TIMEOUT_MS) : AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), signal]),
       });

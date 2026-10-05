@@ -2165,6 +2165,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `apps/brain/src/google/time.ts`, `apps/brain/src/google/calendar-api.ts`
 - Test: `apps/brain/test/google-time.test.ts`, `apps/brain/test/calendar-api.test.ts`
 
+> **Alignement (tâche 0) :** pour la tâche 10 (ce qui s'exécute est ce qui a été approuvé), `CalendarEvent` lit l'`etag` de l'événement, et `update(…, fields, etag?)` / `remove(…, etag?)` l'envoient en `If-Match` : un événement modifié entre la question et le oui donne `GoogleApiError("changed")` et rien n'est écrit. `ApiRequest` (tâche 6) gagne `headers?` ; le client pose l'`authorization` en dernier (aucun en-tête ne la remplace). `OFFSET` est ancré en fin de chaîne (`/(?:[zZ]|[+-]\d{2}:\d{2})$/`). Tests ajoutés : etag qui change à l'écriture, `If-Match` périmé refusé sans écriture (toujours `sendUpdates=none`), identifiant d'événement échappé dans le chemin, heure locale aux deux jours de changement d'heure.
+
 - [ ] **Step 1: Écrire les tests de dates (échouent)**
 
 `apps/brain/test/google-time.test.ts` :

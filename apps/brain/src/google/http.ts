@@ -26,6 +26,8 @@ export interface ApiRequest {
   query?: Readonly<Record<string, QueryValue>>;
   /** Sent as JSON. */
   body?: unknown;
+  /** Extra headers (If-Match); never authorization, which the client sets. */
+  headers?: Readonly<Record<string, string>>;
 }
 
 /** Authorized Google calls on behalf of the person a GoogleAccess is bound to. */
