@@ -1,7 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
+import { parse } from "yaml";
+import { z } from "zod";
 import { SKILLS_DIR, WORKSPACE_DIR } from "../src/application.ts";
+import { listSkills } from "../src/tools/skills.ts";
 
 test("the workspace holds nothing the SDK would load besides skills", () => {
   for (const file of [
@@ -23,4 +26,26 @@ test("no folder above the workspace, up to the repository root, brings skills, c
       expect(existsSync(path), path).toBe(false);
     }
   }
+});
+
+const SKILLS = ["lire-un-document", "ranger-un-souvenir", "verifier-avant-d-agir"];
+/** Strict: an `allowed-tools`, `hooks` (or any other key) would grant or change something; refused. */
+const Frontmatter = z.strictObject({
+  name: z.string(),
+  description: z.string().min(40).max(1024).regex(/^[^<>]*$/u),
+});
+
+test("the workspace ships exactly Alicia's three skills, and nothing else under .claude", () => {
+  expect(listSkills(SKILLS_DIR)).toEqual(SKILLS);
+  expect(readdirSync(join(WORKSPACE_DIR, ".claude"))).toEqual(["skills"]);
+});
+
+test.each(SKILLS)("%s: name = folder, French description, no extra key, instructions only", (name) => {
+  const text = readFileSync(join(SKILLS_DIR, name, "SKILL.md"), "utf8").replaceAll("\r\n", "\n");
+  const match = /^---\n([\s\S]*?)\n---\n([\s\S]+)$/u.exec(text);
+  if (match === null) throw new Error("frontmatter missing");
+  const front = Frontmatter.parse(parse(match[1] ?? ""));
+  expect(front.name).toBe(name);
+  expect((match[2] ?? "").trim().length).toBeGreaterThan(300);
+  expect(readdirSync(join(SKILLS_DIR, name))).toEqual(["SKILL.md"]);
 });

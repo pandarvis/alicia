@@ -144,7 +144,6 @@ export async function* handleSend(
 
   const model = chooseModel(message.model, message.text);
   const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
-  const systemPrompt = buildSystemPrompt(person, sheet);
   // The turn's own scope: aborted when it ends for any reason (done, error, exception, cancel), so nothing it
   // asked can be approved, nor run, afterwards.
   const turnScope = new AbortController();
@@ -166,6 +165,8 @@ export async function* handleSend(
   // Attachments are outside content from the start: their names are already in the prompt.
   if (attached.length > 0) turn.markUntrusted();
   const tools = deps.tools.forTurn(turn);
+  // The guide names only the tools this turn has (no weather without a home).
+  const systemPrompt = buildSystemPrompt(person, sheet, tools.map((t) => t.name));
   const body = [message.text.trim(), describeAttachments(attached, deps.attachments.dirOf(conversationId))]
     .filter((part) => part !== "")
     .join("\n\n");

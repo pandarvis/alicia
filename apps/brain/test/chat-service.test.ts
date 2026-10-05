@@ -51,6 +51,18 @@ async function send(
 }
 
 describe("handleSend", () => {
+  test("the system prompt's tools guide names only the turn's tools", async () => {
+    const weather: ToolProvider = () => [
+      defineTool({ name: "weather", label: "…", description: "Météo.", input: {}, run: () => Promise.resolve({ text: "x" }) }),
+    ];
+    const without = createContext(SIMPLE_REPLY);
+    await send(without.deps, KEVIN, { text: "Salut" });
+    expect(without.engine.requests[0]?.systemPrompt).not.toContain("weather");
+    const engine = new FakeEngine(SIMPLE_REPLY);
+    await send(createChatDeps(createTestDb(), createTestClock().clock, engine, [weather]), KEVIN, { text: "Salut" });
+    expect(engine.requests[0]?.systemPrompt).toContain("Pour la météo à la maison, utilise weather.");
+  });
+
   test("new conversation: events, history, session and turn log", async () => {
     const { deps, repository, engine } = createContext(SIMPLE_REPLY);
     const events = await send(deps, KEVIN, { text: "Quelle température ?" });

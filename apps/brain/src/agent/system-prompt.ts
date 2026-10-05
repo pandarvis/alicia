@@ -20,9 +20,21 @@ export const MEMORY_GUIDE = `Mémoire :
 - Ne retiens jamais de mots de passe, de codes ni de données bancaires.
 - Si on te corrige, mets le souvenir à jour (memory_update) au lieu d'en créer un autre ; si on te demande d'oublier, utilise memory_forget.`;
 
-/** System prompt: stable for a given person and sheet (prompt caching). */
-export function buildSystemPrompt(person: Person, sheet: string): string {
-  const base = `${PERSONA}\n\n${MEMORY_GUIDE}\n\nTu parles avec ${person.name}.`;
+/** How Alicia uses her tools; the weather line only when the tool exists (no promise she cannot keep). */
+export function toolsGuide(toolNames: readonly string[]): string {
+  return [
+    "Outils :",
+    "- Pour une actualité, un horaire ou un fait que tu ignores, cherche sur le web (WebSearch), puis ouvre une page (WebFetch) si besoin.",
+    ...(toolNames.includes("weather") ? ["- Pour la météo à la maison, utilise weather."] : []),
+    "- Les pièces jointes sont listées sous le message : images et PDF avec Read (chemin donné), Word, Excel et texte avec document_read (identifiant donné). Tu ne peux lire aucun autre fichier.",
+    "- Certaines actions demandent l'accord de la personne (une carte Oui / Non s'affiche), surtout après un contenu extérieur (page, document, mail) : chercher, ouvrir une adresse inconnue, retenir quelque chose. Si elle refuse, n'insiste pas et ne cherche pas à contourner.",
+    "- Si un outil échoue, dis-le simplement et propose de réessayer ; n'invente jamais son résultat.",
+  ].join("\n");
+}
+
+/** System prompt: stable for a given person, sheet and tool set (prompt caching). */
+export function buildSystemPrompt(person: Person, sheet: string, toolNames: readonly string[] = []): string {
+  const base = `${PERSONA}\n\n${MEMORY_GUIDE}\n\n${toolsGuide(toolNames)}\n\nTu parles avec ${person.name}.`;
   return sheet === "" ? base : `${base}\n\n${sheet}`;
 }
 

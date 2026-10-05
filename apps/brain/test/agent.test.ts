@@ -33,6 +33,16 @@ describe("system prompt", () => {
     expect(buildSystemPrompt(KEVIN, "")).toBe(buildSystemPrompt(KEVIN, ""));
     expect(buildSystemPrompt(KEVIN, "")).not.toMatch(/2026/);
   });
+  test("the tools guide follows the turn's tools", () => {
+    const withWeather = buildSystemPrompt(KEVIN, "", ["memory_search", "weather", "document_read"]);
+    expect(withWeather).toContain("Pour la météo à la maison, utilise weather.");
+    expect(withWeather).toContain("document_read");
+    expect(withWeather).toContain("WebSearch");
+    expect(withWeather).toContain("n'invente jamais son résultat");
+    expect(withWeather).toContain("Si elle refuse, n'insiste pas");
+    expect(buildSystemPrompt(KEVIN, "", ["memory_search"])).not.toContain("weather");
+    expect(buildSystemPrompt(KEVIN, "")).not.toContain("weather");
+  });
   test("timestamps the message in Paris time", () => {
     const instant = new Date(Date.UTC(2026, 9, 4, 13, 30));
     expect(timestamp("Coucou", instant, "Europe/Paris")).toBe("[dimanche 4 octobre 2026 à 15:30]\nCoucou");

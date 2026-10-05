@@ -87,10 +87,14 @@ export function toolProviders(
   ];
 }
 
-/** Opens the database and the memory store without starting the HTTP server. */
-export function openMemory(config: Config, embedder?: Embedder): { memory: MemoryStore; close: () => void } {
+/** Opens the database, the memory store and the attachments without starting the HTTP server. */
+export function openMemory(
+  config: Config,
+  embedder?: Embedder,
+): { memory: MemoryStore; attachments: AttachmentStore; close: () => void } {
   const { db, memory } = openCore(config, embedder);
-  return { memory, close: () => db.$client.close() };
+  const attachments = new AttachmentStore(db, resolve(config.dataDir, "attachments"), systemClock);
+  return { memory, attachments, close: () => db.$client.close() };
 }
 
 export async function buildApplication(

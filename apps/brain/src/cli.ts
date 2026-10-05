@@ -6,13 +6,12 @@ import { parseArgs } from "node:util";
 import { type ClientMessage, PairingResponse, type Person, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
-import { buildApplication, createSdkEngine, openMemory, SKILLS_DIR, WORKSPACE_DIR } from "./application.ts";
+import { buildApplication, createSdkEngine, openMemory, SKILLS_DIR, toolProviders, WORKSPACE_DIR } from "./application.ts";
 import { type Config, loadConfig, readAuthentication } from "./config.ts";
 import { advertiseBrain, bonjourPublisher, serviceHostname, shouldAdvertise } from "./discovery.ts";
 import type { Engine, EngineRequest } from "./engine/engine.ts";
 import { allowedToolNames, checkIsolation, NATIVE_TOOLS, readInit } from "./engine/sdk-engine.ts";
 import { importAlice, readAliceMemories, readAliceRules } from "./memory/import-alice.ts";
-import { memoryTools } from "./memory/tools.ts";
 import { toText } from "./server/ws.ts";
 import { TerminalConfirmations } from "./terminal-confirmations.ts";
 import { ToolCatalog } from "./tools/catalog.ts";
@@ -334,11 +333,13 @@ async function checkIsolationCommand(): Promise<void> {
     const person = config.people[0];
     if (person === undefined) throw new Error("Aucune personne dans la config.");
     const turn = cliTurn(config, person);
-    const tools = new ToolCatalog([memoryTools(opened.memory)]).forTurn(turn);
+    // The real tool set (weather only with a home), as a turn of the brain gets it.
+    const tools = new ToolCatalog(toolProviders(config, { memory: opened.memory, attachments: opened.attachments, fetch }))
+      .forTurn(turn);
     const params = { auth, models: config.models, workspaceDir: WORKSPACE_DIR, skills: listSkills(SKILLS_DIR) };
     const init = await readInit(params, {
       prompt: "Réponds juste « ok ».", sessionId: undefined, model: "sonnet",
-      systemPrompt: buildSystemPrompt(person, ""), tools, guard: createNativeGuard(turn), readableDirs: [],
+      systemPrompt: buildSystemPrompt(person, "", tools.map((t) => t.name)), tools, guard: createNativeGuard(turn), readableDirs: [],
       toolTimeoutMs: CONFIRMATION_TIMEOUT_MS + TOOL_RUN_BUDGET_MS,
     });
     const report = checkIsolation(init, {
