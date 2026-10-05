@@ -43,6 +43,13 @@
       "when": 1791170059820,
       "tag": "0005_untrusted_conversations",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791175803885,
+      "tag": "0006_google_accounts",
+      "breakpoints": true
     }
   ]
 }

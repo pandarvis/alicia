@@ -9,6 +9,8 @@ import type { ChatDependencies, TurnPorts } from "../src/conversations/chat-serv
 import { ConversationRepository } from "../src/conversations/repository.ts";
 import { type Db, openDb } from "../src/db/open.ts";
 import type { Engine, EngineRequest, NativeToolGuard } from "../src/engine/engine.ts";
+import { GoogleAccountStore } from "../src/google/account-store.ts";
+import { TokenCipher } from "../src/google/token-cipher.ts";
 import { syncPeople } from "../src/identity/people.ts";
 import { FakeEmbedder } from "../src/memory/fake-embedder.ts";
 import { MemoryStore } from "../src/memory/store.ts";
@@ -45,6 +47,14 @@ export function createTestDb() {
 /** Memory store with the deterministic embedder (never downloads a model). */
 export function createTestMemory(db: Db, clock: Clock) {
   return new MemoryStore(db, new FakeEmbedder(), clock, { minSimilarity: 0.3 });
+}
+
+/** Fixed test key: never the brain's real ALICIA_SECRET_KEY. */
+export const TEST_SECRET_KEY = Buffer.alloc(32, 9);
+
+/** Google accounts store on a test database, encrypted with the test key. */
+export function createTestGoogleAccounts(db: Db, clock: Clock) {
+  return new GoogleAccountStore(db, new TokenCipher(TEST_SECRET_KEY), clock);
 }
 
 /** Chat dependencies on a test database; `extraTools` are added after the memory tools. */

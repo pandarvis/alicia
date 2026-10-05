@@ -700,7 +700,7 @@ export const googleAccounts = sqliteTable(
 ```
 
 Run: `pnpm --filter @alicia/brain migrations`
-Expected: un nouveau fichier `apps/brain/drizzle/0006_<nom>.sql` contenant `CREATE TABLE \`google_accounts\`` et l'index unique sur `email`, plus `meta/0006_snapshot.json` et `_journal.json` mis à jour. Relire le SQL : aucune autre table ne doit changer.
+Expected: un nouveau fichier `apps/brain/drizzle/0006_<nom>.sql` contenant `CREATE TABLE \`google_accounts\`` et l'index unique sur `email`, plus `meta/0006_snapshot.json` et `_journal.json` mis à jour. Relire le SQL : aucune autre table ne doit changer. Renommer le fichier généré en `0006_google_accounts.sql` (et son `tag` dans `_journal.json`), comme `0004_attachments`.
 
 - [ ] **Step 2: Aide de test**
 

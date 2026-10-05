@@ -123,3 +123,27 @@ export const attachments = sqliteTable(
     index("attachments_person_idx").on(table.personId, table.conversationId),
   ],
 );
+
+/**
+ * Connected Google accounts (calendar, Gmail): the household's ("common") or one person's. Only ever reached
+ * through GoogleAccountStore, which keeps a person to "common" and their own.
+ */
+export const googleAccounts = sqliteTable(
+  "google_accounts",
+  {
+    id: text("id").primaryKey(),
+    /** "common" (household) or a person id. */
+    owner: text("owner").notNull(),
+    /** Lowercased; a Google account is either the household's or one person's. */
+    email: text("email").notNull().unique(),
+    /** Granted scopes, sorted, space-separated. */
+    scopes: text("scopes").notNull(),
+    /** AES-256-GCM, bound to id + owner (google/token-cipher.ts). Never stored in clear. */
+    refreshToken: blob("refresh_token", { mode: "buffer" }).notNull(),
+    status: text("status", { enum: ["connected", "reconnect"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+    /** Last successful connection (marking "reconnect" leaves it). */
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [index("google_accounts_owner_idx").on(table.owner)],
+);
