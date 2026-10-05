@@ -5,7 +5,12 @@
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
   import { throttle, TYPING_INTERVAL_MS } from "../lib/throttle.ts";
 
-  let { store, status }: { store: ChatStore; status: ConnectionStatus } = $props();
+  let { store, status, focusRequests = 0 }: {
+    store: ChatStore;
+    status: ConnectionStatus;
+    /** Each increase puts the cursor in the message field (a card was answered: its pressed button turned off). */
+    focusRequests?: number;
+  } = $props();
   let text = $state("");
   const ready = $derived(status === "ready");
   const canSend = $derived(ready && !store.busy && !store.loading && text.trim() !== "");
@@ -21,6 +26,13 @@
     if (!reconnected || textarea === null || !document.hasFocus()) return;
     const focused = document.activeElement;
     if (focused === null || focused === document.body || focused === textarea) textarea.focus();
+  });
+
+  let seenFocusRequests = untrack(() => focusRequests);
+  $effect(() => {
+    if (focusRequests === seenFocusRequests) return;
+    seenFocusRequests = focusRequests;
+    textarea?.focus();
   });
 
   function submit(): void {

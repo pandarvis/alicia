@@ -1,6 +1,7 @@
 <script lang="ts">
+  import ShieldQuestionMark from "@lucide/svelte/icons/shield-question-mark";
   import { onDestroy, onMount, untrack } from "svelte";
-  import { fade } from "svelte/transition";
+  import { fade, slide } from "svelte/transition";
   import type { ServerEvent } from "@alicia/protocol";
   import type { StoredSession } from "../../../shared/session.ts";
   import type { AppView } from "../lib/app-view.ts";
@@ -118,6 +119,15 @@
     void store.open(conversationId);
   }
 
+  /** Asks the composer for the focus (see Composer). */
+  let composerFocus = $state(0);
+
+  /** Another window's question waits in a conversation not shown here: open it (once this window's answer ended). */
+  function showAwaiting(conversationId: string): void {
+    view = "chat";
+    store.openWhenIdle(conversationId);
+  }
+
   function toggleSidebar(): void {
     sidebarOpen = !sidebarOpen;
   }
@@ -151,6 +161,14 @@
 
 <div class="app">
   <TitleBar {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar} />
+  {#if store.awaitingElsewhere !== null}
+    {@const awaiting = store.awaitingElsewhere}
+    <div class="awaiting" role="status" transition:slide={{ duration: motion(180) }} data-testid="awaiting-banner">
+      <ShieldQuestionMark size={16} aria-hidden="true" />
+      <span>Alicia attend ta réponse dans une autre conversation.</span>
+      <button type="button" onclick={() => { showAwaiting(awaiting); }} data-testid="awaiting-open">{store.busy ? "Voir après cette réponse" : "Voir la question"}</button>
+    </div>
+  {/if}
   <div class="body">
     {#if sidebarOpen}
       <Sidebar {store} personName={session.person.name} {view} onView={showView} />
@@ -158,8 +176,8 @@
     <main>
       <!-- The chat stays mounted while Souvenirs is shown: its draft and scroll position are kept. -->
       <div class="pane chat" class:hidden={view !== "chat"} inert={view !== "chat"}>
-        <ChatView {store} personName={session.person.name} />
-        <Composer {store} status={shownStatus} />
+        <ChatView {store} personName={session.person.name} onAnswered={() => { composerFocus++; }} />
+        <Composer {store} status={shownStatus} focusRequests={composerFocus} />
       </div>
       {#if view === "memories"}
         <div class="pane" transition:fade={{ duration: motion(180) }}>
@@ -181,6 +199,17 @@
   /* Both views share one cell, so they cross-fade in place. */
   main { flex: 1; min-width: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); background: var(--night); }
   .pane { grid-area: 1 / 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .awaiting {
+    flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 16px;
+    background: var(--night-deep); color: var(--cream); border-bottom: 1px solid var(--amber);
+  }
+  .awaiting :global(svg) { flex: none; color: var(--amber); }
+  .awaiting span { flex: 1; min-width: 0; }
+  .awaiting button {
+    border: 1px solid var(--amber); border-radius: 9px; padding: 4px 12px; background: none; color: var(--amber);
+    font-weight: 700; cursor: pointer; transition: background var(--duration) ease, color var(--duration) ease;
+  }
+  .awaiting button:hover { background: var(--amber); color: var(--night); }
   .chat { transition: opacity var(--duration) ease, visibility 0s; }
   .chat.hidden { opacity: 0; visibility: hidden; transition: opacity var(--duration) ease, visibility 0s linear var(--duration); }
 </style>

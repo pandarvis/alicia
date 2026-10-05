@@ -122,6 +122,14 @@ describe("UpdateController", () => {
     expect(counts.checks).toBe(1);
   });
 
+  test("a downloaded version stays ready when the brain later has nothing published (up to date)", () => {
+    const { controller, emit } = setup();
+    controller.setServer(SERVER);
+    emit({ state: "ready", version: "0.2.0" });
+    emit({ state: "up_to_date" });
+    expect(controller.status).toEqual({ state: "ready", version: "0.2.0" });
+  });
+
   test("signed out, what electron-updater still says is ignored", () => {
     const { controller, emit, statuses } = setup();
     controller.setServer(SERVER);

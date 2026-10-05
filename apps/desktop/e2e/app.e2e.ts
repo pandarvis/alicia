@@ -122,6 +122,8 @@ test("a confirmation card in the chat: Non keeps the memory, Oui forgets it", as
   // While the card waits, no typing dots: the card is what Alicia waits for.
   expect(await page.getByRole("status", { name: "Alicia réfléchit" }).count()).toBe(0);
   await first.getByTestId("confirm-no").click();
+  // The pressed button turns off: the cursor goes back to the message field.
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-testid")), POLL).toBe("composer-input");
   await page.getByTestId("message-assistant").filter({ hasText: "Je le garde." }).waitFor();
   await expect.poll(() => first.getAttribute("data-status"), POLL).toBe("refused");
   await first.getByTestId("confirm-outcome").filter({ hasText: "Alicia ne l'a pas fait" }).waitFor();

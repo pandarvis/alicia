@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test } from "vitest";
 import {
-  type BrainBrowser, BrainDiscovery, brainFromService, guardSocketErrors, LastSeen, staticBrowser,
+  type BrainBrowser, BrainDiscovery, brainFromService, guardSocketErrors, LastSeen, STALE_MS, staticBrowser,
 } from "../src/main/discovery.ts";
 import type { DiscoveredBrain } from "../src/shared/discovery.ts";
 
@@ -49,6 +49,20 @@ function controllableBrowser() {
     up: (brain: DiscoveredBrain) => { up(brain); },
     down: (name: string) => { down(name); },
     counts: () => [starts, stops],
+  };
+}
+
+function manualTimers() {
+  const timers: { run: () => void; ms: number; cancelled: boolean }[] = [];
+  return {
+    schedule: (run: () => void, ms: number) => {
+      const timer = { run, ms, cancelled: false };
+      timers.push(timer);
+      return () => { timer.cancelled = true; };
+    },
+    runAll: () => { for (const timer of timers) if (!timer.cancelled) timer.run(); },
+    delays: () => timers.map((timer) => timer.ms),
+    cancelled: () => timers.map((timer) => timer.cancelled),
   };
 }
 
@@ -119,27 +133,63 @@ describe("BrainDiscovery", () => {
     expect(discovery.brains.map((brain) => brain.url)).toEqual(["http://192.168.1.31:8780", "http://192.168.1.20:8780"]);
   });
 
-  test("looking pauses while the window is hidden, and resumes from an empty list (what was found may be gone)", () => {
+  test("looking pauses while the window is hidden; shown again, the old list stays until the first answer", () => {
     const lists: DiscoveredBrain[][] = [];
     const network = controllableBrowser();
-    const discovery = new BrainDiscovery(network.browser, (brains) => { lists.push(brains); });
+    const timers = manualTimers();
+    const discovery = new BrainDiscovery(network.browser, (brains) => { lists.push(brains); }, timers.schedule);
     discovery.setVisible(false);
     discovery.start();
     expect(network.counts()).toEqual([0, 0]);
     discovery.setVisible(true);
     expect(network.counts()).toEqual([1, 0]);
     network.up(PI);
+    network.up(MAC);
     discovery.setVisible(false);
     expect(network.counts()).toEqual([1, 1]);
-    expect(discovery.brains).toEqual([PI]);
     discovery.setVisible(true);
     expect(network.counts()).toEqual([2, 1]);
-    expect(discovery.brains).toEqual([]);
-    expect(lists).toEqual([[PI], []]);
+    // Never "none found" while the first query runs: the old list stays.
+    expect(discovery.brains).toEqual([MAC, PI]);
+    expect(lists).toEqual([[PI], [MAC, PI]]);
+    // The first answer: the list starts again from what answers now.
+    network.up(PI);
+    expect(discovery.brains).toEqual([PI]);
+    expect(lists.at(-1)).toEqual([PI]);
+    timers.runAll();
+    expect(discovery.brains).toEqual([PI]);
     discovery.stop();
     discovery.setVisible(false);
     discovery.setVisible(true);
     expect(network.counts()).toEqual([2, 2]);
+  });
+
+  test("shown again and nothing answers: the old list goes after the stale delay", () => {
+    const lists: DiscoveredBrain[][] = [];
+    const network = controllableBrowser();
+    const timers = manualTimers();
+    const discovery = new BrainDiscovery(network.browser, (brains) => { lists.push(brains); }, timers.schedule);
+    discovery.start();
+    network.up(PI);
+    discovery.setVisible(false);
+    discovery.setVisible(true);
+    expect(discovery.brains).toEqual([PI]);
+    expect(timers.delays()).toEqual([STALE_MS]);
+    timers.runAll();
+    expect(discovery.brains).toEqual([]);
+    expect(lists).toEqual([[PI], []]);
+  });
+
+  test("hidden again before the stale delay: the delay is cancelled", () => {
+    const network = controllableBrowser();
+    const timers = manualTimers();
+    const discovery = new BrainDiscovery(network.browser, () => undefined, timers.schedule);
+    discovery.start();
+    network.up(PI);
+    discovery.setVisible(false);
+    discovery.setVisible(true);
+    discovery.setVisible(false);
+    expect(timers.cancelled()).toEqual([true]);
   });
 
   test("start is idempotent, stop stops looking, a new search starts empty", () => {

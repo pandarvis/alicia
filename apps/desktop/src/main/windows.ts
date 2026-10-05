@@ -203,6 +203,12 @@ export class WindowManager {
     found?.[1].webContents.send(channel, payload);
   }
 
+  /** Like sendTo, but a window still loading (or reloading) gets it once its page is there. */
+  sendToWhenLoaded(surface: Surface, channel: string, payload?: unknown): void {
+    const found = this.#all().find(([candidate]) => candidate === surface);
+    if (found !== undefined) this.#sendWhenLoaded(found[1], channel, payload);
+  }
+
   /** Sends to every open window. */
   broadcast(channel: string, payload?: unknown): void {
     for (const [, window] of this.#all()) window.webContents.send(channel, payload);

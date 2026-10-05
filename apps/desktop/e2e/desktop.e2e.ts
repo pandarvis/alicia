@@ -452,6 +452,30 @@ test("Spotlight: a question that needs a yes notifies; its card waits in the mai
   await page.getByTestId("message-assistant").filter({ hasText: "C'est oublié." }).waitFor();
 });
 
+test("Spotlight: with the main window on another conversation, a banner leads to the waiting card", async () => {
+  const { brain, memoryId } = await startForgettingBrain();
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await expect.poll(() => windowVisible(app, "main"), POLL).toBe(true);
+
+  await callHook(app, "triggerShortcut");
+  const bar = await surfacePage(app, "spotlight");
+  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+  await bar.getByTestId("spotlight-input").fill("Oublie que je cours");
+  await bar.getByTestId("spotlight-input").press("Enter");
+
+  // The main window shows the welcome, not that conversation: the banner says Alicia waits.
+  const banner = page.getByTestId("awaiting-banner");
+  await banner.waitFor();
+  await banner.getByTestId("awaiting-open").click();
+  const card = page.getByTestId("confirm-card").filter({ hasText: RUNNING });
+  await expect.poll(() => card.getAttribute("data-status"), POLL).toBe("pending");
+  await expect.poll(() => banner.count(), POLL).toBe(0);
+  await card.getByTestId("confirm-yes").click();
+  await expect.poll(() => card.getAttribute("data-status"), POLL).toBe("approved");
+  expect(brain.app.memory.get("kevin", memoryId)).toBeUndefined();
+});
+
 test("Holo: its mini-chat shows its own card; Alicia waits on alert, then goes on", async () => {
   const { brain, memoryId } = await startForgettingBrain();
   const { app, page } = await launch(tempDir("alicia-e2e-profile-"));

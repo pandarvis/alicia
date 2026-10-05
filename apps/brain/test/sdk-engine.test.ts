@@ -347,7 +347,12 @@ describe("buildOptions", () => {
       autoMemoryEnabled: false,
       disableSkillShellExecution: true,
       permissions: { blockReadsOutsideWorkingDirectories: true },
+      syncClaudeAiPlugins: false,
+      syncClaudeAiSkills: false,
+      disableClaudeAiConnectors: true,
     });
+    expect(Object.isFrozen(ISOLATION_SETTINGS)).toBe(true);
+    expect(Object.isFrozen(ISOLATION_SETTINGS.permissions)).toBe(true);
     expect(o.cwd).toBe("/w");
     expect(o.additionalDirectories).toEqual(["/data/attachments/c1"]);
     expect(o.env?.["CLAUDE_CODE_OAUTH_TOKEN"]).toBe("j");
@@ -431,7 +436,8 @@ describe("checkIsolation", () => {
   const init = (overrides: Record<string, unknown> = {}) => ({
     type: "system", subtype: "init", cwd: "/w", apiKeySource: "none",
     tools: ["WebSearch", "WebFetch", "Read", "Skill", "mcp__alicia__echo"],
-    mcp_servers: [{ name: "alicia", status: "connected" }], skills: ["lire-un-document"], plugins: [],
+    mcp_servers: [{ name: "alicia", status: "connected" }], skills: ["lire-un-document"], plugins: [], agents: [],
+    permissionMode: "default",
     ...overrides,
   }) as unknown as SDKSystemMessage;
   const expected = {
@@ -449,12 +455,18 @@ describe("checkIsolation", () => {
     ["an API key while on the subscription", { apiKeySource: "ANTHROPIC_API_KEY" }],
     ["a missing skill", { skills: [] }],
     ["another cwd", { cwd: "/elsewhere" }],
+    ["an unexpected skill", { skills: ["lire-un-document", "update-config"] }],
+    ["an agent", { agents: ["general-purpose"] }],
+    ["another permission mode", { permissionMode: "bypassPermissions" }],
   ])("fails on %s", (_label, overrides) => {
     expect(checkIsolation(init(overrides), expected).ok).toBe(false);
   });
-  test("extra skills are reported, hidden by the skills option", () => {
-    const report = checkIsolation(init({ skills: ["lire-un-document", "update-config"] }), expected);
-    expect(report.ok).toBe(true);
+  test("unexpected skills and agents are named in the report", () => {
+    const report = checkIsolation(init({ skills: ["lire-un-document", "update-config"], agents: ["Explore"] }), expected);
     expect(report.lines.join("\n")).toContain("update-config");
+    expect(report.lines.join("\n")).toContain("Explore");
+  });
+  test("an init without an agent list (older CLI) passes", () => {
+    expect(checkIsolation(init({ agents: undefined }), expected).ok).toBe(true);
   });
 });

@@ -5,7 +5,12 @@
   import ConfirmCard from "./ConfirmCard.svelte";
   import Mascot from "./Mascot.svelte";
 
-  let { store, personName }: { store: ChatStore; personName: string } = $props();
+  let { store, personName, onAnswered }: {
+    store: ChatStore;
+    personName: string;
+    /** A card was answered: the focus goes back to the composer (the pressed button turns off). */
+    onAnswered: () => void;
+  } = $props();
 
   const SUGGESTIONS = [
     "Raconte-moi une anecdote surprenante",
@@ -146,7 +151,7 @@
                 <div transition:fade={{ duration: motion(150) }}><Mascot mood={store.mascot} size={44} /></div>
               {/if}
             </div>
-            <ConfirmCard card={message} onanswer={(approved: boolean) => { store.respond(message.confirmationId, approved); }} />
+            <ConfirmCard card={message} onanswer={(approved: boolean) => { store.respond(message.confirmationId, approved); onAnswered(); }} />
           </div>
         {:else}
           <div class="row {message.role}" data-message-id={message.id} in:fly={{ y: 8, duration: motion(180) }}>

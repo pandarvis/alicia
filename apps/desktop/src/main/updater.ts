@@ -58,6 +58,8 @@ export class UpdateController {
         this.#installing = false;
         if (this.#status.state === "ready") return;
       }
+      // "Nothing published" (reported as up to date) cannot undo a version already downloaded: it still installs.
+      if (status.state === "up_to_date" && this.#status.state === "ready") return;
       this.#set(status);
     });
   }

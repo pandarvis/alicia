@@ -89,11 +89,17 @@ export class ChatStore {
   /** A conversation asked from outside while this window's turn runs: opened when it ends. */
   #openAfterTurn: string | null = null;
   /**
-   * The cards of the open conversation (this window's turns, and the Spotlight's, whose cards wait in the main
-   * window), kept apart from its history: a reloaded history (end of another turn, back online) puts them back
-   * right after their message. Forgotten when the conversation is left.
+   * The cards of the open conversation (this window's turns, and settled cards of other windows' ended turns),
+   * kept apart from its history: a reloaded history (end of another turn, back online) puts them back right after
+   * their message. Forgotten when the conversation is left.
    */
   #cards: ConfirmationCard[] = [];
+  /**
+   * Cards of other windows' turns routed here (the Spotlight's: it closes once it asked), in any conversation.
+   * Never dropped by switching conversation or sending (Alicia waits for the answer): kept until their turn ended
+   * (then they join the open conversation's cards, or are forgotten) or the connection is lost.
+   */
+  #adopted = $state<ConfirmationCard[]>([]);
   #loadToken = 0;
   #refreshToken = 0;
 
@@ -196,6 +202,11 @@ export class ChatStore {
     return true;
   }
 
+  /** A conversation, not the open one, where Alicia waits for an answer to another window's card (null: none). */
+  get awaitingElsewhere(): string | null {
+    return this.#adopted.find((card) => card.status === "pending" && card.conversationId !== this.activeId)?.conversationId ?? null;
+  }
+
   /** Alicia is working and nothing on screen shows it yet: the typing dots. */
   get waiting(): boolean {
     if (!this.busy) return false;
@@ -274,9 +285,10 @@ export class ChatStore {
 
   connectionLost(): void {
     // The brain cancels every confirmation of a lost connection.
-    for (const item of [...this.messages, ...this.#cards]) {
+    for (const item of [...this.messages, ...this.#cards, ...this.#adopted]) {
       if (item.role === "confirmation" && !isSettled(item.status)) item.status = "cancelled";
     }
+    this.#releaseAdopted(() => true);
     if (!this.busy) return;
     this.#endTurn();
     this.notice = "Connexion perdue : la réponse d'Alicia n'est pas arrivée.";
@@ -306,10 +318,10 @@ export class ChatStore {
       this.#setMascot("alert");
       return;
     }
-    // Another window's turn whose card belongs here (the main process only routes such cards to this window).
-    if (this.busy) return;
-    this.#cards.push(card);
-    if (this.activeId === event.conversationId && !this.loading) this.messages.push({ ...card });
+    // Another window's turn whose card belongs here (the main process only routes such cards to this window): kept
+    // even while this window answers, shown at once when its conversation is open.
+    this.#adopted.push(card);
+    if (this.activeId === event.conversationId && !this.loading) placeCard(this.messages, { ...card });
   }
 
   /** The card wherever it shows (its own turn's, or an adopted one open here). */
@@ -322,8 +334,9 @@ export class ChatStore {
   #setCardStatus(confirmationId: string, status: ConfirmationCard["status"]): void {
     const card = this.#card(confirmationId);
     if (card !== undefined) card.status = status;
-    const kept = this.#cards.find((c) => c.confirmationId === confirmationId);
-    if (kept !== undefined) kept.status = status;
+    for (const kept of [...this.#cards, ...this.#adopted]) {
+      if (kept.confirmationId === confirmationId) kept.status = status;
+    }
   }
 
   /** The answer did not reach the brain: the card can be answered again. */
@@ -333,7 +346,21 @@ export class ChatStore {
     this.notice = "Alicia n'est pas joignable pour l'instant.";
   }
 
+  /**
+   * Other windows' settled cards whose turn is over: those of the open conversation stay while it is open (like this
+   * window's own), the others are forgotten.
+   */
+  #releaseAdopted(turnOver: (card: ConfirmationCard) => boolean): void {
+    const released = this.#adopted.filter((card) => isSettled(card.status) && turnOver(card));
+    if (released.length === 0) return;
+    this.#adopted = this.#adopted.filter((card) => !released.includes(card));
+    for (const card of released) {
+      if (card.conversationId === this.activeId) this.#cards.push(card);
+    }
+  }
+
   #otherTurnDone(conversationId: string): void {
+    this.#releaseAdopted((card) => card.conversationId === conversationId);
     void this.refreshConversations();
     if (!this.busy && conversationId === this.activeId) void this.#loadHistory(conversationId);
   }
@@ -355,7 +382,9 @@ export class ChatStore {
       const history = await this.#ports.history(conversationId);
       if (token !== this.#loadToken) return;
       const items = history.map((m): ChatItem => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
-      for (const card of this.#cards.filter((c) => c.conversationId === conversationId)) placeCard(items, { ...card });
+      for (const card of [...this.#cards, ...this.#adopted]) {
+        if (card.conversationId === conversationId) placeCard(items, { ...card });
+      }
       this.messages = items;
     } catch {
       if (token !== this.#loadToken) return;

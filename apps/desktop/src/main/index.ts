@@ -149,7 +149,12 @@ function start(): void {
     schedule,
     onEvent: (event, owner) => {
       // A turn's events only reach the window that asked (another one may be starting its own conversation).
-      for (const surface of eventRecipients(event, owner, windows.surfaces())) windows.sendTo(surface, PUSH.brainEvent, event);
+      for (const surface of eventRecipients(event, owner, windows.surfaces())) {
+        // A card must not be lost while its window (re)loads: Alicia would wait 5 minutes for nothing.
+        const isCard = event.type === "confirm_request" || event.type === "confirm_result";
+        if (isCard) windows.sendToWhenLoaded(surface, PUSH.brainEvent, event);
+        else windows.sendTo(surface, PUSH.brainEvent, event);
+      }
       presence.event(event);
       if (event.type === "confirm_request" && owner !== undefined) notifyConfirmation(event, owner);
     },
@@ -185,7 +190,7 @@ function start(): void {
   // Brains on the local network, looked for only while the pairing screen is shown.
   const discovery = new BrainDiscovery(brainBrowser(), (brains) => {
     windows.sendTo("main", PUSH.discovery, brains);
-  });
+  }, schedule);
   // Until the main window shows (never, when started at login), nothing is looked for.
   discovery.setVisible(false);
   // Updates from the paired brain, in the installed app only. Installing quits through app.quit, hence the

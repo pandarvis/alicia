@@ -65,7 +65,8 @@ export function registerIpc(deps: IpcDependencies): void {
   handle(INVOKE.deviceName, NONE, () => hostname());
   handle(INVOKE.brainStatus, NONE, () => deps.hub.status);
   handle(INVOKE.brainSend, SendMessage, (message, sender) => deps.hub.send(message, surfaceOf(sender)));
-  // A window may only answer the confirmations of its own turn (the hub checks it).
+  // A window may only answer the cards it shows: its own turn's, or a Spotlight turn's for the main window (the
+  // hub checks it).
   handle(INVOKE.brainConfirm, ConfirmMessage, (message, sender) => deps.hub.confirm(message, surfaceOf(sender)));
   handle(INVOKE.presenceGet, NONE, () => deps.presence.mood);
   handle(INVOKE.presenceTyping, NONE, () => {

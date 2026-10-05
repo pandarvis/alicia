@@ -617,4 +617,78 @@ describe("confirmations", () => {
     ]);
   });
 
+  describe("a Spotlight card (another window's turn, shown here) is never lost", () => {
+    const DONE = { type: "done", model: "sonnet", inputTokens: 1, outputTokens: 1, durationMs: 1 } as const;
+
+    test("asked while this window answers elsewhere: kept, announced, answerable once its conversation opens", async () => {
+      const { store, sent, confirmed } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      store.send("Bonjour");
+      store.handle({ type: "conversation", requestId: sent[0]?.requestId ?? "", conversationId: CONV_B });
+      store.handle(ASK);
+      expect(store.messages.some((m) => m.role === "confirmation")).toBe(false);
+      expect(store.awaitingElsewhere).toBe(CONV);
+      // The person asks for it while the answer still streams: opened once it has ended.
+      store.openWhenIdle(CONV);
+      store.handle({ ...DONE, conversationId: CONV_B });
+      await vi.waitFor(() => { expect(store.messages.map((m) => m.role)).toEqual(["user", "confirmation"]); });
+      expect(store.awaitingElsewhere).toBeNull();
+      store.respond(CONFIRMATION, true);
+      expect(confirmed).toEqual([{ type: "confirm", confirmationId: CONFIRMATION, approved: true }]);
+    });
+
+    test("leaving its conversation while it waits (new conversation, another one) keeps it", async () => {
+      const { store } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      await store.open(CONV);
+      store.handle(ASK);
+      store.startNew();
+      expect(store.awaitingElsewhere).toBe(CONV);
+      await store.open(CONV_B);
+      expect(store.awaitingElsewhere).toBe(CONV);
+      await store.open(CONV);
+      expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", confirmationId: CONFIRMATION, status: "pending" });
+      expect(store.awaitingElsewhere).toBeNull();
+    });
+
+    test("typing in its conversation (busy) leaves it there, answerable", async () => {
+      const { store, confirmed } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      await store.open(CONV);
+      store.handle(ASK);
+      store.send("Attends, je réfléchis");
+      expect(store.messages.some((m) => m.role === "confirmation" && m.status === "pending")).toBe(true);
+      store.respond(CONFIRMATION, false);
+      expect(confirmed).toEqual([{ type: "confirm", confirmationId: CONFIRMATION, approved: false }]);
+    });
+
+    test("an answered card is not announced; once its turn ended, it is forgotten when its conversation is left", async () => {
+      const { store } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      await store.open(CONV);
+      store.handle(ASK);
+      store.respond(CONFIRMATION, true);
+      store.startNew();
+      expect(store.awaitingElsewhere).toBeNull();
+      store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "approved" });
+      store.handle({ ...DONE, conversationId: CONV });
+      await store.open(CONV);
+      expect(store.messages.map((m) => m.role)).toEqual(["user"]);
+    });
+
+    test("settled but its turn still running: it comes back with its conversation", async () => {
+      const { store } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      await store.open(CONV);
+      store.handle(ASK);
+      store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "refused" });
+      store.startNew();
+      await store.open(CONV);
+      expect(store.messages.at(-1)).toMatchObject({ role: "confirmation", status: "refused" });
+    });
+
+    test("connection lost: a card waiting elsewhere is cancelled and no longer announced", () => {
+      const { store } = setup();
+      store.handle(ASK);
+      expect(store.awaitingElsewhere).toBe(CONV);
+      store.connectionLost();
+      expect(store.awaitingElsewhere).toBeNull();
+    });
+  });
+
 });

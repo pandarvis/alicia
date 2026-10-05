@@ -83,7 +83,7 @@
     {#each store.messages as message (message.id)}
       {#if message.role === "confirmation"}
         <div class="card-row" in:fade={{ duration: motion(150) }}>
-          <ConfirmCard card={message} compact onanswer={(approved: boolean) => { store.respond(message.confirmationId, approved); }} />
+          <ConfirmCard card={message} compact onanswer={(approved: boolean) => { store.respond(message.confirmationId, approved); input?.focus(); }} />
         </div>
       {:else}
         <p class="bubble {message.role}" data-testid="holo-message-{message.role}" in:fade={{ duration: motion(150) }}>

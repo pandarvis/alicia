@@ -53,14 +53,26 @@ const NOT_AVAILABLE = "Cet outil n'est pas disponible.";
 
 /**
  * Settings the brain forces on the SDK process (flag layer, above any settings file): no CLAUDE.md found
- * around the workspace, no auto-memory, no shell inside skills, no file read outside the working directories.
+ * around the workspace, no auto-memory, no shell inside skills, no file read outside the working directories, nothing
+ * synced from the claude.ai account (skills, plugins, connectors). Frozen: no code path may loosen it.
  */
-export const ISOLATION_SETTINGS: Settings = {
-  claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "**/.claude/rules/**"],
-  autoMemoryEnabled: false,
-  disableSkillShellExecution: true,
-  permissions: { blockReadsOutsideWorkingDirectories: true },
-};
+function isolationSettings(): Readonly<Settings> {
+  const settings: Settings = {
+    claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "**/.claude/rules/**"],
+    autoMemoryEnabled: false,
+    disableSkillShellExecution: true,
+    permissions: { blockReadsOutsideWorkingDirectories: true },
+    syncClaudeAiPlugins: false,
+    syncClaudeAiSkills: false,
+    disableClaudeAiConnectors: true,
+  };
+  // Every level, so neither the excludes nor the permissions can be changed in place.
+  Object.freeze(settings.claudeMdExcludes);
+  Object.freeze(settings.permissions);
+  return Object.freeze(settings);
+}
+
+export const ISOLATION_SETTINGS: Readonly<Settings> = isolationSettings();
 
 /** The backstop: whatever reaches the permission prompt (a hook that failed to decide) is refused. */
 const denyAll: CanUseTool = () => Promise.resolve({ behavior: "deny", message: NOT_AVAILABLE });
@@ -337,10 +349,13 @@ export function checkIsolation(init: SDKSystemMessage, expected: IsolationExpect
   const keySource = expected.mode === "subscription" ? "none" : "ANTHROPIC_API_KEY";
   if (init.apiKeySource !== keySource) problems.push(`Source d'authentification : ${init.apiKeySource} (attendu : ${keySource})`);
   if (!samePath(init.cwd, expected.workspaceDir)) problems.push(`Dossier de travail : ${init.cwd}`);
+  if (init.permissionMode !== "default") problems.push(`Mode de permission : ${init.permissionMode} (attendu : default)`);
   const extra = init.skills.filter((s) => !expected.skills.includes(s));
+  if (extra.length > 0) problems.push(`Skills inattendus : ${extra.join(", ")}`);
+  const agents = init.agents ?? [];
+  if (agents.length > 0) problems.push(`Agents chargés : ${agents.join(", ")}`);
   const lines = [
     ...problems.map((p) => `ÉCHEC  ${p}`),
-    ...(extra.length > 0 ? [`info   Skills découverts mais masqués par l'option skills : ${extra.join(", ")}`] : []),
     problems.length === 0 ? "OK     Isolation conforme." : `${problems.length} problème(s).`,
   ];
   return { ok: problems.length === 0, lines };

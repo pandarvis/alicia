@@ -170,10 +170,24 @@ export class BrainDiscovery {
   #wanted = false;
   #visible = true;
   #stop: (() => void) | null = null;
+  readonly #schedule: (run: () => void, ms: number) => () => void;
+  /**
+   * Shown again after a pause: what was found before stays listed until the first answer (then the list starts again
+   * from what answers now) or, if nothing answers, until the stale delay.
+   */
+  #cancelStale: (() => void) | null = null;
 
-  constructor(browser: BrainBrowser, onChange: (brains: DiscoveredBrain[]) => void) {
+  constructor(
+    browser: BrainBrowser,
+    onChange: (brains: DiscoveredBrain[]) => void,
+    schedule: (run: () => void, ms: number) => () => void = (run, ms) => {
+      const timer = setTimeout(run, ms);
+      return () => { clearTimeout(timer); };
+    },
+  ) {
     this.#browser = browser;
     this.#onChange = onChange;
+    this.#schedule = schedule;
   }
 
   get brains(): DiscoveredBrain[] {
@@ -200,10 +214,13 @@ export class BrainDiscovery {
       this.#halt();
       return;
     }
-    // What was found before the pause may be gone: the list starts again from what answers now.
+    // What was found before the pause may be gone, but "none found" must not flash while the first query runs.
     if (this.#stop === null && this.#found.size > 0) {
-      this.#found.clear();
-      this.#onChange(this.brains);
+      this.#cancelStale = this.#schedule(() => {
+        this.#cancelStale = null;
+        this.#found.clear();
+        this.#onChange(this.brains);
+      }, STALE_MS);
     }
     this.#run();
   }
@@ -212,6 +229,11 @@ export class BrainDiscovery {
     if (this.#stop !== null) return;
     this.#stop = this.#browser.start(
       (brain) => {
+        // The first answer after a pause: the list starts again from what answers now.
+        if (this.#cancelStale !== null) {
+          this.#endStale();
+          this.#found.clear();
+        }
         // Heard again unchanged (every renewal of the mDNS browser): no news.
         const same = this.#found.get(brain.url);
         if (same?.name === brain.name && same.version === brain.version) return;
@@ -232,7 +254,13 @@ export class BrainDiscovery {
   }
 
   #halt(): void {
+    this.#endStale();
     this.#stop?.();
     this.#stop = null;
+  }
+
+  #endStale(): void {
+    this.#cancelStale?.();
+    this.#cancelStale = null;
   }
 }
