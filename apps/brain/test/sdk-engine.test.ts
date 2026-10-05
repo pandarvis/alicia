@@ -327,11 +327,11 @@ const options = () => buildOptions(
 );
 
 describe("buildOptions", () => {
-  test("built-in tools: exactly the allow-list; Read and WebFetch are left to the hook", () => {
+  test("built-in tools: exactly the allow-list; Read, WebFetch and WebSearch are left to the hook", () => {
     const o = options();
     expect(NATIVE_TOOLS).toEqual(["WebSearch", "WebFetch", "Read", "Skill"]);
     expect(o.tools).toEqual(["WebSearch", "WebFetch", "Read", "Skill"]);
-    expect(o.allowedTools).toEqual(["mcp__alicia__echo", "WebSearch"]);
+    expect(o.allowedTools).toEqual(["mcp__alicia__echo"]);
     expect(o.skills).toEqual(["lire-un-document"]);
     expect(o.disallowedTools).toEqual(["ListMcpResourcesTool", "ReadMcpResourceTool"]);
     expect(o.permissionMode).toBe("default");

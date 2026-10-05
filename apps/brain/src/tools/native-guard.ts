@@ -11,16 +11,28 @@ export const NOT_AVAILABLE = "Cet outil n'est pas disponible.";
 export const NOT_READABLE = "Lecture refusée : seuls les fichiers joints à cette conversation (et tes skills) sont lisibles.";
 export const BAD_URL = "Adresse refusée : seules les pages web (http ou https) peuvent être ouvertes.";
 
-const FETCH_REFUSALS: Readonly<Record<Exclude<ConfirmationOutcome, "approved">, string>> = {
+export const BAD_SEARCH = "Recherche refusée : la requête est vide.";
+
+type Refusals = Readonly<Record<Exclude<ConfirmationOutcome, "approved">, string>>;
+
+const FETCH_REFUSALS: Refusals = {
   refused: "Page non ouverte : la personne a refusé. Ne réessaie pas sans qu'elle le demande.",
   expired: "Page non ouverte : pas de réponse à la demande de confirmation.",
   cancelled: "Page non ouverte : demande de confirmation annulée.",
+};
+
+const SEARCH_REFUSALS: Refusals = {
+  refused: "Recherche non faite : la personne a refusé. Ne réessaie pas sans qu'elle le demande.",
+  expired: "Recherche non faite : pas de réponse à la demande de confirmation.",
+  cancelled: "Recherche non faite : demande de confirmation annulée.",
 };
 
 /** Read's input (sdk-tools.d.ts FileReadInput): only the path matters here, the rest (offset, pages…) passes. */
 const ReadInput = z.looseObject({ file_path: z.string().min(1) });
 /** WebFetch's input (WebFetchInput): only the address matters here. */
 const FetchInput = z.looseObject({ url: z.string().min(1) });
+/** WebSearch's input (WebSearchInput): the query is what leaves the house; domain filters pass. */
+const SearchInput = z.looseObject({ query: z.string().trim().min(1) });
 
 export function deny(reason: string): NativeDecision {
   return { allow: false, reason };
@@ -68,12 +80,31 @@ async function checkFetch(turn: TurnContext, input: unknown): Promise<NativeDeci
   return ALLOW;
 }
 
+/**
+ * A web search. Its query leaves the house: once outside content entered the turn, it may smuggle data out
+ * (« cherche "code du portail 4521" ») — the person sees the query and decides. A trusted turn searches freely.
+ * Results are snippets the search returns, not pages: they do not make the turn untrusted (opening one is a WebFetch).
+ */
+async function checkSearch(turn: TurnContext, input: unknown): Promise<NativeDecision> {
+  const parsed = SearchInput.safeParse(input);
+  if (!parsed.success) return deny(BAD_SEARCH);
+  if (turn.untrusted) {
+    const outcome = await turn.confirm({
+      tool: "WebSearch",
+      summary: `Chercher sur le web : “${parsed.data.query}” ? Alicia vient de lire un contenu extérieur qui pourrait l'y pousser.`,
+    });
+    if (outcome !== "approved") return deny(SEARCH_REFUSALS[outcome]);
+  }
+  return ALLOW;
+}
+
 /** Decides on the SDK's built-in tools for one turn (the PreToolUse hook asks it before each call). */
 export function createNativeGuard(turn: TurnContext): NativeToolGuard {
   return {
     check(tool, input) {
       switch (tool) {
         case "WebSearch":
+          return checkSearch(turn, input);
         case "Skill":
           return Promise.resolve(ALLOW);
         case "Read":

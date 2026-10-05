@@ -47,8 +47,6 @@ const MCP_PREFIX = `mcp__${MCP_SERVER}__`;
 
 /** The SDK's built-in tools Alicia may use; everything else (terminal, edits, agents…) does not exist for her. */
 export const NATIVE_TOOLS = ["WebSearch", "WebFetch", "Read", "Skill"] as const;
-/** Built-in tools needing no check. Read and WebFetch stay out: only the hook can allow them. */
-const UNCHECKED_NATIVE = ["WebSearch"];
 const NOT_AVAILABLE = "Cet outil n'est pas disponible.";
 
 /**
@@ -304,8 +302,9 @@ export function buildOptions(request: EngineRequest, params: SdkEngineParams, co
     settings: ISOLATION_SETTINGS,
     strictMcpConfig: true,
     tools: [...NATIVE_TOOLS],
-    // Allowed outright: our MCP tools (confirmations happen in their handler) and WebSearch. The SDK adds Skill(<name>).
-    allowedTools: [...allowedToolNames(request.tools), ...UNCHECKED_NATIVE],
+    // Allowed outright: our MCP tools (confirmations happen in their handler); the SDK adds Skill(<name>). The other
+    // built-in tools stay out: only the hook can allow them (if it fails, canUseTool refuses).
+    allowedTools: allowedToolNames(request.tools),
     skills: [...params.skills],
     disallowedTools: ["ListMcpResourcesTool", "ReadMcpResourceTool"],
     // Explicit: no classifier-driven mode; the hook decides, canUseTool refuses whatever reaches it.

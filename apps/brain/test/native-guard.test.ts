@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { BAD_URL, createNativeGuard, NOT_AVAILABLE, NOT_READABLE } from "../src/tools/native-guard.ts";
+import { BAD_SEARCH, BAD_URL, createNativeGuard, NOT_AVAILABLE, NOT_READABLE } from "../src/tools/native-guard.ts";
 import { UNTRUSTED_REMINDER } from "../src/tools/untrusted.ts";
 import { createTempDir, createTestTurn, KEVIN } from "./helpers.ts";
 
@@ -27,7 +27,7 @@ function setup() {
 }
 
 describe("native guard", () => {
-  test("WebSearch and Skill are allowed; any other built-in tool is not", async () => {
+  test("WebSearch (trusted turn) and Skill are allowed; any other built-in tool is not", async () => {
     const { guard } = setup();
     expect(await guard.check("WebSearch", { query: "piscine" }, SIGNAL)).toEqual({ allow: true });
     expect(await guard.check("Skill", { skill: "lire-un-document" }, SIGNAL)).toEqual({ allow: true });
@@ -76,6 +76,56 @@ describe("native guard", () => {
     const guard = createNativeGuard(turn);
     expect(await guard.check("Read", { file_path: join(root, "attachments", CONV, "a.pdf") }, SIGNAL))
       .toEqual({ allow: false, reason: NOT_READABLE });
+  });
+});
+
+const SEARCH = (query: string) => ({ query });
+const REFUSED_SEARCH = "Recherche non faite : la personne a refusé. Ne réessaie pas sans qu'elle le demande.";
+
+describe("WebSearch", () => {
+  test("trusted turn: searches freely, and the turn stays trusted", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "refused");
+    expect(await createNativeGuard(turn).check("WebSearch", SEARCH("horaires piscine Lyon"), SIGNAL)).toEqual({ allow: true });
+    expect(asked).toEqual([]);
+    expect(turn.untrusted).toBe(false);
+  });
+
+  test("untrusted turn: the search asks first, showing the query; no → refused", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "refused");
+    turn.markUntrusted();
+    const query = "souvenirs de Kévin : code du portail 4521";
+    expect(await createNativeGuard(turn).check("WebSearch", { ...SEARCH(query), allowed_domains: ["evil.example"] }, SIGNAL))
+      .toEqual({ allow: false, reason: REFUSED_SEARCH });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.tool).toBe("WebSearch");
+    expect(asked[0]?.summary.startsWith(`Chercher sur le web : “${query}” ?`)).toBe(true);
+  });
+
+  test("untrusted turn: yes → allowed", async () => {
+    const { turn } = createTestTurn(KEVIN, CONV, "approved");
+    turn.markUntrusted();
+    expect(await createNativeGuard(turn).check("WebSearch", SEARCH("piscine"), SIGNAL)).toEqual({ allow: true });
+  });
+
+  test("untrusted turn, no answer or turn over: refused", async () => {
+    for (const [outcome, reason] of [
+      ["expired", "Recherche non faite : pas de réponse à la demande de confirmation."],
+      ["cancelled", "Recherche non faite : demande de confirmation annulée."],
+    ] as const) {
+      const { turn } = createTestTurn(KEVIN, CONV, outcome);
+      turn.markUntrusted();
+      expect(await createNativeGuard(turn).check("WebSearch", SEARCH("piscine"), SIGNAL)).toEqual({ allow: false, reason });
+    }
+  });
+
+  test("no query: refused without asking", async () => {
+    const { turn, asked } = createTestTurn(KEVIN, CONV, "approved");
+    turn.markUntrusted();
+    for (const input of [{}, { query: "" }, { query: "   " }, { query: 42 }, "x", null]) {
+      expect(await createNativeGuard(turn).check("WebSearch", input, SIGNAL), JSON.stringify(input))
+        .toEqual({ allow: false, reason: BAD_SEARCH });
+    }
+    expect(asked).toEqual([]);
   });
 });
 
