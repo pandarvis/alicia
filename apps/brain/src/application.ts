@@ -94,6 +94,8 @@ export async function buildApplication(
     // dropped after a day (here, and nightly).
     const attachments = new AttachmentStore(db, resolve(config.dataDir, "attachments"), systemClock);
     attachments.purgePending();
+    // Folders of conversations deleted while a file was locked (or during a crash).
+    attachments.sweepOrphanFolders();
     const maintenance = new Maintenance({
       sqlite: db.$client,
       repository,

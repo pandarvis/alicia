@@ -224,10 +224,15 @@ export async function createServer(deps: ServerDependencies): Promise<FastifyIns
     if (!locks.acquire(person.id, id)) return sendError(reply, 409, "busy");
     try {
       deps.repository.delete(id, person.id);
-      // Its attachment rows went with it: their files go too.
-      deps.chat.attachments.removeConversationFiles(id);
     } finally {
       locks.release(person.id, id);
+    }
+    // Its attachment rows went with it: their files go too. A file that cannot be removed now (locked) does not
+    // undo the deletion: the startup sweep removes the folder later.
+    try {
+      deps.chat.attachments.removeConversationFiles(id);
+    } catch (error) {
+      request.log.error({ err: error }, "attachment files left behind");
     }
     return reply.code(204).send();
   });

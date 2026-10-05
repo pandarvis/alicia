@@ -38,8 +38,12 @@ describe("cleanName", () => {
 
 describe("cleanName keeps what the person sees", () => {
   test("emoji sequences (ZWJ, variation selectors) survive; direction tricks do not", () => {
-    expect(cleanName("👨‍👩‍👧 famille ❤️.pdf")).toBe("👨‍👩‍👧 famille ❤️.pdf");
-    expect(cleanName("fac‎ture⁦gpj.exe⁩؜‏.pdf")).toBe("facturegpj.exe.pdf");
+    expect(cleanName("\u{1F468}\u200D\u{1F469}\u200D\u{1F467} famille \u2764\uFE0F.pdf")).toBe("👨‍👩‍👧 famille ❤️.pdf");
+    expect(cleanName("fac\u200eture\u2066gpj.exe\u2069\u061c\u200f.pdf")).toBe("facturegpj.exe.pdf");
+  });
+
+  test("line and paragraph separators become spaces: a name stays on one line", () => {
+    expect(cleanName("a b c\u0085d.pdf")).toBe("a b c d.pdf");
   });
 
   test("a long name is cut between graphemes, never inside one, and stays well-formed", () => {
@@ -145,6 +149,25 @@ describe("AttachmentStore", () => {
     expect(store.pathOf("kevin", c.conversationId, a.id)).toBeUndefined();
     store.removeConversationFiles(c.conversationId);
     expect(existsSync(join(root, c.conversationId))).toBe(false);
+  });
+
+  test("the startup sweep removes conversation folders whose conversation is gone, and nothing else", async () => {
+    const { store, conversation, repository, root } = setup();
+    const kept = conversation();
+    const gone = conversation();
+    for (const c of [kept, gone]) {
+      const a = stored(store, "kevin", "a.pdf");
+      expect((await store.claim("kevin", [a.id], c.conversationId, c.messageId)).status).toBe("claimed");
+    }
+    repository.delete(gone.conversationId, "kevin");
+    const pendingUpload = stored(store, "kevin", "b.pdf");
+    mkdirSync(join(root, "pas-un-uuid"));
+    expect(store.sweepOrphanFolders()).toBe(1);
+    expect(existsSync(join(root, gone.conversationId))).toBe(false);
+    expect(existsSync(join(root, kept.conversationId))).toBe(true);
+    expect(existsSync(join(root, "pending", `${pendingUpload.id}.pdf`))).toBe(true);
+    expect(existsSync(join(root, "pas-un-uuid"))).toBe(true);
+    expect(new AttachmentStore(createTestDb(), join(root, "absent"), createTestClock().clock).sweepOrphanFolders()).toBe(0);
   });
 
   test("a relative root still gives absolute folders (they go to Alicia and to the SDK)", () => {

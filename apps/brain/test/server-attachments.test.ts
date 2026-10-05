@@ -101,7 +101,35 @@ describe("POST /attachments", () => {
       headers: { "content-type": "application/octet-stream", authorization: `Bearer ${ctx.kevin}`, "x-attachment-name": "%E0%A4%A.pdf" },
     });
     expect(bad.statusCode).toBe(400);
-    expect((await upload(ctx, ctx.kevin, `${"a".repeat(1000)}.pdf`, PDF_BYTES)).statusCode).toBe(400);
+    expect((await upload(ctx, ctx.kevin, `${"a".repeat(5000)}.pdf`, PDF_BYTES)).statusCode).toBe(400);
+    // A long but sane name is kept, cut to 200 characters.
+    const long = await upload(ctx, ctx.kevin, `${"é".repeat(600)}.pdf`, PDF_BYTES);
+    expect(long.statusCode).toBe(201);
+    expect(AttachmentSummary.parse(long.json()).name).toHaveLength(200);
+  });
+
+  test("a missing name or a refused type is answered before the body is read (not 413 for 26 MB)", async () => {
+    const ctx = await createContext();
+    const big = new Uint8Array(26 * 1024 * 1024);
+    const noName = await upload(ctx, ctx.kevin, undefined, big);
+    expect(noName.statusCode).toBe(400);
+    const exe = await upload(ctx, ctx.kevin, "virus.exe", big);
+    expect(exe.statusCode).toBe(415);
+    expect(codeOf(exe.json())).toBe("unsupported");
+  });
+
+  test("the app's preflight (Origin null, custom headers) is answered", async () => {
+    const ctx = await createContext();
+    const res = await ctx.app.inject({
+      method: "OPTIONS", url: "/attachments",
+      headers: {
+        origin: "null", "access-control-request-method": "POST",
+        "access-control-request-headers": "authorization,content-type,x-attachment-name",
+      },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("null");
+    expect(String(res.headers["access-control-allow-headers"])).toContain("x-attachment-name");
   });
 
   test("a failure while storing is the usual typed 500, without details", async () => {
@@ -168,5 +196,16 @@ describe("history and deletion", () => {
     expect(existsSync(dir)).toBe(true);
     expect((await ctx.app.inject({ method: "DELETE", url: `/conversations/${c.id}`, headers })).statusCode).toBe(204);
     expect(existsSync(dir)).toBe(false);
+  });
+
+  test("files that cannot be removed now do not fail the deletion (the startup sweep gets them)", async () => {
+    const ctx = await createContext();
+    const c = ctx.deps.repository.create("kevin", "Factures");
+    vi.spyOn(ctx.deps.attachments, "removeConversationFiles").mockImplementation(() => {
+      throw new Error("EBUSY");
+    });
+    const res = await ctx.app.inject({ method: "DELETE", url: `/conversations/${c.id}`, headers: { authorization: `Bearer ${ctx.kevin}` } });
+    expect(res.statusCode).toBe(204);
+    expect(ctx.deps.repository.get(c.id, "kevin")).toBeUndefined();
   });
 });

@@ -689,6 +689,27 @@ describe("confirmations", () => {
       store.connectionLost();
       expect(store.awaitingElsewhere).toBeNull();
     });
+
+    test("its turn fails instead of ending: the settled card is released all the same", async () => {
+      const { store } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      store.handle(ASK);
+      store.handle({ type: "confirm_result", conversationId: CONV, confirmationId: CONFIRMATION, outcome: "cancelled" });
+      store.handle({ type: "error", requestId: "5d1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192", conversationId: CONV, code: "engine", message: "Raté." });
+      expect(store.notice).toBeNull();
+      await store.open(CONV);
+      expect(store.messages.map((m) => m.role)).toEqual(["user"]);
+    });
+
+    test("awaitingAnywhere also names a waiting card of the open conversation (for a screen other than the chat)", async () => {
+      const { store } = setup([msg(ASKED, "Oublie les lasagnes")]);
+      expect(store.awaitingAnywhere).toBeNull();
+      await store.open(CONV);
+      store.handle(ASK);
+      expect(store.awaitingElsewhere).toBeNull();
+      expect(store.awaitingAnywhere).toBe(CONV);
+      store.respond(CONFIRMATION, true);
+      expect(store.awaitingAnywhere).toBeNull();
+    });
   });
 
 });

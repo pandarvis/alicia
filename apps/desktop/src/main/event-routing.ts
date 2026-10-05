@@ -35,11 +35,18 @@ export function eventRecipients(event: ServerEvent, owner: Surface | undefined, 
       const surface = confirmationSurface(owner);
       return open.includes(surface) ? [surface] : [];
     }
+    case "error": {
+      if (owner === undefined) return [];
+      // A turn that fails in a conversation is over: the window showing its cards (the main window for the
+      // Spotlight) hears of it too, so they are released.
+      const cards = confirmationSurface(owner);
+      const to = cards !== owner && event.conversationId !== undefined ? [owner, cards] : [owner];
+      return to.filter((surface) => open.includes(surface));
+    }
     case "conversation":
     case "text_delta":
     case "tool_call":
     case "tool_result":
-    case "error":
       return owner !== undefined && open.includes(owner) ? [owner] : [];
   }
 }

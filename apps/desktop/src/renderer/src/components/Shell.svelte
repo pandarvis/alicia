@@ -122,10 +122,16 @@
   /** Asks the composer for the focus (see Composer). */
   let composerFocus = $state(0);
 
-  /** Another window's question waits in a conversation not shown here: open it (once this window's answer ended). */
+  /**
+   * Another window's question waits where the person cannot see it: in another conversation, or in this one while
+   * Souvenirs or Réglages is shown.
+   */
+  const awaiting = $derived(store.awaitingElsewhere ?? (view !== "chat" ? store.awaitingAnywhere : null));
+
+  /** Shows that question: back to the chat, on its conversation (opened once this window's answer ended). */
   function showAwaiting(conversationId: string): void {
     view = "chat";
-    store.openWhenIdle(conversationId);
+    if (conversationId !== store.activeId) store.openWhenIdle(conversationId);
   }
 
   function toggleSidebar(): void {
@@ -161,12 +167,13 @@
 
 <div class="app">
   <TitleBar {title} personName={session.person.name} status={shownStatus} {sidebarOpen} onToggleSidebar={toggleSidebar} />
-  {#if store.awaitingElsewhere !== null}
-    {@const awaiting = store.awaitingElsewhere}
+  {#if awaiting !== null}
+    {@const where = awaiting}
+    {@const here = where === store.activeId}
     <div class="awaiting" role="status" transition:slide={{ duration: motion(180) }} data-testid="awaiting-banner">
       <ShieldQuestionMark size={16} aria-hidden="true" />
-      <span>Alicia attend ta réponse dans une autre conversation.</span>
-      <button type="button" onclick={() => { showAwaiting(awaiting); }} data-testid="awaiting-open">{store.busy ? "Voir après cette réponse" : "Voir la question"}</button>
+      <span>Alicia attend ta réponse {here ? "dans cette conversation" : "dans une autre conversation"}.</span>
+      <button type="button" onclick={() => { showAwaiting(where); }} data-testid="awaiting-open">{store.busy && !here ? "Voir après cette réponse" : "Voir la question"}</button>
     </div>
   {/if}
   <div class="body">

@@ -67,4 +67,13 @@ describe("confirmationSurface", () => {
     }
     expect(eventRecipients(TURN_EVENTS[1] ?? DONE, "spotlight", OPEN)).toEqual(["spotlight"]);
   });
+
+  test("a Spotlight turn that fails in a conversation also tells the main window (its cards there are over)", () => {
+    const failed: ServerEvent = { type: "error", requestId: REQUEST, conversationId: CONV, code: "engine", message: "Raté." };
+    expect(eventRecipients(failed, "spotlight", OPEN)).toEqual(["spotlight", "main"]);
+    expect(eventRecipients(failed, "spotlight", ["main"])).toEqual(["main"]);
+    expect(eventRecipients(failed, "holo", OPEN)).toEqual(["holo"]);
+    // Refused before any conversation: nothing waits in the main window.
+    expect(eventRecipients({ type: "error", requestId: REQUEST, code: "busy", message: "Occupée." }, "spotlight", OPEN)).toEqual(["spotlight"]);
+  });
 });

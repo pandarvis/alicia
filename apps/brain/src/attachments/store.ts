@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type AttachmentRefusalReason, type AttachmentSummary, checkAttachment } from "@alicia/protocol";
 import { and, asc, count, eq, gte, inArray, isNull, lt, sql, sum, TransactionRollbackError } from "drizzle-orm";
 import type { Clock } from "../clock.ts";
 import type { Db } from "../db/open.ts";
-import { attachments } from "../db/schema.ts";
+import { attachments, conversations } from "../db/schema.ts";
 import { contentMatches } from "./sniff.ts";
 
 export type Attachment = typeof attachments.$inferSelect;
@@ -35,7 +35,9 @@ const RETRIABLE = new Set(["EBUSY", "EPERM", "EACCES"]);
  * marks, zero-width spaces…) but the joiners (ZWNJ, ZWJ: emoji and some scripts need them) and the emoji tag
  * characters (subdivision flags).
  */
-const DISGUISE = /[[\p{Cc}\p{Cf}]--[‌‍\u{E0020}-\u{E007F}]]/gv;
+const DISGUISE = /[[\p{Cc}\p{Cf}]--[\u200C\u200D\u{E0020}-\u{E007F}]]/gv;
+/** Line and paragraph separators: a name stays on one line. */
+const LINE_BREAKS = /[\u0085\p{Zl}\p{Zp}]/gu;
 const graphemes = new Intl.Segmenter("fr", { granularity: "grapheme" });
 
 /**
@@ -44,7 +46,7 @@ const graphemes = new Intl.Segmenter("fr", { granularity: "grapheme" });
  */
 export function cleanName(raw: string): string {
   const base = raw.toWellFormed().split(/[\\/]/u).at(-1) ?? "";
-  const clean = base.normalize("NFC").replace(DISGUISE, "").trim();
+  const clean = base.normalize("NFC").replace(LINE_BREAKS, " ").replace(DISGUISE, "").trim();
   if (clean.length <= NAME_MAX) return clean;
   const dot = clean.lastIndexOf(".");
   const extension = dot > 0 ? clean.slice(dot) : "";
@@ -235,6 +237,23 @@ export class AttachmentStore {
   /** Files of a deleted conversation (its rows went with it). */
   removeConversationFiles(conversationId: string): void {
     rmSync(this.dirOf(conversationId), { recursive: true, force: true });
+  }
+
+  /**
+   * Conversation folders left behind by a deletion whose file removal failed (crash, locked file): removed at
+   * startup. Only UUID-named folders without a conversation row; returns how many.
+   */
+  sweepOrphanFolders(): number {
+    if (!existsSync(this.#root)) return 0;
+    let removed = 0;
+    for (const entry of readdirSync(this.#root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !UUID.test(entry.name)) continue;
+      const row = this.#db.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, entry.name)).get();
+      if (row !== undefined) continue;
+      rmSync(join(this.#root, entry.name), { recursive: true, force: true });
+      removed++;
+    }
+    return removed;
   }
 
   /** Pending uploads older than a day: rows and files. Returns how many. */

@@ -1,6 +1,8 @@
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_NAME_HEADER, type AttachmentRefusalReason, type Person } from "@alicia/protocol";
+import {
+  ATTACHMENT_MAX_BYTES, ATTACHMENT_NAME_HEADER, type AttachmentRefusalReason, attachmentTypeOf, type Person,
+} from "@alicia/protocol";
 import type { FastifyInstance, FastifyPluginCallback, FastifyRequest } from "fastify";
-import { type AttachmentStore, toSummary } from "../attachments/store.ts";
+import { type AttachmentStore, cleanName, toSummary } from "../attachments/store.ts";
 import { sendError } from "./http-errors.ts";
 
 export interface AttachmentRouteDeps {
@@ -12,8 +14,8 @@ const RAW = "application/octet-stream";
 const REFUSAL_STATUS: Readonly<Record<AttachmentRefusalReason, number>> = {
   unsupported: 415, too_large: 413, empty: 400, too_many: 429,
 };
-/** Percent-encoded, a 200-character name (the most the store keeps) stays well under this. */
-const NAME_HEADER_MAX = 1000;
+/** Percent-encoded (up to 9 characters per one): a long name is accepted, then cut to 200 by the store. */
+const NAME_HEADER_MAX = 4096;
 
 /** The file name sent by the app (percent-encoded UTF-8), or undefined. Only ever used for display. */
 function nameOf(header: string | string[] | undefined): string | undefined {
@@ -54,25 +56,35 @@ export function attachmentRoutes(deps: AttachmentRouteDeps): FastifyPluginCallba
       throw error;
     });
 
+    // Who sent it, found once per upload (before the body is read).
+    const senders = new WeakMap<FastifyRequest, Person>();
+
     scope.post("/attachments", {
       bodyLimit: ATTACHMENT_MAX_BYTES,
-      // Checked before the body is read: an unknown device cannot push 25 MB, nor anything but raw bytes.
+      // Everything that can be checked without the body is, before it is read: an unknown device, a missing name or
+      // a refused type never pushes 25 MB.
       onRequest: (request, reply, next) => {
-        if (deps.personOf(request) === undefined) {
+        const person = deps.personOf(request);
+        if (person === undefined) {
           void sendError(reply, 401, "unauthenticated");
           return;
         }
-        if (mediaTypeOf(request.headers["content-type"]) !== RAW) {
+        const name = nameOf(request.headers[ATTACHMENT_NAME_HEADER]);
+        if (name === undefined) {
+          void sendError(reply, 400, "invalid_request");
+          return;
+        }
+        if (mediaTypeOf(request.headers["content-type"]) !== RAW || attachmentTypeOf(cleanName(name)) === undefined) {
           void sendError(reply, 415, "unsupported");
           return;
         }
+        senders.set(request, person);
         next();
       },
     }, (request, reply) => {
-      const person = deps.personOf(request);
-      if (person === undefined) return sendError(reply, 401, "unauthenticated");
+      const person = senders.get(request);
       const name = nameOf(request.headers[ATTACHMENT_NAME_HEADER]);
-      if (name === undefined) return sendError(reply, 400, "invalid_request");
+      if (person === undefined || name === undefined) return sendError(reply, 400, "invalid_request");
       // An empty body may skip the parser (no buffer): the store then refuses it as empty.
       const bytes = request.body instanceof Buffer ? request.body : Buffer.alloc(0);
       deps.attachments.purgePending();

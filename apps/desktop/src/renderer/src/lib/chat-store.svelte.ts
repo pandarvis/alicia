@@ -207,6 +207,11 @@ export class ChatStore {
     return this.#adopted.find((card) => card.status === "pending" && card.conversationId !== this.activeId)?.conversationId ?? null;
   }
 
+  /** A conversation, open or not, where Alicia waits for an answer to another window's card (null: none). */
+  get awaitingAnywhere(): string | null {
+    return this.#adopted.find((card) => card.status === "pending")?.conversationId ?? null;
+  }
+
   /** Alicia is working and nothing on screen shows it yet: the typing dots. */
   get waiting(): boolean {
     if (!this.busy) return false;
@@ -275,7 +280,11 @@ export class ChatStore {
         void this.refreshConversations();
         return;
       case "error":
-        if (event.requestId !== undefined && event.requestId !== this.#pendingRequestId) return;
+        if (event.requestId !== undefined && event.requestId !== this.#pendingRequestId) {
+          // Another window's turn failed in a conversation (routed here for its cards): over, like a `done`.
+          if (event.conversationId !== undefined) this.#otherTurnDone(event.conversationId);
+          return;
+        }
         this.#endTurn();
         this.notice = event.message;
         this.#setMascot(MASCOT_ON_ERROR[event.code] ?? "alert", event.code === "busy" ? ALERT_MS : undefined);

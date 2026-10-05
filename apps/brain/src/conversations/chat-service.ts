@@ -1,7 +1,7 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { chooseModel } from "../agent/model.ts";
 import { buildSystemPrompt, timestamp } from "../agent/system-prompt.ts";
-import { describeAttachments } from "../attachments/prompt.ts";
+import { attachmentNote, describeAttachments } from "../attachments/prompt.ts";
 import type { AttachmentStore, ClaimResult } from "../attachments/store.ts";
 import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
@@ -48,8 +48,9 @@ const ATTACHMENT_GONE = "Pièce jointe introuvable ou expirée : joins-la à nou
 const ATTACHMENT_FAILED = "Impossible de joindre les fichiers pour l'instant : réessaie.";
 const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
 
-function resumeLine(m: Message): string {
-  return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${truncate(m.text, RESUME_MESSAGE_CHARS)}`;
+function resumeLine(m: Message, note: string | undefined): string {
+  const text = truncate(m.text, RESUME_MESSAGE_CHARS);
+  return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${note === undefined ? text : `${text} ${note}`}`;
 }
 
 function toEngineError(cause: unknown): EngineError {
@@ -63,13 +64,18 @@ export function titleFrom(text: string): string {
 /**
  * Primes a new SDK session when the previous one is lost or unreadable (spec, « Erreurs »): the last
  * exchanges stored in the database, each cut to 1,000 characters, the most recent kept first. The context
- * (header, exchanges and line breaks) never exceeds 8,000 characters; the new message follows it, whole.
+ * (header, exchanges and line breaks) never exceeds 8,000 characters; the new message follows it, whole. `notes`
+ * (by message id) follow their message: its attachments, so the new session still knows how to reach them.
  */
-export function buildResumePrompt(history: readonly Message[], prompt: string): string {
+export function buildResumePrompt(
+  history: readonly Message[],
+  prompt: string,
+  notes: ReadonlyMap<string, string> = new Map(),
+): string {
   const lines: string[] = [];
   let total = RESUME_HEADER.length;
   for (const m of [...history].reverse()) {
-    const line = resumeLine(m);
+    const line = resumeLine(m, notes.get(m.id));
     // + 1: the line break before each exchange.
     if (total + 1 + line.length > RESUME_TOTAL_CHARS) break;
     lines.unshift(line);
@@ -164,8 +170,11 @@ export async function* handleSend(
   let outputTokens = 0;
   const loggedTools: LoggedToolCall[] = [];
   let sessionId = conversation.sessionId ?? undefined;
+  // What a resumed context recalls of the earlier messages' attachments.
+  const dir = deps.attachments.dirOf(conversationId);
+  const notes = new Map([...deps.attachments.byMessage(conversationId)].map(([id, list]) => [id, attachmentNote(list, dir)]));
   // Existing conversation without a session (lost): re-inject the last exchanges from the first attempt.
-  let currentPrompt = sessionId === undefined ? buildResumePrompt(history, prompt) : prompt;
+  let currentPrompt = sessionId === undefined ? buildResumePrompt(history, prompt, notes) : prompt;
   let error: EngineError | undefined;
 
   try {
@@ -248,7 +257,7 @@ export async function* handleSend(
       if (!unreadableSession || signal.aborted) break;
       sessionId = undefined;
       deps.repository.setSession(conversationId, null);
-      currentPrompt = buildResumePrompt(history, prompt);
+      currentPrompt = buildResumePrompt(history, prompt, notes);
     }
   } finally {
     turnScope.abort();

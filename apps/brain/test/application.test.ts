@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import Database from "better-sqlite3";
@@ -80,12 +80,16 @@ test("starts with a relative dataDir (as in alicia.config.example.yaml), serving
   const relativeDir = relative(process.cwd(), dir);
   // The temp folder on another drive than the repository (Windows): no relative path leads there.
   if (isAbsolute(relativeDir)) context.skip("the temp folder is on another drive");
+  const ORPHAN = "7a2d4e6f-1b3c-4d5e-8f90-a1b2c3d4e5f6";
+  mkdirSync(join(dir, "attachments", ORPHAN), { recursive: true });
   const config = parseConfig(`
 dataDir: ${JSON.stringify(relativeDir)}
 people: [{ id: kevin, name: Kévin }]
 engine: { mode: subscription }
 `);
   const app = await buildApplication(config, new FakeEngine(() => []), { embedder: new FakeEmbedder() });
+  // A folder left by a deletion that could not remove it is swept at startup.
+  expect(existsSync(join(dir, "attachments", ORPHAN))).toBe(false);
   // The attachments' folder is absolute too: its paths go to Alicia and to the SDK (whose cwd is the workspace).
   const conversationDir = app.attachments.dirOf("3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192");
   expect(isAbsolute(conversationDir)).toBe(true);
