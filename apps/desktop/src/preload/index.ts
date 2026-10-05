@@ -22,6 +22,16 @@ function subscribe<T>(channel: string, schema: z.ZodType<T>, listener: (value: T
   };
 }
 
+/**
+ * The window's current showing, as the main process numbered it (PUSH.shown): hideSelf closes that one only, so a
+ * request that crossed a new showing is ignored.
+ */
+let showing = 0;
+ipcRenderer.on(PUSH.shown, (_event: IpcRendererEvent, raw: unknown) => {
+  const parsed = z.number().int().nonnegative().safeParse(raw);
+  if (parsed.success) showing = parsed.data;
+});
+
 /** Calls the main process and validates its answer (throws when it does not match). */
 async function call<T>(schema: z.ZodType<T>, channel: string, ...args: unknown[]): Promise<T> {
   const raw: unknown = await ipcRenderer.invoke(channel, ...args);
@@ -77,13 +87,13 @@ const bridge: AliciaBridge = {
     onOpenConversation: (listener) => subscribe(PUSH.openConversation, z.uuid(), listener),
   },
   surface: {
-    onShown: (listener) => subscribe(PUSH.shown, z.undefined(), () => {
+    onShown: (listener) => subscribe(PUSH.shown, z.number().int().nonnegative(), () => {
       listener();
     }),
     onHideRequest: (listener) => subscribe(PUSH.hideRequest, z.undefined(), () => {
       listener();
     }),
-    hideSelf: () => call(z.undefined(), INVOKE.hideSelf),
+    hideSelf: () => call(z.undefined(), INVOKE.hideSelf, showing),
   },
   holo: {
     dragStart: () => call(z.undefined(), INVOKE.holoDragStart),

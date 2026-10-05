@@ -82,8 +82,8 @@ export function registerIpc(deps: IpcDependencies): void {
     if (surfaceOf(sender) !== "holo") throw new Error("Holo only");
   }
 
-  handle(INVOKE.hideSelf, NONE, (_none, sender) => {
-    deps.windows.hideSelf(sender);
+  handle(INVOKE.hideSelf, z.number().int().nonnegative(), (showing, sender) => {
+    deps.windows.hideSelf(sender, showing);
   });
   handle(INVOKE.holoDragStart, NONE, (_none, sender) => {
     holoOnly(sender);

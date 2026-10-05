@@ -276,14 +276,21 @@ test("Spotlight: Escape closes the bar without sending, and it opens again empty
   // The bar never needs the device token: it only knows whether Alicia is paired.
   await expect(bar.evaluate(() => window.alicia.getSession())).rejects.toThrow();
   expect(await bar.evaluate(() => window.alicia.paired())).toBe(true);
-  await bar.getByTestId("spotlight-input").fill("Rien du tout");
-  await bar.getByTestId("spotlight-input").press("Escape");
-  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(false);
-  expect(brain.engine.requests).toHaveLength(0);
+  // Several times, the shortcut pressed again as soon as the bar is gone: a late request to hide the previous
+  // showing must never hide the new one.
+  for (const round of [1, 2, 3]) {
+    await bar.getByTestId("spotlight-input").fill(`Rien du tout ${round}`);
+    await bar.getByTestId("spotlight-input").press("Escape");
+    await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(false);
+    expect(brain.engine.requests).toHaveLength(0);
 
-  await callHook(app, "triggerShortcut");
-  await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
-  await expect.poll(() => bar.getByTestId("spotlight-input").inputValue(), POLL).toBe("");
+    await callHook(app, "triggerShortcut");
+    await expect.poll(() => windowVisible(app, "spotlight"), POLL).toBe(true);
+    await expect.poll(() => bar.getByTestId("spotlight-input").inputValue(), POLL).toBe("");
+    // Still there a moment later (a stale hide would have closed it by now).
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await windowVisible(app, "spotlight")).toBe(true);
+  }
 });
 
 test("Réglages: shortcut, launch at startup and Holo are kept after a restart; sign out lives here", async () => {

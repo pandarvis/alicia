@@ -94,6 +94,8 @@ export class WindowManager {
   #dragCursor: Point | null = null;
   /** The last view the Holo page was given (JSON), to push it again only when it changes. */
   #holoView: string | null = null;
+  /** Each floating window's current showing (counted up at every show); its page closes that one only. */
+  readonly #showings = new Map<BrowserWindow, number>();
   /** Windows asked to fade out, with their fallback timer. */
   readonly #hiding = new Map<BrowserWindow, ReturnType<typeof setTimeout>>();
 
@@ -223,7 +225,7 @@ export class WindowManager {
     window.setBounds(spotlightBounds(nearestWorkArea(this.#options.cursor(), areas, primary)));
     window.show();
     window.focus();
-    this.#sendWhenLoaded(window, PUSH.shown);
+    this.#sendWhenLoaded(window, PUSH.shown, this.#nextShowing(window));
   }
 
   /** The remembered place of the Holo (null: default corner). */
@@ -242,14 +244,14 @@ export class WindowManager {
     const wasHiding = this.#cancelHide(window);
     if (window.isVisible()) {
       // Shown again while fading out: fade back in.
-      if (wasHiding) window.webContents.send(PUSH.shown);
+      if (wasHiding) window.webContents.send(PUSH.shown, this.#nextShowing(window));
       return;
     }
     this.#expanded = false;
     this.#layoutHolo();
     // Never steals the focus from what the person is doing.
     window.showInactive();
-    this.#sendWhenLoaded(window, PUSH.shown);
+    this.#sendWhenLoaded(window, PUSH.shown, this.#nextShowing(window));
   }
 
   /** Shows the Holo with its mini-chat open (a notification's click: Alicia waits there for an answer). */
@@ -299,10 +301,13 @@ export class WindowManager {
    * The page finished its exit animation (the Spotlight bar also closes itself, after Enter or Escape). The Holo
    * only hides when the main process asked for it.
    */
-  hideSelf(contents: WebContents): void {
+  hideSelf(contents: WebContents, showing: number): void {
     const found = this.#all().find(([surface, window]) => surface !== "main" && window.webContents === contents);
     if (found === undefined) return;
     const [surface, window] = found;
+    // The page closed an earlier showing: the window was shown again before its request arrived (the shortcut
+    // pressed right after Escape). It stays.
+    if (showing !== (this.#showings.get(window) ?? 0)) return;
     if (surface === "holo" && !this.#hiding.has(window)) return;
     this.#finishHide(window);
   }
@@ -442,15 +447,22 @@ export class WindowManager {
     }
   }
 
+  /** A new showing of a floating window: its number goes to the page with PUSH.shown. */
+  #nextShowing(window: BrowserWindow): number {
+    const showing = (this.#showings.get(window) ?? 0) + 1;
+    this.#showings.set(window, showing);
+    return showing;
+  }
+
   /** Sends once the page is loaded (a push sent earlier would be lost). */
-  #sendWhenLoaded(window: BrowserWindow, channel: string): void {
+  #sendWhenLoaded(window: BrowserWindow, channel: string, payload?: unknown): void {
     const contents = window.webContents;
     if (contents.isLoading()) {
       contents.once("did-finish-load", () => {
-        contents.send(channel);
+        contents.send(channel, payload);
       });
     } else {
-      contents.send(channel);
+      contents.send(channel, payload);
     }
   }
 

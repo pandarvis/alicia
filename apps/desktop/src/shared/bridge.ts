@@ -47,7 +47,10 @@ export interface AppBridge {
 export interface SurfaceBridge {
   /** The window was just shown: play the entrance. */
   onShown(listener: () => void): Unsubscribe;
-  /** The main process wants this window hidden: play the exit, then call hideSelf. */
+  /**
+   * The main process wants this window hidden: play the exit, then call hideSelf. hideSelf only hides the showing
+   * the page last heard of: shown again meanwhile, the window stays.
+   */
   onHideRequest(listener: () => void): Unsubscribe;
   hideSelf(): Promise<void>;
 }
