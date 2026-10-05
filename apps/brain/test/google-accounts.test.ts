@@ -89,6 +89,12 @@ describe("google accounts store", () => {
     expect(store.list("elodie")).toEqual([]);
   });
 
+  test("an empty refresh token is refused, nothing stored", () => {
+    const { store, connect } = setup();
+    expect(() => connect("kevin", "personal", "kevin@example.com", "")).toThrow();
+    expect(store.list("kevin")).toEqual([]);
+  });
+
   test("« common » is never a person connecting an account of their own", () => {
     const { store, connect } = setup();
     expect(() => connect("common", "personal", "x@example.com")).toThrow();

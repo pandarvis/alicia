@@ -117,6 +117,7 @@ export class GoogleAccountStore {
    */
   connect(input: ConnectInput): ConnectResult {
     if (input.personId === "" || input.personId === COMMON) throw new Error("A Google account is connected by a person");
+    if (input.refreshToken === "") throw new Error("A Google account needs a refresh token");
     const owner = input.owner === "common" ? COMMON : input.personId;
     const email = normalizeEmail(input.email);
     const scopes = [...input.scopes].sort().join(" ");

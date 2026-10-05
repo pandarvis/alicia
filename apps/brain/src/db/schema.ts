@@ -1,4 +1,4 @@
-import { ATTACHMENT_KINDS, MEMORY_KINDS } from "@alicia/protocol";
+import { ATTACHMENT_KINDS, GOOGLE_ACCOUNT_STATUSES, MEMORY_KINDS } from "@alicia/protocol";
 import { blob, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const people = sqliteTable("people", {
@@ -140,7 +140,7 @@ export const googleAccounts = sqliteTable(
     scopes: text("scopes").notNull(),
     /** AES-256-GCM, bound to id + owner (google/token-cipher.ts). Never stored in clear. */
     refreshToken: blob("refresh_token", { mode: "buffer" }).notNull(),
-    status: text("status", { enum: ["connected", "reconnect"] }).notNull(),
+    status: text("status", { enum: GOOGLE_ACCOUNT_STATUSES }).notNull(),
     createdAt: integer("created_at").notNull(),
     /** Last successful connection (marking "reconnect" leaves it). */
     updatedAt: integer("updated_at").notNull(),

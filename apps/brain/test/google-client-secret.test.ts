@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { loadClientSecret, parseClientSecret } from "../src/google/client-secret.ts";
 import { createTempDir } from "./helpers.ts";
@@ -51,5 +51,9 @@ describe("google_client_secret.json", () => {
     writeFileSync(path, INSTALLED);
     expect(loadClientSecret(path).clientId).toBe("123-abc.apps.googleusercontent.com");
     expect(() => loadClientSecret(join(dir, "absent.json"))).toThrow(/google\.clientSecretFile/);
+    // The full path, so a relative setting resolved from another folder is easy to spot.
+    const relative = thrown(() => loadClientSecret("./secrets-absent/google.json"));
+    expect(relative).toContain(resolve("./secrets-absent/google.json"));
+    expect(relative).toMatch(/introuvable ou illisible/);
   });
 });

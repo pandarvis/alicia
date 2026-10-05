@@ -51,6 +51,10 @@ describe("token cipher", () => {
     expect(message).not.toContain(KEY.toString("base64"));
   });
 
+  test("an empty token is never stored", () => {
+    expect(() => new TokenCipher(KEY).encrypt("", "ctx")).toThrow();
+  });
+
   test("the key must be 32 bytes, and the caller's buffer may be wiped afterwards", () => {
     expect(() => new TokenCipher(Buffer.alloc(16))).toThrow();
     const key = Buffer.alloc(32, 5);

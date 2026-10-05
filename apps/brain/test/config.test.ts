@@ -98,6 +98,10 @@ describe("google config", () => {
 
   test("ALICIA_SECRET_KEY: 32 bytes in base64", () => {
     expect(readSecretKey({ ALICIA_SECRET_KEY: KEY })).toEqual(Buffer.alloc(32, 7));
+    // Its own memory, not a slice of Node's shared pool: the caller can wipe it without leaving a copy around.
+    const key = readSecretKey({ ALICIA_SECRET_KEY: KEY });
+    expect(key.byteOffset).toBe(0);
+    expect(key.buffer.byteLength).toBe(32);
     expect(readSecretKey({ ALICIA_SECRET_KEY: ` ${KEY}\n` })).toEqual(Buffer.alloc(32, 7));
   });
 
@@ -106,6 +110,7 @@ describe("google config", () => {
     expect(() => readSecretKey({ ALICIA_SECRET_KEY: "  " })).toThrow(/ALICIA_SECRET_KEY manquant/);
     const short = Buffer.alloc(16, 1).toString("base64");
     expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: short }))).toMatch(/32 octets/);
+    expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: short }))).toMatch(/44 caractères, finissant par =/);
     expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: short }))).not.toContain(short);
     const garbage = "pas-du-base64-du-tout!";
     expect(thrown(() => readSecretKey({ ALICIA_SECRET_KEY: garbage }))).not.toContain("pas-du-base64");

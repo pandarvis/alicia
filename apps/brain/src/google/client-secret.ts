@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 
 export interface GoogleClientSecret {
@@ -39,7 +40,9 @@ export function loadClientSecret(path: string): GoogleClientSecret {
   try {
     text = readFileSync(path, "utf8");
   } catch {
-    throw new Error(`google_client_secret.json introuvable (${path}) : vérifie google.clientSecretFile dans la config.`);
+    throw new Error(
+      `google_client_secret.json introuvable ou illisible (${resolve(path)}) : vérifie google.clientSecretFile dans la config.`,
+    );
   }
   return parseClientSecret(text);
 }

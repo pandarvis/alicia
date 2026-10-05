@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { GoogleClient } from "../src/google/google-client.ts";
 import { GoogleApiError } from "../src/google/http.ts";
@@ -6,7 +6,7 @@ import { GoogleOAuth } from "../src/google/oauth.ts";
 import { TokenCipher } from "../src/google/token-cipher.ts";
 import { GoogleAccountStore } from "../src/google/account-store.ts";
 import { createFamilyGoogle, createGoogleFixture, REDIRECT, VERIFIER } from "./google-fixture.ts";
-import { ELODIE, KEVIN } from "./helpers.ts";
+import { createTestGoogleAccounts, ELODIE, KEVIN } from "./helpers.ts";
 
 const PROFILE = { method: "GET", url: "https://gmail.googleapis.com/gmail/v1/users/me/profile" } as const;
 const Profile = z.object({ emailAddress: z.string() });
@@ -127,6 +127,37 @@ describe("GoogleClient", () => {
     const before = google.requests.length;
     expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("unavailable");
     expect(google.requests.length).toBe(before);
+    expect(access.flagged()).toEqual([]);
+    expect(client.list(KEVIN)[0]?.status).toBe("connected");
+  });
+
+  test("the turn ends while Google is answering: the call stops at once, 'unavailable', nothing flagged", async () => {
+    const { db, time, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    let reached = false;
+    // Google receives the call and never answers: only the abort can end it.
+    const hanging: typeof fetch = (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/token")) return google.fetch(input, init);
+      reached = true;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    };
+    const oauth = new GoogleOAuth({ clientId: google.clientId, clientSecret: google.clientSecret }, google.fetch, time.clock);
+    const client = new GoogleClient({
+      accounts: createTestGoogleAccounts(db, time.clock), oauth, fetch: hanging, clock: time.clock, clientId: google.clientId,
+    });
+    const turn = new AbortController();
+    const access = client.forPerson(KEVIN, turn.signal);
+    const pending = failureOf(access.json(account, PROFILE, Profile));
+    await vi.waitFor(() => {
+      expect(reached).toBe(true);
+    });
+    turn.abort();
+    expect(await pending).toBe("unavailable");
     expect(access.flagged()).toEqual([]);
     expect(client.list(KEVIN)[0]?.status).toBe("connected");
   });

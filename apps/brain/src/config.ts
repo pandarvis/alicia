@@ -100,10 +100,17 @@ export function readSecretKey(env: Readonly<Record<string, string | undefined>>)
   if (raw === "") {
     throw new Error("ALICIA_SECRET_KEY manquant : 32 octets aléatoires en base64 (voir README, « Comptes Google »).");
   }
-  const key = Buffer.from(raw, "base64");
+  const decoded = Buffer.from(raw, "base64");
   // Buffer.from skips invalid characters: re-encoding must give the same text back.
-  if (key.length !== SECRET_KEY_BYTES || key.toString("base64") !== raw) {
-    throw new Error("ALICIA_SECRET_KEY invalide : il faut exactement 32 octets encodés en base64.");
+  const valid = decoded.length === SECRET_KEY_BYTES && decoded.toString("base64") === raw;
+  // The key gets its own memory: `decoded` may be a slice of Node's shared pool, wiped right away.
+  const key = Buffer.alloc(SECRET_KEY_BYTES);
+  if (valid) decoded.copy(key);
+  decoded.fill(0);
+  if (!valid) {
+    throw new Error(
+      "ALICIA_SECRET_KEY invalide : il faut exactement 32 octets encodés en base64 (44 caractères, finissant par =).",
+    );
   }
   return key;
 }

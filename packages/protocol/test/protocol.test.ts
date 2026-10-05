@@ -283,7 +283,12 @@ describe("google", () => {
 
   test("only a loopback redirect is accepted", () => {
     expect(LoopbackRedirectUri.safeParse("http://127.0.0.1:53682").success).toBe(true);
-    for (const uri of ["http://localhost:53682", "https://127.0.0.1:1", "http://127.0.0.1:1/x", "http://evil.example"]) {
+    expect(LoopbackRedirectUri.safeParse("http://127.0.0.1:1").success).toBe(true);
+    expect(LoopbackRedirectUri.safeParse("http://127.0.0.1:65535").success).toBe(true);
+    for (const uri of [
+      "http://localhost:53682", "https://127.0.0.1:1", "http://127.0.0.1:1/x", "http://evil.example",
+      "http://127.0.0.1:0", "http://127.0.0.1:080", "http://127.0.0.1:99999", "http://127.0.0.1:65536", "http://127.0.0.1",
+    ]) {
       expect(LoopbackRedirectUri.safeParse(uri).success).toBe(false);
     }
   });

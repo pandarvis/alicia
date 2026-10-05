@@ -152,6 +152,18 @@ describe("BrainHub", () => {
     expect(owners.at(-1)).toBe("holo");
   });
 
+  test("after done, account_reconnect reaches no window (the brain sends it before the end of the turn)", () => {
+    const { hub, socket, owners, connectReady } = setup();
+    connectReady();
+    hub.send(message(), "holo");
+    socket().receive({ type: "conversation", requestId: REQUEST, conversationId: CONV });
+    socket().receive(DONE);
+    socket().receive({
+      type: "account_reconnect", conversationId: CONV, accounts: [{ id: OTHER_REQUEST, email: "famille@example.com" }],
+    });
+    expect(owners.at(-1)).toBeUndefined();
+  });
+
   test("the main window starting a conversation while the Holo streams: each event goes to its own window", () => {
     const { hub, socket, owners, finished, connectReady } = setup();
     connectReady();

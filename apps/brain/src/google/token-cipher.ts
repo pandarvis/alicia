@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createSecretKey, type KeyObject, randomBytes } from "node:crypto";
 
 const FORMAT = 1;
 const KEY_BYTES = 32;
@@ -19,15 +19,17 @@ export class TokenDecryptError extends Error {
  * The context is authenticated data: it binds the ciphertext to its row (id + owner).
  */
 export class TokenCipher {
-  readonly #key: Buffer;
+  readonly #key: KeyObject;
 
   constructor(key: Buffer) {
     if (key.length !== KEY_BYTES) throw new Error("TokenCipher needs a 32-byte key");
-    // A copy: the caller may wipe its own buffer.
-    this.#key = Buffer.from(key);
+    // Held by OpenSSL, outside the JavaScript heap; the caller may (and should) wipe its own buffer.
+    this.#key = createSecretKey(key);
   }
 
   encrypt(plain: string, context: string): Buffer {
+    // An empty token would mean a broken exchange: never stored as if it could be refreshed.
+    if (plain === "") throw new Error("TokenCipher refuses an empty token");
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv("aes-256-gcm", this.#key, iv, { authTagLength: TAG_BYTES });
     cipher.setAAD(Buffer.from(context, "utf8"));

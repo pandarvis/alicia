@@ -18,7 +18,8 @@ export const GoogleOwner = z.enum(["common", "personal"]);
 export type GoogleOwner = z.infer<typeof GoogleOwner>;
 
 /** "reconnect": Google refused the stored authorization (revoked, expired, scope removed, key changed). */
-export const GoogleAccountStatus = z.enum(["connected", "reconnect"]);
+export const GOOGLE_ACCOUNT_STATUSES = ["connected", "reconnect"] as const;
+export const GoogleAccountStatus = z.enum(GOOGLE_ACCOUNT_STATUSES);
 export type GoogleAccountStatus = z.infer<typeof GoogleAccountStatus>;
 
 export const GoogleAccountSummary = z.object({
@@ -38,8 +39,14 @@ export const GoogleOAuthClient = z.object({
 });
 export type GoogleOAuthClient = z.infer<typeof GoogleOAuthClient>;
 
-/** Loopback redirect of a desktop OAuth flow (RFC 8252 §7.3): IPv4 literal, any port, no path. */
-export const LoopbackRedirectUri = z.string().regex(/^http:\/\/127\.0\.0\.1:\d{1,5}$/);
+const LOOPBACK = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/;
+const MAX_PORT = 65_535;
+
+/** Loopback redirect of a desktop OAuth flow (RFC 8252 §7.3): IPv4 literal, a real port (1–65535), no path. */
+export const LoopbackRedirectUri = z
+  .string()
+  .regex(LOOPBACK)
+  .refine((uri) => Number(LOOPBACK.exec(uri)?.[1] ?? "0") <= MAX_PORT, "Port invalide");
 export type LoopbackRedirectUri = z.infer<typeof LoopbackRedirectUri>;
 
 /** PKCE verifier (RFC 7636 §4.1). */
