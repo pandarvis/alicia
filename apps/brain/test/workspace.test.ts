@@ -28,14 +28,14 @@ test("no folder above the workspace, up to the repository root, brings skills, c
   }
 });
 
-const SKILLS = ["lire-un-document", "ranger-un-souvenir", "verifier-avant-d-agir"];
+const SKILLS = ["lire-un-document", "preparer-la-semaine", "ranger-un-souvenir", "tri-des-mails", "verifier-avant-d-agir"];
 /** Strict: an `allowed-tools`, `hooks` (or any other key) would grant or change something; refused. */
 const Frontmatter = z.strictObject({
   name: z.string(),
   description: z.string().min(40).max(1024).regex(/^[^<>]*$/u),
 });
 
-test("the workspace ships exactly Alicia's three skills, and nothing else under .claude", () => {
+test("the workspace ships exactly Alicia's skills, and nothing else under .claude", () => {
   expect(listSkills(SKILLS_DIR)).toEqual(SKILLS);
   expect(readdirSync(join(WORKSPACE_DIR, ".claude"))).toEqual(["skills"]);
 });

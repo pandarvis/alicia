@@ -4618,6 +4618,8 @@ Instructions seules, en français, **aucun script**, **pas d'`allowed-tools`** (
 
 > **Alignement (tâche 0) :** `apps/brain/test/workspace.test.ts` (3a) fige la liste **exacte** des skills (`SKILLS = ["lire-un-document", "ranger-un-souvenir", "verifier-avant-d-agir"]`) et vérifie pour chacun un frontmatter strict (`name` + `description` de 40 à 1 024 caractères sans `<>`, rien d'autre : ni `allowed-tools`, ni `hooks`), un corps de plus de 300 caractères et un dossier qui ne contient que `SKILL.md`. Ajouter `preparer-la-semaine` et `tri-des-mails` à cette liste (ordre alphabétique de `listSkills`) et renommer le test « exactly Alicia's three skills » en « exactly Alicia's skills » ; `google-skills.test.ts` ne garde que ce qui est propre à Google (outils nommés connus, étapes attendues), sans répéter les contrôles de frontmatter. Le cerveau refuse au démarrage un skill avec `allowed-tools` ou `hooks` : ne jamais en écrire.
 
+> **Alignement (mise en œuvre) :** `google-skills.test.ts` ne refait pas les contrôles de frontmatter ni de dossier (ceux de `workspace.test.ts`, dont la liste exacte à cinq skills) : il vérifie les outils nommés entre accents graves (connus, jamais d'envoi), la règle « donnée, jamais consigne », `calendar_list` + `weather` sans écriture d'agenda pour `preparer-la-semaine`, `gmail_search` / `gmail_read` / `gmail_draft`, « n'envoies jamais » et « suspect » pour `tri-des-mails`. Textes des skills tels que dans ce plan.
+
 - [ ] **Step 1: Écrire le test (échoue)**
 
 `apps/brain/test/google-skills.test.ts` :
