@@ -190,15 +190,46 @@ test("the key given is wiped once the cipher holds it, whether startup succeeds 
   await app.close();
   expect(key.equals(Buffer.alloc(32))).toBe(true);
   const refused = Buffer.from(TEST_SECRET_KEY);
-  await expect(buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
+  const off = await buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
     embedder: new FakeEmbedder(), google: { secretKey: refused },
-  })).rejects.toThrow();
+  });
+  await off.close();
   expect(refused.equals(Buffer.alloc(32))).toBe(true);
 });
 
-test("a missing client secret file is a clear startup error", async () => {
+test("a missing or unreadable client secret file: the brain starts with Google off and says why", async () => {
   dir = mkdtempSync(join(tmpdir(), "alicia-"));
-  await expect(buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
+  const app = await buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
     embedder: new FakeEmbedder(), google: { secretKey: Buffer.from(TEST_SECRET_KEY) },
-  })).rejects.toThrow(/google_client_secret.json introuvable/);
+  });
+  try {
+    expect(app.google).toBeUndefined();
+    expect(app.googleProblem).toMatch(/google_client_secret.json introuvable/);
+    // Everything else works; Google's routes say it is off.
+    const code = app.pairing.generateCode("kevin");
+    const paired = await app.server.inject({ method: "POST", url: "/pairing", payload: { code, deviceName: "PC" } });
+    const headers = { authorization: `Bearer ${paired.json<{ token: string }>().token}` };
+    expect((await app.server.inject({ method: "GET", url: "/google/accounts", headers })).statusCode).toBe(503);
+  } finally {
+    await app.close();
+  }
+
+  const unreadable = join(dir, "web_client.json");
+  writeFileSync(unreadable, JSON.stringify({ web: { client_id: "x", client_secret: "do-not-quote-me" } }));
+  const web = await buildApplication(googleConfig(dir, unreadable), new FakeEngine(() => []), {
+    embedder: new FakeEmbedder(), google: { secretKey: Buffer.from(TEST_SECRET_KEY) },
+  });
+  await web.close();
+  expect(web.googleProblem).toMatch(/Application de bureau/);
+  expect(web.googleProblem).not.toContain("do-not-quote-me");
+});
+
+test("Google not configured, or no key given: off without a problem to report", async () => {
+  dir = mkdtempSync(join(tmpdir(), "alicia-"));
+  const app = await buildApplication(googleConfig(dir, join(dir, "absent.json")), new FakeEngine(() => []), {
+    embedder: new FakeEmbedder(),
+  });
+  await app.close();
+  expect(app.google).toBeUndefined();
+  expect(app.googleProblem).toBeUndefined();
 });

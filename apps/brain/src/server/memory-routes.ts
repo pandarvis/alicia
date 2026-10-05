@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { ConversationRepository } from "../conversations/repository.ts";
 import type { Memory, MemoryStore } from "../memory/store.ts";
+import { deviceAuth } from "./device-auth.ts";
 import { refusedBody, sendError } from "./http-errors.ts";
 
 export interface MemoryRoutesDependencies {
@@ -64,6 +65,9 @@ function summary(memory: Memory, conversationTitle: string | null): MemorySummar
 /** `/memories` routes: every one needs a Bearer token and acts within the caller's reach. */
 export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDependencies): void {
   const { memory, repository, personOf } = deps;
+  // Every route checks the device before its body is read.
+  const auth = deviceAuth(personOf);
+  const guard = { onRequest: auth.onRequest };
 
   /** A memory as the caller sees it: the source conversation's title only if the conversation is the caller's own. */
   const summarize = (person: Person, m: Memory): MemorySummary => {
@@ -71,8 +75,8 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
     return summary(m, title ?? null);
   };
 
-  app.get("/memories", async (request, reply) => {
-    const person = personOf(request);
+  app.get("/memories", guard, async (request, reply) => {
+    const person = auth.person(request);
     if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const query = MemoryQuery.safeParse(request.query);
     if (!query.success) return sendError(reply, 400, "invalid_request");
@@ -93,8 +97,8 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
   });
 
   // The test bench: what Alicia would find for a question, and why. Never counts as a recall.
-  app.get("/memories/test", async (request, reply) => {
-    const person = personOf(request);
+  app.get("/memories/test", guard, async (request, reply) => {
+    const person = auth.person(request);
     if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const query = TestQuery.safeParse(request.query);
     if (!query.success) return sendError(reply, 400, "invalid_request");
@@ -108,8 +112,8 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
     return hits;
   });
 
-  app.post("/memories", async (request, reply) => {
-    const person = personOf(request);
+  app.post("/memories", guard, async (request, reply) => {
+    const person = auth.person(request);
     if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const body = MemoryCreate.safeParse(request.body);
     if (!body.success) return sendError(reply, 400, "invalid_request");
@@ -127,8 +131,8 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
     return reply.code(422).send(refusedBody(result.reason));
   });
 
-  app.patch<{ Params: { id: string } }>("/memories/:id", async (request, reply) => {
-    const person = personOf(request);
+  app.patch<{ Params: { id: string } }>("/memories/:id", guard, async (request, reply) => {
+    const person = auth.person(request);
     if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const body = MemoryPatch.safeParse(request.body);
     if (!body.success) return sendError(reply, 400, "invalid_request");
@@ -144,16 +148,16 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: MemoryRoutesDep
     return reply.code(422).send(refusedBody(result.reason));
   });
 
-  app.post<{ Params: { id: string } }>("/memories/:id/restore", (request, reply) => {
-    const person = personOf(request);
+  app.post<{ Params: { id: string } }>("/memories/:id/restore", guard, (request, reply) => {
+    const person = auth.person(request);
     if (person === undefined) return sendError(reply, 401, "unauthenticated");
     const restored = memory.restore(person.id, request.params.id);
     if (restored === undefined) return sendError(reply, 404, "not_found");
     return summarize(person, restored);
   });
 
-  app.delete<{ Params: { id: string } }>("/memories/:id", (request, reply) => {
-    const person = personOf(request);
+  app.delete<{ Params: { id: string } }>("/memories/:id", guard, (request, reply) => {
+    const person = auth.person(request);
     if (person === undefined) return sendError(reply, 401, "unauthenticated");
     if (!memory.forget(person.id, request.params.id)) return sendError(reply, 404, "not_found");
     return reply.code(204).send();

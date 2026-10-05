@@ -134,7 +134,11 @@ export function gmailTools(access: GoogleAccess, timeZone: string): ToolDefiniti
             from: from.email, to, cc: cc ?? [], subject, body, inReplyTo: original?.messageId, references,
           });
           await gmail.createDraft(from, raw, original?.threadId);
-          return { text: `Brouillon enregistré dans ${from.email} (pas envoyé : la personne l'enverra elle-même depuis Gmail).` };
+          // What Alicia wrote, for her to tell the person (addresses checked by the schema, subject on one line).
+          const copies = cc !== undefined && cc.length > 0 ? ` · copie : ${cc.join(", ")}` : "";
+          return {
+            text: `Brouillon enregistré dans ${from.email} — à : ${to.join(", ")}${copies} · objet : « ${oneLine(subject)} » (pas envoyé : la personne l'enverra elle-même depuis Gmail).`,
+          };
         });
       },
     }),

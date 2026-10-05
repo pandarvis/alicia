@@ -41,6 +41,13 @@ describe("memories HTTP API", () => {
       expect((await app.inject({ method, url })).statusCode).toBe(401);
       expect((await app.inject({ method, url, headers: auth("nope") })).statusCode).toBe(401);
     }
+    // Checked before the body is read: an unknown caller's malformed body is never parsed.
+    for (const [method, url] of [["POST", "/memories"], ["PATCH", `/memories/${UNKNOWN_ID}`]] as const) {
+      const res = await app.inject({
+        method, url, headers: { ...auth("nope"), "content-type": "application/json" }, payload: "{not json",
+      });
+      expect(res.statusCode).toBe(401);
+    }
   });
 
   test("create, list, search, patch, delete — scoped to the caller", async () => {

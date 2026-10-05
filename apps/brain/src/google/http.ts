@@ -61,6 +61,7 @@ export function buildUrl(request: ApiRequest): string {
 const GMAIL_HOST = "gmail.googleapis.com";
 const CALENDAR_HOST = "www.googleapis.com";
 const GMAIL_ME = "/gmail/v1/users/me";
+const CALENDAR_V3 = "/calendar/v3";
 /** Every Gmail route Alicia uses — reading and drafting. Anything else (sending, deleting, settings…) never leaves. */
 const GMAIL_ROUTES: readonly { method: ApiRequest["method"]; path: RegExp }[] = [
   { method: "GET", path: /^\/profile$/ },
@@ -68,10 +69,26 @@ const GMAIL_ROUTES: readonly { method: ApiRequest["method"]; path: RegExp }[] = 
   { method: "GET", path: /^\/messages\/[^/]+$/ },
   { method: "POST", path: /^\/drafts$/ },
 ];
+/**
+ * Every Calendar route Alicia uses: the list of calendars, and events (list, read, create, change, delete). Nothing
+ * that changes a calendar itself, its sharing or its settings ever leaves.
+ */
+const CALENDAR_ROUTES: readonly { method: ApiRequest["method"]; path: RegExp }[] = [
+  { method: "GET", path: /^\/users\/me\/calendarList$/ },
+  { method: "GET", path: /^\/calendars\/[^/]+\/events$/ },
+  { method: "POST", path: /^\/calendars\/[^/]+\/events$/ },
+  { method: "GET", path: /^\/calendars\/[^/]+\/events\/[^/]+$/ },
+  { method: "PATCH", path: /^\/calendars\/[^/]+\/events\/[^/]+$/ },
+  { method: "DELETE", path: /^\/calendars\/[^/]+\/events\/[^/]+$/ },
+];
+
+function matches(routes: readonly { method: ApiRequest["method"]; path: RegExp }[], request: ApiRequest, path: string): boolean {
+  return routes.some((route) => route.method === request.method && route.path.test(path));
+}
 
 /**
- * Whether a request may go to Google with an account's token: HTTPS on Google's default port, Calendar v3 on
- * www.googleapis.com, and on Gmail only the routes above. Checked on the URL as it would be fetched (dot segments
+ * Whether a request may go to Google with an account's token: HTTPS on Google's default port, and only the Calendar v3
+ * (www.googleapis.com) and Gmail routes above. Checked on the URL as it would be fetched (dot segments
  * resolved), so no path trick can reach another route.
  */
 export function isAllowedRoute(request: ApiRequest): boolean {
@@ -82,10 +99,11 @@ export function isAllowedRoute(request: ApiRequest): boolean {
     return false;
   }
   if (url.protocol !== "https:" || url.port !== "" || url.username !== "" || url.password !== "") return false;
-  if (url.hostname === CALENDAR_HOST) return url.pathname.startsWith("/calendar/v3/");
+  if (url.hostname === CALENDAR_HOST) {
+    return url.pathname.startsWith(`${CALENDAR_V3}/`) && matches(CALENDAR_ROUTES, request, url.pathname.slice(CALENDAR_V3.length));
+  }
   if (url.hostname !== GMAIL_HOST || !url.pathname.startsWith(`${GMAIL_ME}/`)) return false;
-  const path = url.pathname.slice(GMAIL_ME.length);
-  return GMAIL_ROUTES.some((route) => route.method === request.method && route.path.test(path));
+  return matches(GMAIL_ROUTES, request, url.pathname.slice(GMAIL_ME.length));
 }
 
 const SCOPE_MISSING = /ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions|insufficient authentication scopes/i;

@@ -3,6 +3,11 @@ import type { z } from "zod";
 export interface ToolResult {
   text: string;
   isError?: boolean;
+  /**
+   * This result carries outside content although the tool usually does not (e.g. calendar names shared by someone
+   * else): the turn is no longer trusted afterwards, as with `untrustedOutput`. Never sent to the model.
+   */
+  untrusted?: true;
 }
 
 /** What a tool asks before acting: the card's question, and what exactly the person says yes to. */

@@ -215,14 +215,13 @@ export class GoogleClient {
 }
 
 /**
- * Google for one person during one turn: only "common" accounts and that person's own, and a note
- * of the accounts found needing a reconnection (for the chat's « Reconnecter » card).
+ * Google for one person during one turn: only "common" accounts and that person's own. The accounts found needing a
+ * reconnection are told to `onReconnect` (GoogleClient.forTurn keeps them for the chat's « Reconnecter » card).
  */
 export class GoogleAccess implements GoogleRequester {
   readonly #client: GoogleClient;
   readonly #person: Person;
   readonly #signal: AbortSignal | undefined;
-  readonly #flagged = new Map<string, ReconnectNotice>();
   readonly #onReconnect: ((notice: ReconnectNotice) => void) | undefined;
 
   /** `onReconnect`: told of each account found needing a reconnection (the turn's card). */
@@ -254,11 +253,6 @@ export class GoogleAccess implements GoogleRequester {
     await this.#send(account, request);
   }
 
-  /** Accounts that turned out to need reconnecting during this turn. */
-  flagged(): ReconnectNotice[] {
-    return [...this.#flagged.values()];
-  }
-
   async #send(account: GoogleAccount, request: ApiRequest): Promise<Response> {
     try {
       return await this.#client.send(this.#person.id, account.id, request, this.#signal);
@@ -267,9 +261,7 @@ export class GoogleAccess implements GoogleRequester {
         // Named as stored, whatever the object the tool held says.
         const stored = this.accounts().find((a) => a.id === account.id);
         if (stored !== undefined) {
-          const notice = { id: stored.id, email: stored.email };
-          this.#flagged.set(stored.id, notice);
-          this.#onReconnect?.(notice);
+          this.#onReconnect?.({ id: stored.id, email: stored.email });
         }
       }
       throw error;

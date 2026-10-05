@@ -108,6 +108,8 @@ describe("gmail_draft", () => {
       body: "C'est signé, merci !", replyToMessageId: "famillemail1",
     });
     expect(result.text).toMatch(/pas envoyé/);
+    // Alicia can tell the person who it is for and what it is about.
+    expect(result.text).toContain("à : ecole@example.com · objet : « Re: Sortie scolaire »");
     const [draft] = google.drafts("famille@example.com");
     expect(draft?.threadId).toBe("famillemail1");
     const raw = decodeRaw(draft?.raw ?? "");
@@ -143,6 +145,28 @@ describe("gmail_draft", () => {
       account: "famille@example.com", to: ["a@example.com"], subject: "Salut\r\nBcc: x@evil.example", body: "x",
     })).rejects.toThrow();
     expect(google.drafts("famille@example.com")).toEqual([]);
+  });
+
+  test("the copies are echoed too", async () => {
+    const { kevinTools } = await setup();
+    const result = await runTool(kevinTools, "gmail_draft", {
+      account: "famille@example.com", to: ["a@example.com", "b@example.com"], cc: ["c@example.com"], subject: "Repas", body: "x",
+    });
+    expect(result.text).toContain("à : a@example.com, b@example.com · copie : c@example.com · objet : « Repas »");
+  });
+
+  test("a recipient with hidden or look-alike characters never reaches Gmail", async () => {
+    const { kevinTools, google } = await setup();
+    for (const to of ["a\u200b@example.com", "a\uff20example.com", "\u00e9lodie@example.com", "a@exa\u200dmple.com"]) {
+      await expect(runTool(kevinTools, "gmail_draft", {
+        account: "famille@example.com", to: [to], subject: "x", body: "x",
+      }), JSON.stringify(to)).rejects.toThrow();
+      await expect(runTool(kevinTools, "gmail_draft", {
+        account: "famille@example.com", to: ["a@example.com"], cc: [to], subject: "x", body: "x",
+      }), JSON.stringify(to)).rejects.toThrow();
+    }
+    expect(google.drafts("famille@example.com")).toEqual([]);
+    expect(google.requests.filter((r) => r.url.pathname.endsWith("/drafts"))).toEqual([]);
   });
 
   test("replying to a mail of another account finds nothing and writes nothing", async () => {

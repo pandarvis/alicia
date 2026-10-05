@@ -113,13 +113,14 @@ describe("calendar_list", () => {
   });
 
   test("an account to reconnect is reported, the others still listed", async () => {
-    const { kevinTools, kevinAccess, google } = await setup();
+    const { client, google } = await setup();
     google.revokeGrant("kevin@example.com");
     google.expireAccessTokens();
-    const result = await runTool(kevinTools, "calendar_list", OCTOBER);
+    const tools = calendarTools(client.forTurn({ person: KEVIN, conversationId: TURN_CONV, signal: new AbortController().signal }), PARIS);
+    const result = await runTool(tools, "calendar_list", OCTOBER);
     expect(result.text).toContain("Piscine");
     expect(result.text).toMatch(/kevin@example.com doit être reconnecté/);
-    expect(kevinAccess.flagged().map((a) => a.email)).toEqual(["kevin@example.com"]);
+    expect(client.endTurn(TURN_CONV).map((a) => a.email)).toEqual(["kevin@example.com"]);
   });
 
   test("occurrences of a series are listed one by one, with the series' reference said as such", async () => {

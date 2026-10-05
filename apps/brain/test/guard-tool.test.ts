@@ -100,6 +100,19 @@ describe("guardTool", () => {
     expect(turn.untrusted).toBe(true);
   });
 
+  test("one result carrying outside content marks the turn; the other results of that tool do not", async () => {
+    const { turn } = createTestTurn(KEVIN, CONV);
+    const chooser = defineTool({
+      name: "thing_create", label: "…", description: "…", input: { ask: z.boolean() },
+      run: ({ ask }) => Promise.resolve(ask ? { text: "Lequel ? (noms partagés)", untrusted: true as const } : { text: "Créé" }),
+    });
+    const guarded = guardTool(chooser, turn);
+    expect(await guarded.run({ ask: false })).toEqual({ text: "Créé" });
+    expect(turn.untrusted).toBe(false);
+    await guarded.run({ ask: true });
+    expect(turn.untrusted).toBe(true);
+  });
+
   test("a trusted tool leaves the turn trusted", async () => {
     const { turn } = createTestTurn(KEVIN, CONV);
     await guardTool(deletion([]), turn).run({ id: "a" });

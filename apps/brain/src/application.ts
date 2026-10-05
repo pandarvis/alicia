@@ -62,8 +62,10 @@ export interface Application {
   maintenance: Maintenance;
   /** Files sent with the messages. */
   attachments: AttachmentStore;
-  /** Undefined when Google is not configured (or no key was given). */
+  /** Undefined when Google is not configured, no key was given, or it could not be set up (see googleProblem). */
   google: GoogleClient | undefined;
+  /** Why Google is off although configured and given a key (French, never quoting a secret). */
+  googleProblem: string | undefined;
   /** Stops the nightly job, closes the server (and its WebSockets), then the database. */
   close(): Promise<void>;
 }
@@ -135,6 +137,24 @@ export function createGoogle(db: Db, config: Config, options: GoogleOptions | un
   });
 }
 
+/** What setting Google up gave: the client, or why it is off (never a crash: the rest of Alicia still starts). */
+export interface GoogleSetup {
+  google: GoogleClient | undefined;
+  problem?: string;
+}
+
+/**
+ * createGoogle, but a client secret file that is missing or unreadable turns Google off with the reason instead of
+ * stopping the brain. The messages are French and never quote the file's content.
+ */
+export function setUpGoogle(db: Db, config: Config, options: GoogleOptions | undefined, fetchFn: typeof fetch): GoogleSetup {
+  try {
+    return { google: createGoogle(db, config, options, fetchFn) };
+  } catch (error) {
+    return { google: undefined, problem: error instanceof Error ? error.message : "erreur inconnue" };
+  }
+}
+
 export async function buildApplication(
   config: Config,
   engine: Engine,
@@ -172,7 +192,7 @@ async function assemble(config: Config, engine: Engine, options: ApplicationOpti
       clock: systemClock,
     });
     const fetchFn = options.fetch ?? fetch;
-    const google = createGoogle(db, config, options.google, fetchFn);
+    const { google, problem: googleProblem } = setUpGoogle(db, config, options.google, fetchFn);
     const tools = new ToolCatalog(toolProviders(config, { memory, attachments, fetch: fetchFn, google }));
     // Two tools with one name would only fail on the first turn: refuse to start instead.
     const someone = config.people[0];
@@ -197,6 +217,7 @@ async function assemble(config: Config, engine: Engine, options: ApplicationOpti
       maintenance,
       attachments,
       google,
+      googleProblem,
       close: async () => {
         await maintenance.stop();
         await server.close();

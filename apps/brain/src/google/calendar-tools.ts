@@ -236,6 +236,8 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
             frameUntrusted("agendas", `- ${describeCalendar(only)} ${reference(only)}`),
             ...problems,
           ].join("\n"),
+          // Calendar names are written by whoever shares the calendar: the conversation is no longer trusted.
+          untrusted: true,
         },
       };
     }
@@ -247,6 +249,7 @@ export function calendarTools(access: GoogleAccess, timeZone: string): ToolDefin
           frameUntrusted("agendas", candidates.map((t) => `- ${describeCalendar(t)} ${reference(t)}`).join("\n")),
           ...problems,
         ].join("\n"),
+        untrusted: true,
       },
     };
   }

@@ -51,7 +51,8 @@ async function withinBudget(run: Promise<ToolResult>, budgetMs: number): Promise
 
 /**
  * One of our tools as the turn runs it: nothing once the turn is over; confirmation first when required (and
- * only while the turn lasts), then `run` with what was approved, within its budget; untrusted output marked.
+ * only while the turn lasts), then `run` with what was approved, within its budget; untrusted output marked (the
+ * tool's, or this one result's).
  * The result asks nothing by itself any more.
  */
 export function guardTool(definition: ToolDefinition, turn: TurnContext, options: GuardOptions = {}): ToolDefinition {
@@ -73,7 +74,9 @@ export function guardTool(definition: ToolDefinition, turn: TurnContext, options
         }
       }
       try {
-        return await withinBudget(definition.run(args, approved), budgetMs);
+        const result = await withinBudget(definition.run(args, approved), budgetMs);
+        if (result.untrusted === true) turn.markUntrusted();
+        return result;
       } finally {
         if (definition.untrustedOutput === true) turn.markUntrusted();
       }

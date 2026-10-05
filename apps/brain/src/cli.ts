@@ -7,7 +7,7 @@ import { type ClientMessage, PairingResponse, type Person, ServerEvent } from "@
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import {
-  buildApplication, createGoogle, createSdkEngine, type GoogleOptions, openMemory, SKILLS_DIR, toolProviders, WORKSPACE_DIR,
+  buildApplication, createSdkEngine, type GoogleOptions, type GoogleSetup, openMemory, setUpGoogle, SKILLS_DIR, toolProviders, WORKSPACE_DIR,
 } from "./application.ts";
 import { type Config, loadConfig, readAuthentication, takeSecretKey } from "./config.ts";
 import { advertiseBrain, bonjourPublisher, serviceHostname, shouldAdvertise } from "./discovery.ts";
@@ -48,16 +48,31 @@ const UNUSED_ENGINE: Engine = {
   },
 };
 
-/** The Google key, taken from the environment, when the config has a `google` section. */
-function googleOptions(config: Config): { google?: GoogleOptions } {
-  return config.google === undefined ? {} : { google: { secretKey: takeSecretKey(process.env) } };
+/**
+ * The Google key, taken from the environment, when the config has a `google` section. A missing or invalid key
+ * turns Google off with the reason (never a crash); it is removed from the environment either way.
+ */
+function googleOptions(config: Config): { options: { google?: GoogleOptions }; problem?: string } {
+  if (config.google === undefined) return { options: {} };
+  try {
+    return { options: { google: { secretKey: takeSecretKey(process.env) } } };
+  } catch (error) {
+    return { options: {}, problem: error instanceof Error ? error.message : "clé illisible" };
+  }
+}
+
+/** The startup line about Google: on, off, or off because something is wrong (said, so Kévin can fix it). */
+function googleStatus(google: GoogleClient | undefined, problem: string | undefined): string {
+  if (google !== undefined) return "Comptes Google : activés.";
+  return problem === undefined ? "Comptes Google : désactivés." : `Comptes Google désactivés : ${problem}`;
 }
 
 async function start(): Promise<void> {
   const config = loadConfig(configPath());
   const engine = createSdkEngine(config, readAuthentication(config.engine.mode, process.env));
   // Read once and removed from the environment (never inherited by the SDK's process); buildApplication wipes it.
-  const app = await buildApplication(config, engine, { logging: true, ...googleOptions(config) });
+  const key = googleOptions(config);
+  const app = await buildApplication(config, engine, { logging: true, ...key.options });
   try {
     await app.server.listen({ port: config.port, host: config.host });
   } catch (error) {
@@ -65,7 +80,9 @@ async function start(): Promise<void> {
     throw error;
   }
   console.log(`Alicia écoute sur ${config.host}:${config.port} (moteur : ${config.engine.mode}).`);
-  console.log(app.google === undefined ? "Comptes Google : désactivés." : "Comptes Google : activés.");
+  const googleProblem = key.problem ?? app.googleProblem;
+  if (googleProblem === undefined) console.log(googleStatus(app.google, undefined));
+  else console.error(googleStatus(app.google, googleProblem));
   // The desktop app finds the brain on its pairing screen (mDNS), unless turned off or loopback only.
   const machine = serviceHostname(hostname());
   const advertisement = shouldAdvertise(config)
@@ -346,13 +363,17 @@ async function checkIsolationCommand(): Promise<void> {
     const person = config.people[0];
     if (person === undefined) throw new Error("Aucune personne dans la config.");
     const turn = cliTurn(config, person);
-    const { google: options } = googleOptions(config);
-    let google: GoogleClient | undefined;
+    const key = googleOptions(config);
+    const options = key.options.google;
+    let setup: GoogleSetup;
     try {
-      google = createGoogle(opened.db, config, options, fetch);
+      setup = setUpGoogle(opened.db, config, options, fetch);
     } finally {
       options?.secretKey.fill(0);
     }
+    const { google } = setup;
+    // Checked without Google rather than not at all: the reason is said first.
+    console.log(googleStatus(google, key.problem ?? setup.problem));
     // The real tool set (weather only with a home, Google only when configured), as a turn of the brain gets it.
     const tools = new ToolCatalog(toolProviders(config, { memory: opened.memory, attachments: opened.attachments, fetch, google }))
       .forTurn(turn);

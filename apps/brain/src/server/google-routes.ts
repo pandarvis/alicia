@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { GoogleAccount } from "../google/account-store.ts";
 import type { GoogleClient } from "../google/google-client.ts";
+import { deviceAuth } from "./device-auth.ts";
 import { sendError } from "./http-errors.ts";
 
 export interface GoogleRoutesDependencies {
@@ -28,6 +29,11 @@ function summary(account: GoogleAccount): GoogleAccountSummary {
   };
 }
 
+/** Exhaustiveness: compiles only when every case was handled before. */
+function unhandled(outcome: never): never {
+  throw new Error(`Unhandled connect outcome: ${typeof outcome}`);
+}
+
 /** A Google-specific failure: `{ error }` with the protocol's word (the app tells the family what to do). */
 function sendFailure(reply: FastifyReply, status: number, error: GoogleConnectFailure): FastifyReply {
   return reply.code(status).send({ error });
@@ -39,10 +45,13 @@ function sendFailure(reply: FastifyReply, status: number, error: GoogleConnectFa
  */
 export function registerGoogleRoutes(app: FastifyInstance, deps: GoogleRoutesDependencies): void {
   const { google, personOf } = deps;
+  // Every route checks the device before its body is read.
+  const auth = deviceAuth(personOf);
+  const guard = { onRequest: auth.onRequest };
 
   /** The caller and the client, or the answer already sent (401, or 503 when Google is not configured). */
   function access(request: FastifyRequest, reply: FastifyReply): { person: Person; google: GoogleClient } | undefined {
-    const person = personOf(request);
+    const person = auth.person(request);
     if (person === undefined) {
       void sendError(reply, 401, "unauthenticated");
       return undefined;
@@ -54,21 +63,21 @@ export function registerGoogleRoutes(app: FastifyInstance, deps: GoogleRoutesDep
     return { person, google };
   }
 
-  app.get("/google/oauth-client", (request, reply) => {
+  app.get("/google/oauth-client", guard, (request, reply) => {
     const allowed = access(request, reply);
     if (allowed === undefined) return reply;
     const client: GoogleOAuthClient = { clientId: allowed.google.clientId, scopes: [...GOOGLE_SCOPES] };
     return client;
   });
 
-  app.get("/google/accounts", (request, reply) => {
+  app.get("/google/accounts", guard, (request, reply) => {
     const allowed = access(request, reply);
     if (allowed === undefined) return reply;
     return allowed.google.list(allowed.person).map(summary);
   });
 
   // The app ran the browser flow; the brain exchanges the code with the client secret it alone holds.
-  app.post("/google/accounts", async (request, reply) => {
+  app.post("/google/accounts", guard, async (request, reply) => {
     const allowed = access(request, reply);
     if (allowed === undefined) return reply;
     const body = GoogleConnectRequest.safeParse(request.body);
@@ -88,10 +97,13 @@ export function registerGoogleRoutes(app: FastifyInstance, deps: GoogleRoutesDep
         return sendFailure(reply, 400, "exchange_failed");
       case "unavailable":
         return sendFailure(reply, 502, "google_unreachable");
+      default:
+        // A new outcome must be mapped here before it can be built (and is never sent as it is: it may hold tokens).
+        return unhandled(outcome);
     }
   });
 
-  app.delete<{ Params: { id: string } }>("/google/accounts/:id", async (request, reply) => {
+  app.delete<{ Params: { id: string } }>("/google/accounts/:id", guard, async (request, reply) => {
     const allowed = access(request, reply);
     if (allowed === undefined) return reply;
     const id = AccountId.safeParse(request.params.id);

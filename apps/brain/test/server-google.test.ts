@@ -41,6 +41,13 @@ describe("/google routes", () => {
           expect([res.statusCode, res.json()], `${method} ${url}`).toEqual([401, errorBody("unauthenticated")]);
         }
       }
+      // Checked before the body is read: an unknown caller learns nothing from a malformed one.
+      for (const body of ["{not json", JSON.stringify({ owner: "x" })]) {
+        const res = await app.inject({
+          method: "POST", url: "/google/accounts", headers: { ...auth("nope"), "content-type": "application/json" }, payload: body,
+        });
+        expect([res.statusCode, res.json()]).toEqual([401, errorBody("unauthenticated")]);
+      }
       await app.close();
     }
   });

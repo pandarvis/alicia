@@ -9,7 +9,7 @@ import { type ApiRequest, GoogleApiError } from "../src/google/http.ts";
 import { GoogleOAuth } from "../src/google/oauth.ts";
 import { TokenCipher } from "../src/google/token-cipher.ts";
 import { GoogleAccountStore } from "../src/google/account-store.ts";
-import { createFamilyGoogle, createGoogleFixture, issueCode, REDIRECT, VERIFIER } from "./google-fixture.ts";
+import { createFamilyGoogle, createGoogleFixture, issueCode, REDIRECT, TURN_CONV, VERIFIER } from "./google-fixture.ts";
 import { createTestGoogleAccounts, ELODIE, KEVIN } from "./helpers.ts";
 
 const PROFILE = { method: "GET", url: "https://gmail.googleapis.com/gmail/v1/users/me/profile" } as const;
@@ -98,9 +98,9 @@ describe("GoogleClient", () => {
     const account = await connect(KEVIN, "personal", "kevin@example.com");
     google.revokeGrant("kevin@example.com");
     google.expireAccessTokens();
-    const access = client.forPerson(KEVIN);
+    const access = client.forTurn({ person: KEVIN, conversationId: TURN_CONV, signal: new AbortController().signal });
     expect(await failureOf(access.json({ ...account, email: "spoof@example.com" }, PROFILE, Profile))).toBe("reconnect");
-    expect(access.flagged()).toEqual([{ id: account.id, email: "kevin@example.com" }]);
+    expect(client.endTurn(TURN_CONV)).toEqual([{ id: account.id, email: "kevin@example.com" }]);
   });
 
   test("an expired access token is refreshed once, transparently", async () => {
@@ -116,10 +116,10 @@ describe("GoogleClient", () => {
     const account = await connect(KEVIN, "personal", "kevin@example.com");
     google.revokeGrant("kevin@example.com");
     google.expireAccessTokens();
-    const access = client.forPerson(KEVIN);
+    const access = client.forTurn({ person: KEVIN, conversationId: TURN_CONV, signal: new AbortController().signal });
     expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("reconnect");
     expect(client.list(KEVIN)[0]?.status).toBe("reconnect");
-    expect(access.flagged()).toEqual([{ id: account.id, email: "kevin@example.com" }]);
+    expect(client.endTurn(TURN_CONV)).toEqual([{ id: account.id, email: "kevin@example.com" }]);
     const before = google.requests.length;
     expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("reconnect");
     expect(google.requests.length).toBe(before);
@@ -138,7 +138,7 @@ describe("GoogleClient", () => {
   test("cloisonnement: Élodie tries every parameter to reach Kévin's account; Google never hears of it", async () => {
     const { client, google, accounts } = await createFamilyGoogle();
     const before = google.requests.length;
-    const access = client.forPerson(ELODIE);
+    const access = client.forTurn({ person: ELODIE, conversationId: TURN_CONV, signal: new AbortController().signal });
     const disguised = [accounts.kevin, { ...accounts.kevin, owner: "elodie" }, { ...accounts.kevin, owner: "common" }];
     for (const account of disguised) {
       expect(await failureOf(access.json(account, PROFILE, Profile)), account.owner).toBe("not_found");
@@ -150,7 +150,7 @@ describe("GoogleClient", () => {
     for (const email of ["kevin@example.com", " KEVIN@Example.com ", "%"]) {
       expect(access.account(email), email).toBeUndefined();
     }
-    expect(access.flagged()).toEqual([]);
+    expect(client.endTurn(TURN_CONV)).toEqual([]);
     expect(google.requests.slice(before)).toEqual([]);
     expect(client.list(KEVIN).find((a) => a.id === accounts.kevin.id)?.status).toBe("connected");
   });
@@ -178,13 +178,13 @@ describe("GoogleClient", () => {
     const { client, google, connect } = createGoogleFixture();
     const account = await connect(KEVIN, "personal", "kevin@example.com");
     const turn = new AbortController();
-    const access = client.forPerson(KEVIN, turn.signal);
+    const access = client.forTurn({ person: KEVIN, conversationId: TURN_CONV, signal: turn.signal });
     expect(await access.json(account, PROFILE, Profile)).toEqual({ emailAddress: "kevin@example.com" });
     turn.abort();
     const before = google.requests.length;
     expect(await failureOf(access.json(account, PROFILE, Profile))).toBe("unavailable");
     expect(google.requests.length).toBe(before);
-    expect(access.flagged()).toEqual([]);
+    expect(client.endTurn(TURN_CONV)).toEqual([]);
     expect(client.list(KEVIN)[0]?.status).toBe("connected");
   });
 
@@ -208,14 +208,14 @@ describe("GoogleClient", () => {
       accounts: createTestGoogleAccounts(db, time.clock), oauth, fetch: hanging, clock: time.clock, clientId: google.clientId,
     });
     const turn = new AbortController();
-    const access = client.forPerson(KEVIN, turn.signal);
+    const access = client.forTurn({ person: KEVIN, conversationId: TURN_CONV, signal: turn.signal });
     const pending = failureOf(access.json(account, PROFILE, Profile));
     await vi.waitFor(() => {
       expect(reached).toBe(true);
     });
     turn.abort();
     expect(await pending).toBe("unavailable");
-    expect(access.flagged()).toEqual([]);
+    expect(client.endTurn(TURN_CONV)).toEqual([]);
     expect(client.list(KEVIN)[0]?.status).toBe("connected");
   });
 
@@ -370,6 +370,42 @@ describe("what may reach Google", () => {
       { method: "GET", url: `${GMAIL}/messages`, query: { q: "is:unread" } },
       { method: "GET", url: `${GMAIL}/messages/m%2F1` },
       { method: "POST", url: `${GMAIL}/drafts`, body: { message: { raw: "eA" } } },
+    ] satisfies ApiRequest[]) {
+      expect(await failureOf(access.json(account, request, z.unknown())), `${request.method} ${request.url}`).not.toBe("invalid");
+    }
+  });
+
+  test("Calendar: only the calendar list and events — never a calendar's own settings, sharing or deletion", async () => {
+    const CALENDAR = "https://www.googleapis.com/calendar/v3";
+    const { client, google, connect } = createGoogleFixture();
+    const account = await connect(KEVIN, "personal", "kevin@example.com");
+    const access = client.forPerson(KEVIN);
+    const before = google.requests.length;
+    const refused: ApiRequest[] = [
+      { method: "DELETE", url: `${CALENDAR}/calendars/kevin%40example.com` },
+      { method: "PATCH", url: `${CALENDAR}/calendars/kevin%40example.com` },
+      { method: "POST", url: `${CALENDAR}/calendars/kevin%40example.com/clear` },
+      { method: "POST", url: `${CALENDAR}/calendars/kevin%40example.com/acl` },
+      { method: "GET", url: `${CALENDAR}/calendars/kevin%40example.com/acl` },
+      { method: "POST", url: `${CALENDAR}/calendars` },
+      { method: "POST", url: `${CALENDAR}/users/me/calendarList` },
+      { method: "DELETE", url: `${CALENDAR}/users/me/calendarList/kevin%40example.com` },
+      { method: "GET", url: `${CALENDAR}/users/me/settings` },
+      { method: "POST", url: `${CALENDAR}/calendars/kevin%40example.com/events/e1/move` },
+      { method: "POST", url: `${CALENDAR}/calendars/kevin%40example.com/events/import` },
+      { method: "POST", url: `${CALENDAR}/calendars/kevin%40example.com/events/quickAdd` },
+      { method: "POST", url: `${CALENDAR}/calendars/kevin%40example.com/events/watch` },
+      { method: "GET", url: `${CALENDAR}/calendars/kevin%40example.com/events/%2e%2e/acl` },
+      { method: "GET", url: "https://www.googleapis.com/calendar/v2/users/me/calendarList" },
+    ];
+    for (const request of refused) {
+      expect(await failureOf(access.json(account, request, z.unknown())), `${request.method} ${request.url}`).toBe("invalid");
+    }
+    expect(google.requests.length).toBe(before);
+    for (const request of [
+      { method: "GET", url: `${CALENDAR}/users/me/calendarList` },
+      { method: "GET", url: `${CALENDAR}/calendars/kevin%40example.com/events`, query: { singleEvents: true } },
+      { method: "GET", url: `${CALENDAR}/calendars/kevin%40example.com/events/e1` },
     ] satisfies ApiRequest[]) {
       expect(await failureOf(access.json(account, request, z.unknown())), `${request.method} ${request.url}`).not.toBe("invalid");
     }
