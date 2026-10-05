@@ -1,3 +1,5 @@
+import { readdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Page } from "playwright";
 import { expect, test } from "vitest";
 import { callTool, type Scenario } from "../../brain/src/engine/fake-engine.ts";
@@ -248,4 +250,61 @@ test("Souvenirs: a memory added by hand, then a conversation deleted from the me
   await expect
     .poll(() => page.getByTestId("memory-provenance").textContent(), POLL)
     .toContain("Retenu pendant une conversation supprimée");
+});
+
+test("attachments: refused before sending when unsupported; a PDF is uploaded, sent and described to Alicia", async () => {
+  let seenPrompt = "";
+  let seenDirs: readonly string[] = [];
+  const brain = await startBrain((request) => {
+    seenPrompt = request.prompt;
+    seenDirs = request.readableDirs;
+    return [
+      { type: "session", sessionId: "s1" },
+      { type: "text", text: "Facture de 42 €." },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ];
+  });
+  const { page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  const files = tempDir("alicia-e2e-files-");
+  const pdf = join(files, "facture.pdf");
+  writeFileSync(pdf, "%PDF-1.7\n1 0 obj\n");
+  const exe = join(files, "outil.exe");
+  writeFileSync(exe, "MZ");
+
+  // Refused in the app, before anything reaches the brain.
+  await page.getByTestId("composer-file").setInputFiles(exe);
+  await page.getByTestId("notice").filter({ hasText: "« outil.exe » n'est pas pris en charge" }).waitFor();
+  expect(await page.getByTestId("attachment-chip").count()).toBe(0);
+
+  await page.getByTestId("composer-file").setInputFiles(pdf);
+  const chip = page.getByTestId("attachment-chip").filter({ hasText: "facture.pdf" });
+  await expect.poll(() => chip.getAttribute("data-status"), POLL).toBe("ready");
+  await send(page, "Combien ?");
+  await page.getByTestId("message-assistant").filter({ hasText: "Facture de 42 €." }).waitFor();
+  await page.getByTestId("message-attachment").filter({ hasText: "facture.pdf" }).waitFor();
+  await expect.poll(() => page.getByTestId("attachment-chip").count(), POLL).toBe(0);
+  expect(seenPrompt).toContain('"facture.pdf" (PDF');
+  expect(seenDirs).toHaveLength(1);
+});
+
+test("attachments: a file dropped on the window becomes a chip, and can be removed", async () => {
+  const brain = await startBrain();
+  const { page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(["Liste : pain, œufs"], "courses.txt", { type: "text/plain" }));
+    const target = document.querySelector("[data-testid=composer]");
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      target?.dispatchEvent(new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true }));
+    }
+  });
+  const chip = page.getByTestId("attachment-chip").filter({ hasText: "courses.txt" });
+  await expect.poll(() => chip.getAttribute("data-status"), POLL).toBe("ready");
+  await chip.getByTestId("attachment-remove").click();
+  await expect.poll(() => page.getByTestId("attachment-chip").count(), POLL).toBe(0);
+  // The brain forgot the upload too.
+  const pendingDir = join(dirname(brain.app.attachments.dirOf("11111111-1111-4111-8111-111111111111")), "pending");
+  await expect.poll(() => readdirSync(pendingDir), POLL).toEqual([]);
 });

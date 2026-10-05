@@ -352,3 +352,57 @@ describe("BrainApi", () => {
     });
   });
 });
+
+describe("attachments", () => {
+  const session = { serverUrl: "http://brain.local:8780", token: "TOKEN", person: { id: "kevin", name: "Kévin" } };
+  const ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const api = (status: number, body: unknown) => {
+    const { calls, fetchFn } = fakeFetch(status, body);
+    return { api: new BrainApi(fetchFn, session), calls };
+  };
+
+  test("upload: raw bytes, encoded name, token; 201 → the summary", async () => {
+    const { api: brain, calls } = api(201, { id: ATTACHMENT_ID, name: "Facture été.pdf", kind: "pdf", size: 3 });
+    const file = new File(["%PD"], "Facture été.pdf");
+    expect(await brain.uploadAttachment(file, file.name)).toEqual({
+      ok: true, attachment: { id: ATTACHMENT_ID, name: "Facture été.pdf", kind: "pdf", size: 3 },
+    });
+    expect(calls[0]?.url).toBe("http://brain.local:8780/attachments");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(calls[0]?.init?.body).toBe(file);
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer TOKEN");
+    expect(headers.get("content-type")).toBe("application/octet-stream");
+    expect(headers.get("x-attachment-name")).toBe("Facture%20%C3%A9t%C3%A9.pdf");
+    expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test.each([
+    [413, brainError("too_large"), "too_large"],
+    [415, brainError("unsupported"), "unsupported"],
+    [400, brainError("empty"), "empty"],
+    [429, brainError("too_many"), "too_many"],
+    [400, brainError("invalid_request"), "failed"],
+    [500, brainError("internal"), "failed"],
+    [502, "<html>proxy</html>", "failed"],
+    [201, { id: "pas-un-id" }, "failed"],
+  ] as const)("upload answered %s → %s", async (status, body, reason) => {
+    expect(await api(status, body).api.uploadAttachment(new File(["x"], "a.pdf"), "a.pdf")).toEqual({ ok: false, reason });
+  });
+
+  test("upload: network failure → failed; 401 → UnauthorizedError", async () => {
+    const failing = new BrainApi(() => Promise.reject(new TypeError("Failed to fetch")), session);
+    expect(await failing.uploadAttachment(new File(["x"], "a.pdf"), "a.pdf")).toEqual({ ok: false, reason: "failed" });
+    await expect(api(401, brainError("unauthenticated")).api.uploadAttachment(new File(["x"], "a.pdf"), "a.pdf"))
+      .rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  test("discard: 204 or 404 are fine, anything else throws", async () => {
+    const { api: brain, calls } = api(204, null);
+    await expect(brain.discardAttachment(ATTACHMENT_ID)).resolves.toBeUndefined();
+    expect(calls[0]?.url).toBe(`http://brain.local:8780/attachments/${ATTACHMENT_ID}`);
+    expect(calls[0]?.init?.method).toBe("DELETE");
+    await expect(api(404, brainError("not_found")).api.discardAttachment(ATTACHMENT_ID)).resolves.toBeUndefined();
+    await expect(api(500, brainError("internal")).api.discardAttachment(ATTACHMENT_ID)).rejects.toThrow();
+  });
+});

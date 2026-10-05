@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Paperclip from "@lucide/svelte/icons/paperclip";
   import { fade, fly } from "svelte/transition";
   import { motion, scrollBehavior } from "../lib/motion.ts";
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
@@ -164,7 +165,13 @@
               </div>
             {/if}
             <div class="bubble" data-testid="message-{message.role}">
-              {message.text}{#if message.streaming}<span class="caret"></span>{/if}
+              {#if message.attachments !== undefined}
+                <ul class="attached" aria-label="Pièces jointes">
+                  {#each message.attachments as file, index (index)}
+                    <li data-testid="message-attachment"><Paperclip size={12} aria-hidden="true" /><span>{file.name}</span></li>
+                  {/each}
+                </ul>
+              {/if}<span class="text">{message.text}{#if message.streaming}<span class="caret"></span>{/if}</span>
             </div>
           </div>
         {/if}
@@ -200,7 +207,14 @@
   .row { display: flex; gap: 8px; align-items: flex-end; }
   .row.user { justify-content: flex-end; }
   .avatar { width: 44px; flex: none; }
-  .bubble { max-width: 72%; padding: 9px 13px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .bubble { max-width: 72%; padding: 9px 13px; border-radius: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+  /* Only the text keeps its line breaks (the markup around the files must not show). */
+  .text { white-space: pre-wrap; }
+  .text:empty { display: none; }
+  .attached { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; color: var(--cream-muted); }
+  .attached:has(+ .text:not(:empty)) { margin-bottom: 4px; }
+  .attached li { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .attached span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .user .bubble { background: var(--surface-raised); border-bottom-right-radius: 4px; }
   .assistant .bubble { background: var(--surface); border-bottom-left-radius: 4px; }
   .caret { display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--sage); animation: blink 1s steps(2) infinite; }

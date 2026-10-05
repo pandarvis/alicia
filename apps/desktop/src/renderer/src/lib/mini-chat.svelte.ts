@@ -40,6 +40,9 @@ export class MiniChat {
       send: (message) => hub.send(message),
       confirm: (message) => hub.confirm(message),
       deleteConversation: (id) => api.deleteConversation(id),
+      // The Holo offers no way to attach a file (v1: the main window does); wired all the same.
+      upload: (file) => api.uploadAttachment(file, file.name),
+      discardAttachment: (id) => api.discardAttachment(id),
       newId: () => crypto.randomUUID(),
       schedule,
     });

@@ -1,14 +1,33 @@
-import type {
-  ConfirmationOutcome, ConfirmMessage, ConversationSummary, HistoryMessage, SendMessage, ServerEvent,
+import {
+  type AttachmentKind, checkAttachment, type ConfirmationOutcome, type ConfirmMessage, type ConversationSummary,
+  type HistoryMessage, MAX_ATTACHMENTS_PER_MESSAGE, type SendMessage, type ServerEvent,
 } from "@alicia/protocol";
 import { MASCOT_ON_ERROR, type MascotState } from "../../../shared/mascot.ts";
+import { refusalText, TOO_MANY } from "./attachment-labels.ts";
+import type { UploadResult } from "./brain-client.ts";
+
+/** A file sent with a message, as its bubble shows it. */
+export interface AttachedFile {
+  name: string;
+  kind: AttachmentKind;
+}
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   streaming: boolean;
+  /** Files sent with a user message (absent when there are none). */
+  attachments?: readonly AttachedFile[];
 }
+
+/** A file in the composer, before sending: uploading, ready (pending on the brain under `id`), or failed. */
+export type DraftAttachment = { localId: string; name: string; size: number; kind: AttachmentKind } & (
+  | { status: "uploading" }
+  | { status: "ready"; id: string }
+  | { status: "failed" }
+);
+type ReadyDraft = Extract<DraftAttachment, { status: "ready" }>;
 
 /** A Oui / Non card in the conversation flow. */
 export interface ConfirmationCard {
@@ -38,6 +57,10 @@ export interface ChatPorts {
   deleteConversation(conversationId: string): Promise<"deleted" | "not_found" | "busy">;
   /** Sends the answer to a card; false when it could not reach the brain. */
   confirm(message: ConfirmMessage): Promise<boolean>;
+  /** Uploads a file; it waits on the brain until a message carries it. */
+  upload(file: File): Promise<UploadResult>;
+  /** Forgets a pending upload (its chip was removed). */
+  discardAttachment(id: string): Promise<void>;
   newId(): string;
   schedule(run: () => void, ms: number): () => void;
 }
@@ -80,6 +103,11 @@ export class ChatStore {
   activity = $state<string | null>(null);
   notice = $state<string | null>(null);
   mascot = $state<MascotState>("idle");
+  /**
+   * Files waiting in the composer. They survive switching conversations: a pending upload belongs to none until a
+   * message carries it.
+   */
+  drafts = $state<DraftAttachment[]>([]);
 
   readonly #ports: ChatPorts;
   #pendingRequestId: string | null = null;
@@ -177,8 +205,43 @@ export class ChatStore {
     this.#setMascot("idle");
   }
 
+  /** Something to send (text or a ready file), no file still uploading, Alicia free. */
+  canSend(text: string): boolean {
+    if (this.busy || this.loading || this.drafts.some((d) => d.status === "uploading")) return false;
+    return text.trim() !== "" || this.drafts.some((d) => d.status === "ready");
+  }
+
+  /** Adds files to the composer: refused at once when they cannot go (type, size, count), uploaded otherwise. */
+  addFiles(files: readonly File[]): void {
+    const refusals: string[] = [];
+    for (const file of files) {
+      if (this.drafts.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+        refusals.push(TOO_MANY);
+        break;
+      }
+      const check = checkAttachment(file.name, file.size);
+      if (!check.ok) {
+        refusals.push(refusalText(file.name, file.size, check.reason));
+        continue;
+      }
+      const localId = this.#ports.newId();
+      this.drafts.push({ localId, name: file.name, size: file.size, kind: check.type.kind, status: "uploading" });
+      void this.#upload(localId, file);
+    }
+    if (refusals.length > 0) this.notice = refusals.join(" ");
+  }
+
+  /** Takes a file out of the composer; the brain forgets its upload (now, or once it finishes). */
+  removeDraft(localId: string): void {
+    const draft = this.drafts.find((d) => d.localId === localId);
+    if (draft === undefined) return;
+    this.drafts = this.drafts.filter((d) => d.localId !== localId);
+    if (draft.status === "ready") this.#discard(draft.id);
+  }
+
   send(text: string): boolean {
-    if (text.trim() === "" || this.busy || this.loading) return false;
+    if (!this.canSend(text)) return false;
+    const ready = this.drafts.filter((d): d is ReadyDraft => d.status === "ready");
     const requestId = this.#ports.newId();
     const message: SendMessage = {
       type: "send",
@@ -186,6 +249,7 @@ export class ChatStore {
       text,
       ...(this.activeId !== null ? { conversationId: this.activeId } : {}),
       ...(this.opus ? { model: "opus" as const } : {}),
+      ...(ready.length > 0 ? { attachments: ready.map((d) => d.id) } : {}),
     };
     if (!this.#ports.send(message)) {
       this.notice = "Alicia n'est pas joignable pour l'instant.";
@@ -197,7 +261,12 @@ export class ChatStore {
     this.opus = false;
     this.notice = null;
     this.activity = null;
-    this.messages.push({ id: this.#ports.newId(), role: "user", text, streaming: false });
+    // Sent: the ready files now belong to the message; failed ones are dropped with them.
+    this.drafts = [];
+    this.messages.push({
+      id: this.#ports.newId(), role: "user", text, streaming: false,
+      ...(ready.length > 0 ? { attachments: ready.map((d) => ({ name: d.name, kind: d.kind })) } : {}),
+    });
     this.#setMascot("thinking");
     return true;
   }
@@ -390,7 +459,10 @@ export class ChatStore {
     try {
       const history = await this.#ports.history(conversationId);
       if (token !== this.#loadToken) return;
-      const items = history.map((m): ChatItem => ({ id: m.id, role: m.role, text: m.text, streaming: false }));
+      const items = history.map((m): ChatItem => ({
+        id: m.id, role: m.role, text: m.text, streaming: false,
+        ...(m.attachments.length > 0 ? { attachments: m.attachments.map((a) => ({ name: a.name, kind: a.kind })) } : {}),
+      }));
       for (const card of [...this.#cards, ...this.#adopted]) {
         if (card.conversationId === conversationId) placeCard(items, { ...card });
       }
@@ -401,6 +473,35 @@ export class ChatStore {
     } finally {
       if (token === this.#loadToken) this.loading = false;
     }
+  }
+
+  async #upload(localId: string, file: File): Promise<void> {
+    let result: UploadResult;
+    try {
+      result = await this.#ports.upload(file);
+    } catch {
+      result = { ok: false, reason: "failed" };
+    }
+    const index = this.drafts.findIndex((d) => d.localId === localId);
+    const draft = this.drafts[index];
+    if (draft === undefined) {
+      // Removed (or sent without it) while uploading: the brain must forget it too.
+      if (result.ok) this.#discard(result.attachment.id);
+      return;
+    }
+    const base = { localId, name: draft.name, size: draft.size, kind: draft.kind };
+    if (result.ok) {
+      this.drafts[index] = { ...base, status: "ready", id: result.attachment.id };
+    } else {
+      this.drafts[index] = { ...base, status: "failed" };
+      this.notice = refusalText(draft.name, draft.size, result.reason);
+    }
+  }
+
+  #discard(id: string): void {
+    this.#ports.discardAttachment(id).catch(() => {
+      // Unsent uploads are dropped by the brain after a day anyway.
+    });
   }
 
   #endTurn(): void {

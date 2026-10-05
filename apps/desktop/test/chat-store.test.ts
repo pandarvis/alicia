@@ -1,5 +1,6 @@
 import type { ConfirmMessage, ConversationSummary, HistoryMessage, SendMessage } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
+import type { UploadResult } from "../src/renderer/src/lib/brain-client.ts";
 import { type ChatItem, ChatStore, type ChatPorts } from "../src/renderer/src/lib/chat-store.svelte.ts";
 
 const CONV = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
@@ -29,6 +30,8 @@ function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {
   const sent: SendMessage[] = [];
   const confirmed: ConfirmMessage[] = [];
   const timers: { run: () => void; ms: number; cancelled: boolean }[] = [];
+  const uploads: { file: File; answer: ReturnType<typeof deferred<UploadResult>> }[] = [];
+  const discarded: string[] = [];
   let conversations: ConversationSummary[] = [];
   const store = new ChatStore({
     listConversations: () => Promise.resolve(conversations),
@@ -42,6 +45,15 @@ function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {
       return Promise.resolve(true);
     },
     deleteConversation: () => Promise.resolve("deleted"),
+    upload: (file) => {
+      const answer = deferred<UploadResult>();
+      uploads.push({ file, answer });
+      return answer.promise;
+    },
+    discardAttachment: (id) => {
+      discarded.push(id);
+      return Promise.resolve();
+    },
     newId: () => `00000000-0000-4000-8000-00000000000${counter++}`,
     schedule: (run, ms) => {
       const t = { run, ms, cancelled: false };
@@ -53,7 +65,7 @@ function setup(history: HistoryMessage[] = [], overrides: Partial<ChatPorts> = {
     ...overrides,
   });
   return {
-    store, sent, confirmed, timers,
+    store, sent, confirmed, timers, uploads, discarded,
     setConversations: (list: ConversationSummary[]) => {
       conversations = list;
     },
@@ -712,4 +724,94 @@ describe("confirmations", () => {
     });
   });
 
+});
+
+describe("attachments", () => {
+  const fileOf = (name: string, size = 3) => new File([new Uint8Array(size)], name);
+  const SUMMARY = (id: string, name: string) => ({ ok: true as const, attachment: { id, name, kind: "pdf" as const, size: 3 } });
+  const A1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const B1 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+  test("unsupported, empty or too big: refused at once, nothing uploaded", () => {
+    const { store, uploads } = setup();
+    store.addFiles([fileOf("film.mp4"), fileOf("vide.txt", 0), fileOf("scan.pdf", 25 * 1024 * 1024 + 1)]);
+    expect(store.drafts).toEqual([]);
+    expect(uploads).toEqual([]);
+    expect(store.notice).toBe(
+      "« film.mp4 » n'est pas pris en charge : images, PDF, Word (.docx), Excel (.xlsx) et texte (.txt, .csv). « vide.txt » est vide. « scan.pdf » est trop gros (25 Mo) : 25 Mo au maximum.",
+    );
+  });
+
+  test("a chip uploads, then is ready; sending waits for it and carries its id", async () => {
+    const { store, uploads, sent } = setup();
+    store.addFiles([fileOf("facture.pdf")]);
+    expect(store.drafts).toMatchObject([{ name: "facture.pdf", kind: "pdf", status: "uploading" }]);
+    expect(uploads[0]?.file.name).toBe("facture.pdf");
+    expect(store.canSend("")).toBe(false);
+    expect(store.canSend("Combien ?")).toBe(false);
+    expect(store.send("Combien ?")).toBe(false);
+    uploads[0]?.answer.resolve(SUMMARY(A1, "facture.pdf"));
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("ready"); });
+    expect(store.canSend("")).toBe(true);
+    expect(store.send("")).toBe(true);
+    expect(sent[0]).toMatchObject({ type: "send", text: "", attachments: [A1] });
+    expect(store.messages.at(-1)).toMatchObject({ role: "user", text: "", attachments: [{ name: "facture.pdf", kind: "pdf" }] });
+    expect(store.drafts).toEqual([]);
+  });
+
+  test("a message without files carries no attachments field", () => {
+    const { store, sent } = setup();
+    store.send("Salut");
+    expect(sent[0]).not.toHaveProperty("attachments");
+    expect(store.messages.at(-1)).not.toHaveProperty("attachments");
+  });
+
+  test("upload refused by the brain, or failing: failed chip and the reason; it does not block sending", async () => {
+    const { store, uploads } = setup();
+    store.addFiles([fileOf("photo.pdf"), fileOf("b.pdf")]);
+    uploads[0]?.answer.resolve({ ok: false, reason: "unsupported" });
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("failed"); });
+    expect(store.notice).toContain("« photo.pdf » n'est pas pris en charge");
+    uploads[1]?.answer.reject(new Error("réseau"));
+    await vi.waitFor(() => { expect(store.drafts[1]?.status).toBe("failed"); });
+    expect(store.notice).toBe("« b.pdf » n'a pas pu être envoyé à Alicia : retire-le et réessaie.");
+    expect(store.canSend("")).toBe(false);
+    expect(store.canSend("Quand même")).toBe(true);
+  });
+
+  test("removing a chip forgets the upload on the brain, even when it finishes afterwards", async () => {
+    const { store, uploads, discarded } = setup();
+    store.addFiles([fileOf("a.pdf"), fileOf("b.pdf")]);
+    uploads[0]?.answer.resolve(SUMMARY(A1, "a.pdf"));
+    await vi.waitFor(() => { expect(store.drafts[0]?.status).toBe("ready"); });
+    store.removeDraft(store.drafts[0]?.localId ?? "");
+    store.removeDraft(store.drafts[0]?.localId ?? "");
+    expect(store.drafts).toEqual([]);
+    uploads[1]?.answer.resolve(SUMMARY(B1, "b.pdf"));
+    await vi.waitFor(() => { expect(discarded).toEqual([A1, B1]); });
+    expect(store.drafts).toEqual([]);
+  });
+
+  test("ten at most per message", () => {
+    const { store, uploads } = setup();
+    store.addFiles(Array.from({ length: 11 }, (_, i) => fileOf(`f${i}.pdf`)));
+    expect(store.drafts).toHaveLength(10);
+    expect(uploads).toHaveLength(10);
+    expect(store.notice).toBe("10 pièces jointes au maximum par message.");
+  });
+
+  test("files wait in the composer across conversations (a pending upload belongs to none)", async () => {
+    const { store } = setup();
+    store.addFiles([fileOf("a.pdf")]);
+    await store.open(CONV);
+    store.startNew();
+    expect(store.drafts).toHaveLength(1);
+  });
+
+  test("history shows the files sent with a message", async () => {
+    const { store } = setup([{ ...msg("m1", "Regarde"), attachments: [{ id: A1, name: "facture.pdf", kind: "pdf", size: 3 }] }, msg("m2", "Merci")]);
+    await store.open(CONV);
+    expect(store.messages[0]).toMatchObject({ attachments: [{ name: "facture.pdf", kind: "pdf" }] });
+    expect(store.messages[1]).not.toHaveProperty("attachments");
+  });
 });

@@ -4286,6 +4286,8 @@ git commit -m "feat(brain): document_read for Word, Excel and text attachments (
 
 ### Task 13: Pièces jointes dans l'app
 
+> **Fait (2026-10-05) :** fenêtre principale seulement. Le mini-chat du Holo n'offre pas de pièce jointe en v1 (fenêtre minuscule, usage « question rapide » ; ses ports `upload` / `discardAttachment` sont branchés, il suffira d'y ajouter l'interface). Le refus `too_many` du cerveau (trop de fichiers en attente) a son texte ; déposer un fichier hors ligne affiche un message au lieu d'un envoi voué à l'échec ; l'app retire aussi au cerveau un fichier retiré pendant son envoi. Le texte de la bulle et ses fichiers sont accolés (`{/if}<span class="text">`) : sinon un espace s'ajoute au début du texte.
+
 **Files:**
 - Modify: `apps/desktop/src/renderer/src/lib/brain-client.ts`
 - Create: `apps/desktop/src/renderer/src/lib/attachment-labels.ts`

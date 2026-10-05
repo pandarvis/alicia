@@ -56,6 +56,8 @@
     send: (message) => hub.send(message),
     confirm: (message) => hub.confirm(message),
     deleteConversation: (id) => guarded(() => api.deleteConversation(id)),
+    upload: (file) => guarded(() => api.uploadAttachment(file, file.name)),
+    discardAttachment: (id) => guarded(() => api.discardAttachment(id)),
     newId: () => crypto.randomUUID(),
     schedule,
   });
