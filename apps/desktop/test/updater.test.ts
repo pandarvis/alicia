@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
-import { CHECK_EVERY_MS, type UpdateEngine, UpdateController, updateFeedUrl } from "../src/main/updater.ts";
+import {
+  CHECK_EVERY_MS, progressPercent, type UpdateEngine, UpdateController, updateFeedUrl,
+} from "../src/main/updater.ts";
 import type { UpdateStatus } from "../src/shared/updates.ts";
 
 function setup(withEngine = true) {
@@ -89,6 +91,61 @@ describe("UpdateController", () => {
     controller.stop();
     expect(timers[0]?.cancelled).toBe(true);
     expect(statuses).toHaveLength(announced);
+  });
+
+  test("installing twice (double click) starts the installer once", () => {
+    const { controller, counts, emit } = setup();
+    controller.setServer(SERVER);
+    emit({ state: "ready", version: "0.2.0" });
+    controller.install();
+    controller.install();
+    expect(counts.installs).toBe(1);
+  });
+
+  test("an install that fails (error) can be tried again once a version is ready", () => {
+    const { controller, counts, emit } = setup();
+    controller.setServer(SERVER);
+    emit({ state: "ready", version: "0.2.0" });
+    controller.install();
+    emit({ state: "error" });
+    emit({ state: "ready", version: "0.2.0" });
+    controller.install();
+    expect(counts.installs).toBe(2);
+  });
+
+  test("pairing again while a version is ready keeps it, without checking again", () => {
+    const { controller, counts, emit } = setup();
+    controller.setServer(SERVER);
+    emit({ state: "ready", version: "0.2.0" });
+    controller.setServer("http://192.168.1.30:8780");
+    expect(controller.status).toEqual({ state: "ready", version: "0.2.0" });
+    expect(counts.checks).toBe(1);
+  });
+
+  test("signed out, what electron-updater still says is ignored", () => {
+    const { controller, emit, statuses } = setup();
+    controller.setServer(SERVER);
+    controller.setServer(null);
+    const announced = statuses.length;
+    emit({ state: "ready", version: "0.2.0" });
+    expect(controller.status).toEqual({ state: "disabled" });
+    expect(statuses).toHaveLength(announced);
+  });
+
+  test("after a failed check, the brain coming back online is checked at once", async () => {
+    const { controller, counts, failNextCheck, timers } = setup();
+    failNextCheck();
+    controller.setServer(SERVER);
+    await vi.waitFor(() => { expect(controller.status).toEqual({ state: "error" }); });
+    controller.brainReachable();
+    expect(counts.checks).toBe(2);
+    expect(timers[0]?.cancelled).toBe(true);
+    controller.brainReachable();
+    expect(counts.checks).toBe(2);
+  });
+
+  test("download progress is a whole percentage between 0 and 100", () => {
+    expect([progressPercent(42.6), progressPercent(-3), progressPercent(100.4), progressPercent(Number.NaN)]).toEqual([43, 0, 100, 0]);
   });
 
   test("a failed check shows as an error", async () => {

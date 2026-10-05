@@ -16,6 +16,12 @@ export function updateFeedUrl(serverUrl: string): string {
   return `${serverUrl}/updates/`;
 }
 
+/** A whole percentage between 0 and 100 (electron-updater reports a float, sometimes slightly off). */
+export function progressPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
 /** Automatic updates from the paired brain: checked at startup and every 6 hours, installed on quit or on demand. */
 export class UpdateController {
   readonly #engine: UpdateEngine | null;
@@ -23,6 +29,8 @@ export class UpdateController {
   readonly #onStatus: (status: UpdateStatus) => void;
   #status: UpdateStatus = { state: "disabled" };
   #cancelCheck: (() => void) | null = null;
+  /** The installer was started: a second click must not start it again. */
+  #installing = false;
 
   /** `engine` is null in a development build. */
   constructor(
@@ -34,6 +42,10 @@ export class UpdateController {
     this.#schedule = schedule;
     this.#onStatus = onStatus;
     engine?.subscribe((status) => {
+      // Signed out: what electron-updater still reports is not shown. A version it already downloaded still
+      // installs when Alicia quits (autoInstallOnAppQuit): it came from the brain this PC was paired with.
+      if (this.#status.state === "disabled") return;
+      if (status.state === "error") this.#installing = false;
       this.#set(status);
     });
   }
@@ -44,14 +56,23 @@ export class UpdateController {
 
   /** Paired with a brain (or signed out: null). */
   setServer(serverUrl: string | null): void {
-    this.#cancelCheck?.();
-    this.#cancelCheck = null;
+    this.stop();
     if (this.#engine === null) return;
     if (serverUrl === null) {
       this.#set({ state: "disabled" });
       return;
     }
     this.#engine.setFeed(updateFeedUrl(serverUrl));
+    // A version already downloaded stays ready: nothing to check until it is installed.
+    if (this.#status.state === "ready") return;
+    this.#set({ state: "idle" });
+    this.#check();
+  }
+
+  /** The brain is reachable again: after a failed check, check now instead of waiting six hours. */
+  brainReachable(): void {
+    if (this.#status.state !== "error") return;
+    this.stop();
     this.#set({ state: "idle" });
     this.#check();
   }
@@ -62,9 +83,14 @@ export class UpdateController {
     this.#cancelCheck = null;
   }
 
-  /** Restarts into the downloaded version (otherwise it installs when Alicia quits). */
+  /**
+   * Restarts into the downloaded version (otherwise it installs when Alicia quits). electron-updater quits the
+   * app itself (app.quit: before-quit then will-quit run the app's one quit path).
+   */
   install(): void {
-    if (this.#status.state === "ready") this.#engine?.install();
+    if (this.#status.state !== "ready" || this.#installing || this.#engine === null) return;
+    this.#installing = true;
+    this.#engine.install();
   }
 
   #check(): void {
@@ -85,25 +111,23 @@ export class UpdateController {
   }
 }
 
-/**
- * electron-updater with a generic provider; the feed (the paired brain) is set at run time. Installed app only.
- * `beforeInstall` runs the app's quit path (windows allowed to close, connection and OS released) first.
- */
-export function electronUpdateEngine(options: { beforeInstall: () => void }): UpdateEngine {
+/** electron-updater with a generic provider; the feed (the paired brain) is set at run time. Installed app only. */
+export function electronUpdateEngine(): UpdateEngine {
   const { autoUpdater } = electronUpdater;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = null;
   return {
     setFeed: (url) => {
-      autoUpdater.setFeedURL({ provider: "generic", url });
+      // One range per request: Fastify's static files answer single ranges only.
+      autoUpdater.setFeedURL({ provider: "generic", url, useMultipleRangeRequest: false });
     },
     check: async () => {
-      await autoUpdater.checkForUpdates();
+      const result = await autoUpdater.checkForUpdates();
+      // A failed download is reported by the "error" event; its promise must not be left unhandled.
+      result?.downloadPromise?.catch(() => undefined);
     },
     install: () => {
-      // quitAndInstall closes the windows before `before-quit`: let them really close, and clean up first.
-      options.beforeInstall();
       autoUpdater.quitAndInstall();
     },
     subscribe: (listener) => {
@@ -117,7 +141,7 @@ export function electronUpdateEngine(options: { beforeInstall: () => void }): Up
         listener({ state: "downloading", percent: 0 });
       });
       autoUpdater.on("download-progress", (progress) => {
-        listener({ state: "downloading", percent: Math.round(progress.percent) });
+        listener({ state: "downloading", percent: progressPercent(progress.percent) });
       });
       autoUpdater.on("update-downloaded", (event) => {
         listener({ state: "ready", version: event.version });

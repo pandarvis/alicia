@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import type { NotificationRequest, OsIntegration, TrayHandle } from "./os-integration.ts";
 import { Point } from "../shared/holo.ts";
+import type { NotificationRequest, OsIntegration, TrayHandle } from "./os-integration.ts";
 import { TrayAction, type TrayItem } from "./tray-menu.ts";
 
 /** Where the end-to-end test finds the recorder (`globalThis[TEST_HOOKS_KEY]`, read through app.evaluate). */

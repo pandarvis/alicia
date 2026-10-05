@@ -134,6 +134,8 @@ function start(): void {
       // Signed out on purpose: the closed connection is not a problem to show.
       if (current === null) presence.signedOut();
       else presence.status(status);
+      // A failed update check is retried as soon as the brain answers again.
+      if (status === "ready") updates.brainReachable();
     },
     onSent: (_origin, pendingTurns) => {
       presence.sent(pendingTurns);
@@ -162,20 +164,19 @@ function start(): void {
   });
   // Until the main window shows (never, when started at login), nothing is looked for.
   discovery.setVisible(false);
-  // Updates from the paired brain, in the installed app only; installing goes through the one quit path.
+  // Updates from the paired brain, in the installed app only. Installing quits through app.quit, hence the
+  // app's one quit path (before-quit, then will-quit and its cleanup).
+  let updateReady = false;
   const updates = new UpdateController(
-    app.isPackaged
-      ? electronUpdateEngine({
-        beforeInstall: () => {
-          windows.prepareQuit();
-          quitCleanup();
-        },
-      })
-      : null,
+    app.isPackaged ? electronUpdateEngine() : null,
     schedule,
     (status) => {
       windows.broadcast(PUSH.updates, status);
-      refreshTray();
+      // The tray only offers the install: no need to rebuild its menu on every download step.
+      if ((status.state === "ready") !== updateReady) {
+        updateReady = status.state === "ready";
+        refreshTray();
+      }
     },
   );
   const settings = new SettingsController(new SettingsStore(join(app.getPath("userData"), "settings.json")), {

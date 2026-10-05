@@ -67,13 +67,14 @@
     switch (status.state) {
       case "disabled":
         return "Les mises à jour automatiques fonctionnent dans l'app installée, une fois appairée.";
+      // Nothing is said to be up to date before a check answered.
       case "idle":
-      case "up_to_date":
-        return `Alicia est à jour (version ${appVersion}).`;
       case "checking":
         return "Recherche d'une mise à jour…";
+      case "up_to_date":
+        return `Alicia est à jour (version ${appVersion}).`;
       case "downloading":
-        return `Téléchargement de la mise à jour… ${status.percent} %`;
+        return `Téléchargement de la mise à jour… ${status.percent} %`;
       case "ready":
         return `La version ${status.version} est prête.`;
       case "error":

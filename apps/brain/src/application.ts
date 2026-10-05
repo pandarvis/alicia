@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { systemClock } from "./clock.ts";
@@ -76,7 +76,8 @@ export async function buildApplication(
   const { db, memory } = openCore(config, options.embedder);
   try {
     // <dataDir>/updates: where a new version of the desktop app is dropped (README, « Publier une version »).
-    const updatesDir = join(config.dataDir, "updates");
+    // Absolute (@fastify/static refuses a relative root), whatever the config says (`./data` by default).
+    const updatesDir = resolve(config.dataDir, "updates");
     mkdirSync(updatesDir, { recursive: true });
     const repository = new ConversationRepository(db, systemClock);
     const pairing = new PairingService(db, systemClock);

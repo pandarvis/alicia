@@ -177,9 +177,12 @@ pnpm --filter @alicia/desktop dist   # → apps/desktop/dist/Alicia-Setup-<versi
   (Windows SmartScreen peut demander « Exécuter quand même » la première fois). L'app installée s'appelle
   « Alicia » : son profil (`%APPDATA%\Alicia`) est distinct de celui du développement.
 - **Publier** : augmenter `version` dans `apps/desktop/package.json`, lancer `dist`, puis copier
-  `latest.yml`, `Alicia-Setup-<version>.exe` et `Alicia-Setup-<version>.exe.blockmap` dans
-  `<dataDir>/updates/` **sur la machine du cerveau**. Les apps installées vérifient au démarrage et toutes les
-  six heures, téléchargent, et installent en quittant (ou tout de suite depuis Réglages / le menu).
+  **seulement** `latest.yml`, `Alicia-Setup-<version>.exe` et `Alicia-Setup-<version>.exe.blockmap` dans
+  `<dataDir>/updates/` **sur la machine du cerveau** (jamais `builder-debug.yml` ni `win-unpacked/`). Garder les
+  `.blockmap` des versions précédentes : ils permettent de ne télécharger que ce qui change. Les apps installées
+  vérifient au démarrage, toutes les six heures et dès que le cerveau répond à nouveau après un échec,
+  téléchargent, et installent en quittant (ou tout de suite depuis Réglages / le menu). Une version déjà
+  téléchargée s'installe en quittant même si l'appareil a été déconnecté entre-temps.
 - **Premier téléchargement** : `http://<cerveau>:8780/updates/Alicia-Setup-<version>.exe` dans un navigateur
   (la route `/updates/` est publique : un installateur ne contient aucun secret).
 

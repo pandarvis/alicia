@@ -61,12 +61,23 @@ describe("/updates/", () => {
 
   test("no listing, no hidden files, nothing outside the folder", async () => {
     const app = await serverWith(publishedUpdates());
-    for (const url of ["/updates/", "/updates/.hidden", "/updates/../alicia.db", "/updates/..%2falicia.db", "/updates/%2e%2e/alicia.db"]) {
+    for (const url of [
+      "/updates/", "/updates/.hidden", "/updates/../alicia.db", "/updates/..%2falicia.db", "/updates/%2e%2e/alicia.db",
+      "/updates/..%5calicia.db", "/updates/..\\alicia.db", "/updates/sub/../../alicia.db",
+    ]) {
       const response = await app.inject({ method: "GET", url });
       expect(response.statusCode, url).not.toBe(200);
       expect(response.body, url).not.toContain("database");
       expect(response.body, url).not.toContain("secret");
     }
+  });
+
+  test("HEAD gives the size without the body (electron-updater and download managers ask first)", async () => {
+    const app = await serverWith(publishedUpdates());
+    const head = await app.inject({ method: "HEAD", url: "/updates/Alicia-Setup-0.2.0.exe" });
+    expect(head.statusCode).toBe(200);
+    expect(head.headers["content-length"]).toBe(String(INSTALLER.length));
+    expect(head.rawPayload).toHaveLength(0);
   });
 
   test("without an updates folder, the route does not exist", async () => {

@@ -1,6 +1,6 @@
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, expect, test } from "vitest";
 import { buildApplication } from "../src/application.ts";
@@ -73,4 +73,21 @@ engine: { mode: subscription }
   const left = check.prepare("SELECT id FROM memories").pluck().all();
   check.close();
   expect(left).toEqual([ids[1]]);
+});
+
+test("starts with a relative dataDir (as in alicia.config.example.yaml), serving its updates folder", async () => {
+  dir = mkdtempSync(join(tmpdir(), "alicia-"));
+  const relativeDir = relative(process.cwd(), dir);
+  expect(isAbsolute(relativeDir)).toBe(false);
+  const config = parseConfig(`
+dataDir: ${JSON.stringify(relativeDir)}
+people: [{ id: kevin, name: Kévin }]
+engine: { mode: subscription }
+`);
+  const app = await buildApplication(config, new FakeEngine(() => []), { embedder: new FakeEmbedder() });
+  writeFileSync(join(dir, "updates", "latest.yml"), "version: 0.2.0\n");
+  const res = await app.server.inject({ method: "GET", url: "/updates/latest.yml" });
+  await app.close();
+  expect(res.statusCode).toBe(200);
+  expect(res.body).toContain("version: 0.2.0");
 });
