@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
+import type { ToolDefinition, ToolResult } from "../src/engine/tools.ts";
 import type { GoogleOwner, Person } from "@alicia/protocol";
 import { FakeGoogle } from "../src/google/fake-google.ts";
 import { type GoogleAccess, GoogleClient } from "../src/google/google-client.ts";
@@ -69,4 +71,25 @@ export async function createFamilyGoogle() {
   const kevinAccess: GoogleAccess = fixture.client.forPerson(KEVIN);
   const elodieAccess: GoogleAccess = fixture.client.forPerson(ELODIE);
   return { ...fixture, accounts: { famille, kevin, elodie }, store: fixture.accounts, kevinAccess, elodieAccess };
+}
+
+export const TURN_CONV = "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+
+/** Runs a tool like the SDK would: arguments validated by its schema first. */
+export async function runTool(tools: readonly ToolDefinition[], name: string, args: unknown): Promise<ToolResult> {
+  const tool = tools.find((t) => t.name === name);
+  if (tool === undefined) throw new Error(`No tool named ${name}`);
+  return tool.run(z.object(tool.input).parse(args));
+}
+
+/** Arguments of a tool, validated by its schema (for `confirmation`). */
+export function argsOf(tools: readonly ToolDefinition[], name: string, args: unknown) {
+  const tool = tools.find((t) => t.name === name);
+  if (tool === undefined) throw new Error(`No tool named ${name}`);
+  return { tool, args: z.object(tool.input).parse(args) };
+}
+
+/** Body of a recorded request, as data. */
+export function bodyOf(request: { body: string } | undefined): unknown {
+  return JSON.parse(request?.body ?? "{}");
 }

@@ -2977,7 +2977,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Les contenus extérieurs sont encadrés par `frameUntrusted` de 3a (`apps/brain/src/tools/untrusted.ts`), et le tour est marqué « non fiable » par `guardTool` de 3a dès qu'un outil déclare `untrustedOutput: true` : les outils Google n'ont **rien** à câbler eux-mêmes pour le garde-fou.
 
-> **Alignement (tâche 0) :** `frameUntrusted` de 3a ajoute un identifiant aléatoire par appel (`<donnees_exterieures id="…" source="…">`) : les tests vérifient le cadre par motif (`/<donnees_exterieures id="[0-9a-f]{16}" source="…">/`), jamais par égalité exacte. `runTool` appelle la définition brute (sans `guardTool`) : `run(args)` sans `confirmed` ; pour un outil à confirmation, les tests passent par `guardTool(tool, createTestTurn(...).turn)` ou appellent `confirmation()` puis `run(args, { snapshot })` (tâche 10).
+> **Alignement (tâche 0) :** `frameUntrusted` de 3a ajoute un identifiant aléatoire par appel (`<donnees_exterieures id="…" source="…">`) : les tests vérifient le cadre par motif (`/<donnees_exterieures id="[0-9a-f]{16}" source="…">/`), jamais par égalité exacte. `runTool` appelle la définition brute (sans `guardTool`) : `run(args)` sans `confirmed` ; pour un outil à confirmation, les tests passent par `guardTool(tool, createTestTurn(...).turn)` ou appellent `confirmation()` puis `run(args, { snapshot })` (tâche 10). `failureText` couvre aussi `"changed"` (tâche 6) : « L'élément a changé depuis qu'il a été lu : rien n'a été fait. Relis-le, puis redemande à la personne. » Les tests n'utilisent pas `expect.objectContaining` dans un `toEqual` (refusé par le lint : affectation `any`).
 
 - [ ] **Step 1: Aides de test pour les outils**
 
