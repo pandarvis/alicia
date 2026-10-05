@@ -4,6 +4,7 @@
   import { fade, slide } from "svelte/transition";
   import type { ServerEvent } from "@alicia/protocol";
   import type { StoredSession } from "../../../shared/session.ts";
+  import { AccountsScreen } from "../lib/accounts-screen.svelte.ts";
   import type { AppView } from "../lib/app-view.ts";
   import { BrainApi, UnauthorizedError } from "../lib/brain-client.ts";
   import type { ConnectionStatus } from "../../../shared/chat-connection.ts";
@@ -11,6 +12,7 @@
   import { HubClient } from "../lib/hub-client.ts";
   import { MemoryScreen } from "../lib/memory-screen.svelte.ts";
   import { motion } from "../lib/motion.ts";
+  import AccountsView from "./AccountsView.svelte";
   import ChatView from "./ChatView.svelte";
   import Composer from "./Composer.svelte";
   import MemoryView from "./MemoryView.svelte";
@@ -73,7 +75,19 @@
     now: () => Date.now(),
   });
 
+  // Google accounts (Comptes): its messages are in French; a revoked device still signs out first.
+  const accounts = new AccountsScreen({
+    list: () => guarded(() => api.listGoogleAccounts()),
+    client: () => guarded(() => api.googleClient()),
+    authorize: (request) => window.alicia.google.authorize(request),
+    cancel: () => window.alicia.google.cancel(),
+    connect: (input) => guarded(() => api.connectGoogleAccount(input)),
+    remove: (id) => guarded(() => api.removeGoogleAccount(id)),
+  });
+
   function handleEvent(event: ServerEvent): void {
+    // Google refused an account during the turn: the menu's dot follows.
+    if (event.type === "account_reconnect") void accounts.load();
     store.handle(event);
   }
 
@@ -87,6 +101,7 @@
       // The brain may have finished the lost turn, or been down when the list was first fetched.
       if (store.activeId === null) void store.refreshConversations();
       else void store.resync();
+      void accounts.load();
     } else if (next === "rejected") {
       onSignOut(REVOKED);
     }
@@ -104,9 +119,11 @@
   const title = $derived(
     view === "memories"
       ? "Souvenirs"
-      : view === "settings"
-        ? "Réglages"
-        : (store.conversations.find((c) => c.id === store.activeId)?.title ?? "Nouvelle conversation"),
+      : view === "accounts"
+        ? "Comptes"
+        : view === "settings"
+          ? "Réglages"
+          : (store.conversations.find((c) => c.id === store.activeId)?.title ?? "Nouvelle conversation"),
   );
 
   function showView(next: AppView): void {
@@ -147,6 +164,8 @@
   onMount(() => {
     hub.start();
     void store.refreshConversations();
+    // For the menu's dot from the start.
+    void accounts.load();
     const offs = [
       // A notification or the Holo asks for a conversation: shown once this window's own answer has ended.
       window.alicia.app.onOpenConversation((conversationId) => {
@@ -180,7 +199,7 @@
   {/if}
   <div class="body">
     {#if sidebarOpen}
-      <Sidebar {store} personName={session.person.name} {view} onView={showView} />
+      <Sidebar {store} personName={session.person.name} {view} onView={showView} accountsAttention={accounts.needsAttention} />
     {/if}
     <main>
       <!-- The chat stays mounted while Souvenirs is shown: its draft and scroll position are kept. -->
@@ -191,6 +210,11 @@
       {#if view === "memories"}
         <div class="pane" transition:fade={{ duration: motion(180) }}>
           <MemoryView screen={memories} conversationBusy={store.busy} onOpenConversation={openConversation} />
+        </div>
+      {/if}
+      {#if view === "accounts"}
+        <div class="pane" transition:fade={{ duration: motion(180) }}>
+          <AccountsView screen={accounts} />
         </div>
       {/if}
       {#if view === "settings"}

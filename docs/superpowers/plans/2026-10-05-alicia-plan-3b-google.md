@@ -5534,6 +5534,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Les libellés d'activité des outils Google viennent du cerveau (`label`, tâches 10 et 11) : rien à faire dans l'app pour eux.
 
+> **Alignement (mise en œuvre) :**
+> - `AppView` a déjà `"settings"` (Réglages, plan 4b) : `"chat" | "memories" | "accounts" | "settings"` ; « Comptes » se place entre « Souvenirs » et « Réglages » dans le menu, et le titre suit (« Comptes »).
+> - Le pont est `window.alicia.google.authorize` / `.cancel` (tâche 15). `AccountsView` : pas d'assertion de type (`Section[]` typé), sections en `<section aria-labelledby>`, les états chargement / indisponible / échec / liste partagent une cellule de grille (fondu enchaîné), les actions et la question « Retirer ? » aussi ; bandeaux d'attente et de message en `slide`.
+> - La coquille recharge les comptes à l'ouverture, sur `account_reconnect` et quand le cerveau revient après une coupure (la pastille suit).
+> - **Ce qui dépend de la tâche 19 n'est pas encore branché** : `reconnectAccount`, `store.dismissReconnect` et la prop `onReconnect` de `ChatView` arrivent avec elle.
+> - E2E (`app.e2e.ts`) : « Comptes: says when Google is not configured on the brain » et « Comptes: a Famille account connected through the browser, a flow cancelled, then the account removed » (vrai flux : `startGoogleBrain` et `playGoogleConsent` dans `e2e/support.ts`, ajoutés ici et réutilisables par la tâche 20).
+
 - [ ] **Step 1: Vue « Comptes »**
 
 `apps/desktop/src/renderer/src/lib/app-view.ts` :
@@ -5895,6 +5902,8 @@ Aucun navigateur ne s'ouvre : l'app non empaquetée lit `ALICIA_E2E_GOOGLE_AUTH_
 > **Alignement (tâche 0) :** ces aides vivent dans `apps/desktop/e2e/support.ts` (pas dans `app.e2e.ts`) : `startBrain(...scenarios: Scenario[])` (scénarios successifs, pas d'objet d'options), `launch(userData, …)` et `appEnv(userData, extra)` qui accepte déjà des variables en plus. Ajouter une fonction à part `startGoogleBrain(google: FakeGoogle, ...scenarios)` dans `support.ts` (même construction que `startBrain`, plus la section `google`, `fetch` et `google: { secretKey }`) plutôt que de changer la signature de `startBrain` ; passer `ALICIA_E2E_GOOGLE_AUTH_URL` par `appEnv(userData, { … })`.
 
 > **Alignement (tâche 15) :** il n'y a **pas** de `ALICIA_E2E_GOOGLE_AUTH_URL` ni de fausse page de consentement : le navigateur passe par le port d'intégration OS, que l'app de test remplace par `RecordingOs`. Le parcours lit l'URL enregistrée (`(await recorded(app)).browser`), émet le code avec `FakeGoogle` pour son `code_challenge` et son `redirect_uri`, puis appelle lui-même `redirect_uri?code=…&state=…` (comme l'e2e « Google consent… » de `desktop.e2e.ts`).
+
+> **Alignement (tâche 18) :** `startGoogleBrain(google, ...scenarios)` et `playGoogleConsent(app, google, email, index)` existent déjà dans `e2e/support.ts` (la clé secrète est recopiée à chaque démarrage, le cerveau effaçant celle qu'il reçoit) ; l'ajout, l'annulation et le retrait sont déjà couverts dans `app.e2e.ts`. Le parcours de cette tâche se concentre donc sur la carte « Reconnecter le compte » du chat (révocation, pastille, reconnexion depuis la carte).
 
 - [ ] **Step 1: Cerveau de test avec Google**
 

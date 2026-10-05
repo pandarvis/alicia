@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ import { type Application, buildApplication } from "../../brain/src/application.
 import { parseConfig } from "../../brain/src/config.ts";
 import type { EngineEvent } from "../../brain/src/engine/engine.ts";
 import { callTool, FakeEngine, type Scenario } from "../../brain/src/engine/fake-engine.ts";
+import type { FakeGoogle } from "../../brain/src/google/fake-google.ts";
 import { FakeEmbedder } from "../../brain/src/memory/fake-embedder.ts";
 import { RecordedState, TEST_HOOKS_KEY } from "../src/main/recording-os.ts";
 import type { Surface } from "../src/shared/surface.ts";
@@ -89,15 +91,37 @@ export async function startForgettingBrain(): Promise<{ brain: Brain; memoryId: 
  * A real brain on a free local port (never 8780), with a fake engine that answers instantly (by default, a
  * greeting). With several scenarios, the n-th request plays the n-th one (the last one repeats).
  */
-export async function startBrain(...scenarios: Scenario[]): Promise<Brain> {
+export function startBrain(...scenarios: Scenario[]): Promise<Brain> {
+  return startBrainWith(undefined, scenarios);
+}
+
+/** The same brain with Google accounts on, against an in-memory Google (no network, no quota). */
+export function startGoogleBrain(google: FakeGoogle, ...scenarios: Scenario[]): Promise<Brain> {
+  return startBrainWith(google, scenarios);
+}
+
+async function startBrainWith(google: FakeGoogle | undefined, scenarios: readonly Scenario[]): Promise<Brain> {
   const dataDir = tempDir("alicia-e2e-brain-");
+  let googleSection = "";
+  if (google !== undefined) {
+    const secretFile = join(dataDir, "google_client_secret.json");
+    writeFileSync(secretFile, JSON.stringify({ installed: { client_id: google.clientId, client_secret: google.clientSecret } }));
+    googleSection = `google: { clientSecretFile: ${JSON.stringify(secretFile)} }`;
+  }
   const config = parseConfig(`
 dataDir: ${JSON.stringify(dataDir)}
 people: [{ id: kevin, name: Kévin }]
 engine: { mode: subscription }
+${googleSection}
 `);
   const engine = new FakeEngine(...(scenarios.length > 0 ? scenarios : [GREETING]));
-  const first = await buildApplication(config, engine, { embedder: new FakeEmbedder() });
+  // The brain wipes the key it is given: each start gets its own copy of the same key.
+  const secretKey = randomBytes(32);
+  const build = (): Promise<Application> => buildApplication(config, engine, {
+    embedder: new FakeEmbedder(),
+    ...(google !== undefined ? { fetch: google.fetch, google: { secretKey: Buffer.from(secretKey) } } : {}),
+  });
+  const first = await build();
   await first.server.listen({ port: 0, host: "127.0.0.1" });
   const port = (first.server.server.address() as AddressInfo).port;
   let running = true;
@@ -112,7 +136,7 @@ engine: { mode: subscription }
     },
     restart: async () => {
       await brain.stop();
-      brain.app = await buildApplication(config, engine, { embedder: new FakeEmbedder() });
+      brain.app = await build();
       await brain.app.server.listen({ port, host: "127.0.0.1" });
       running = true;
     },
@@ -249,6 +273,24 @@ export function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+/**
+ * Plays the person in the browser and Google for the `index`-th page the app opened: Google issues a code for
+ * `email` (bound to the flow's PKCE challenge and redirect), and the browser comes back to the app's loopback.
+ */
+export async function playGoogleConsent(app: ElectronApplication, google: FakeGoogle, email: string, index: number): Promise<void> {
+  await expect.poll(async () => (await recorded(app)).browser.length, POLL).toBeGreaterThan(index);
+  const consent = new URL((await recorded(app)).browser[index] ?? "");
+  expect(`${consent.origin}${consent.pathname}`).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+  const redirectUri = consent.searchParams.get("redirect_uri") ?? "";
+  const back = new URL(redirectUri);
+  back.searchParams.set("code", google.issueCode(email, {
+    challenge: consent.searchParams.get("code_challenge") ?? "", redirectUri,
+  }));
+  back.searchParams.set("state", consent.searchParams.get("state") ?? "");
+  const page = await fetch(back);
+  expect(await page.text()).toContain("C'est fait");
 }
 
 /** Pairs the app with the brain, typing the code the way a person reads it (with a space). */

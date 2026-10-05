@@ -1,5 +1,6 @@
 <script lang="ts">
   import Brain from "@lucide/svelte/icons/brain";
+  import KeyRound from "@lucide/svelte/icons/key-round";
   import Plus from "@lucide/svelte/icons/plus";
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import Sparkles from "@lucide/svelte/icons/sparkles";
@@ -10,11 +11,13 @@
   import type { ChatStore } from "../lib/chat-store.svelte.ts";
   import { motion } from "../lib/motion.ts";
 
-  let { store, personName, view, onView }: {
+  let { store, personName, view, onView, accountsAttention }: {
     store: ChatStore;
     personName: string;
     view: AppView;
     onView: (view: AppView) => void;
+    /** A Google account must be reconnected: an amber dot on Comptes. */
+    accountsAttention: boolean;
   } = $props();
 
   const uid = $props.id();
@@ -125,6 +128,16 @@
       ><Brain size={16} aria-hidden="true" />Souvenirs</button>
       <button
         class="view"
+        class:active={view === "accounts"}
+        aria-current={view === "accounts" ? "page" : undefined}
+        onclick={() => { onView("accounts"); }}
+        data-testid="nav-accounts"
+      ><KeyRound size={16} aria-hidden="true" />Comptes{#if accountsAttention}<span
+          class="dot" role="img" aria-label="un compte est à reconnecter" data-testid="nav-accounts-attention"
+          transition:fade={{ duration: motion(150) }}
+        ></span>{/if}</button>
+      <button
+        class="view"
         class:active={view === "settings"}
         aria-current={view === "settings" ? "page" : undefined}
         onclick={() => { onView("settings"); }}
@@ -193,6 +206,7 @@
   .view { padding: 7px 10px; color: var(--cream-muted); }
   .view:hover { background: var(--surface); color: var(--cream); }
   .view.active { background: var(--surface); color: var(--cream); font-weight: 700; }
+  .dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
   .new { padding: 8px 10px; font-weight: 700; color: var(--sage); }
   .new:hover:not(:disabled) { background: var(--surface); }
   .label { margin: 12px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }

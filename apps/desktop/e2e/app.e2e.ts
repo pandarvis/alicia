@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 import type { Page } from "playwright";
 import { expect, test } from "vitest";
 import { callTool, type Scenario } from "../../brain/src/engine/fake-engine.ts";
-import { answered, launch, pair, POLL, RUNNING, send, startBrain, startForgettingBrain, tempDir } from "./support.ts";
+import { FakeGoogle } from "../../brain/src/google/fake-google.ts";
+import {
+  answered, launch, pair, playGoogleConsent, POLL, recorded, RUNNING, send, startBrain, startForgettingBrain, startGoogleBrain, tempDir,
+} from "./support.ts";
 
 test("pair, chat with streaming, use Opus, then find the conversation again after a restart", async () => {
   const brain = await startBrain();
@@ -329,4 +332,54 @@ test("attachments: a pasted picture becomes a chip; text copied from Office (tex
   expect(await paste(false)).toBe(true);
   const chip = page.getByTestId("attachment-chip").filter({ hasText: "image.png" });
   await expect.poll(() => chip.getAttribute("data-status"), POLL).toBe("ready");
+});
+
+test("Comptes: says when Google is not configured on the brain", async () => {
+  const brain = await startBrain();
+  const { page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  await page.getByTestId("nav-accounts").click();
+  await page.getByTestId("accounts-unavailable").waitFor();
+  expect(await page.getByTestId("accounts-add-common").count()).toBe(0);
+  expect(await page.getByTestId("nav-accounts-attention").count()).toBe(0);
+});
+
+test("Comptes: a Famille account connected through the browser, a flow cancelled, then the account removed", async () => {
+  const google = new FakeGoogle();
+  const brain = await startGoogleBrain(google);
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+
+  await page.getByTestId("nav-accounts").click();
+  await page.getByTestId("accounts-add-common").waitFor();
+  expect(await page.getByTestId("account-row").count()).toBe(0);
+
+  // Google's page opens in the browser (recorded, never opened, here); the person says yes there.
+  await page.getByTestId("accounts-add-common").click();
+  await page.getByTestId("accounts-waiting").waitFor();
+  await playGoogleConsent(app, google, "famille@example.com", 0);
+  const row = page.getByTestId("accounts-section-common").getByTestId("account-row").filter({ hasText: "famille@example.com" });
+  await row.filter({ hasText: "Connecté" }).waitFor();
+  await page.getByTestId("accounts-message").filter({ hasText: "famille@example.com est connecté." }).waitFor();
+  await page.getByTestId("accounts-waiting").waitFor({ state: "detached" });
+  expect(await page.getByTestId("accounts-section-personal").getByTestId("account-row").count()).toBe(0);
+
+  // Changed her mind before answering Google: Annuler, and nothing is said.
+  await page.getByTestId("accounts-add-personal").click();
+  await page.getByTestId("accounts-cancel").click();
+  await page.getByTestId("accounts-waiting").waitFor({ state: "detached" });
+  expect(await page.getByTestId("accounts-message").count()).toBe(0);
+
+  // Removing asks first; Alicia's access is then revoked at Google.
+  await row.getByTestId("account-remove").click();
+  await row.getByTestId("account-remove-no").click();
+  await row.getByTestId("account-remove").click();
+  await row.getByTestId("account-remove-yes").click();
+  await expect.poll(() => page.getByTestId("account-row").count(), POLL).toBe(0);
+  await page.getByTestId("accounts-message").filter({ hasText: "Compte retiré." }).waitFor();
+  expect(google.revoked).toHaveLength(1);
+  expect((await recorded(app)).browser).toHaveLength(2);
+  // Nothing was ever sent.
+  expect(google.requests.some((request) => request.url.pathname.endsWith("/send"))).toBe(false);
+  expect(google.refusedRoutes).toEqual([]);
 });
