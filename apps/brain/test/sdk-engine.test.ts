@@ -6,12 +6,15 @@ import {
   allowedToolNames,
   buildEnv,
   classifyError,
+  CONFIRMATION_BUDGET_MS,
   toMcpResult,
   toolHandler,
+  toolServer,
   translateMessage,
   translateTurn,
 } from "../src/engine/sdk-engine.ts";
 import { defineTool } from "../src/engine/tools.ts";
+import { CONFIRMATION_TIMEOUT_MS } from "../src/tools/confirmations.ts";
 
 /** SDK messages carry many fields that are irrelevant here: partial fixtures. */
 const sdk = (m: Record<string, unknown>) => m as unknown as SDKMessage;
@@ -248,6 +251,11 @@ describe("tools", () => {
     expect(
       translate({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "mcp__alicia__memory_search", input: {} }] } }),
     ).toEqual([{ type: "tool_call", callId: "t1", tool: "memory_search" }]);
+  });
+
+  test("a tool call may wait for a confirmation: its deadline comes after the broker's", () => {
+    expect(CONFIRMATION_BUDGET_MS).toBeGreaterThan(CONFIRMATION_TIMEOUT_MS);
+    expect(toolServer([]).timeout).toBe(CONFIRMATION_BUDGET_MS);
   });
 
   test("toolNames lists the allowed MCP names", () => {

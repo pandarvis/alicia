@@ -1,11 +1,11 @@
 import type { Person, SendMessage, ServerEvent } from "@alicia/protocol";
 import { describe, expect, test, vi } from "vitest";
-import { buildResumePrompt, type ChatDependencies, handleSend, titleFrom } from "../src/conversations/chat-service.ts";
+import { buildResumePrompt, type ChatDependencies, handleSend, titleFrom, type TurnPorts } from "../src/conversations/chat-service.ts";
 import type { Message } from "../src/conversations/repository.ts";
 import { turnLog } from "../src/db/schema.ts";
 import { type Engine, INCOMPLETE_TURN_MESSAGE } from "../src/engine/engine.ts";
 import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
-import { createChatDeps, createTestClock, createTestDb, ELODIE, KEVIN } from "./helpers.ts";
+import { answeringPorts, createChatDeps, createTestClock, createTestDb, ELODIE, KEVIN } from "./helpers.ts";
 
 const REQUEST_ID = "3f1c2b9e-8a4d-4c1e-9b7a-2d5e6f708192";
 
@@ -25,11 +25,14 @@ function createContext(...scenarios: Scenario[]) {
 }
 
 async function send(
-  deps: ChatDependencies, person: Person, message: Omit<SendMessage, "type" | "requestId">,
+  deps: ChatDependencies,
+  person: Person,
+  message: Omit<SendMessage, "type" | "requestId">,
+  ports: TurnPorts = answeringPorts("approved").ports,
 ) {
   const output: ServerEvent[] = [];
   const full: SendMessage = { type: "send", requestId: REQUEST_ID, ...message };
-  for await (const e of handleSend(deps, person, full, new AbortController().signal)) output.push(e);
+  for await (const e of handleSend(deps, person, full, new AbortController().signal, ports)) output.push(e);
   return output;
 }
 
@@ -201,7 +204,7 @@ describe("handleSend", () => {
     cancelled.abort();
     const output: ServerEvent[] = [];
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Deux", conversationId: id };
-    for await (const e of handleSend(deps, KEVIN, full, cancelled.signal)) output.push(e);
+    for await (const e of handleSend(deps, KEVIN, full, cancelled.signal, answeringPorts("approved").ports)) output.push(e);
 
     expect(fake.requests).toHaveLength(2);
     expect(repository.get(id, "kevin")?.sessionId).toBe("s1");
@@ -218,7 +221,7 @@ describe("handleSend", () => {
     cancelled.abort();
     const output: ServerEvent[] = [];
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Un" };
-    for await (const e of handleSend(deps, KEVIN, full, cancelled.signal)) {
+    for await (const e of handleSend(deps, KEVIN, full, cancelled.signal, answeringPorts("approved").ports)) {
       output.push(e);
     }
     expect(output.some((e) => e.type === "done")).toBe(false);
@@ -248,7 +251,7 @@ describe("handleSend", () => {
     const output: ServerEvent[] = [];
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Un" };
     await expect(async () => {
-      for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal)) output.push(e);
+      for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal, answeringPorts("approved").ports)) output.push(e);
     }).rejects.toThrow("disk full");
     expect(output.some((e) => e.type === "error")).toBe(false);
     expect(engine.requests).toHaveLength(1);
@@ -258,7 +261,7 @@ describe("handleSend", () => {
     const { deps, repository, db } = createContext(SIMPLE_REPLY);
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Salut" };
     let id = "";
-    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal)) {
+    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal, answeringPorts("approved").ports)) {
       if (e.type === "conversation") id = e.conversationId;
       if (e.type === "text_delta") break;
     }
@@ -272,7 +275,7 @@ describe("handleSend", () => {
   test("the consumer stops at the very first event of a new conversation: the empty conversation is dropped", async () => {
     const { deps, repository, engine } = createContext(SIMPLE_REPLY);
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Salut" };
-    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal)) {
+    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal, answeringPorts("approved").ports)) {
       if (e.type === "conversation") break;
     }
     expect(repository.list("kevin")).toEqual([]);
@@ -284,7 +287,7 @@ describe("handleSend", () => {
     const firsts = await send(deps, KEVIN, { text: "Un" });
     const id = firsts[0]?.type === "conversation" ? firsts[0].conversationId : "";
     const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Deux", conversationId: id };
-    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal)) {
+    for await (const e of handleSend(deps, KEVIN, full, new AbortController().signal, answeringPorts("approved").ports)) {
       if (e.type === "conversation") break;
     }
     expect(repository.list("kevin").map((c) => c.id)).toEqual([id]);
@@ -318,6 +321,55 @@ describe("handleSend", () => {
     const events = await send(deps, KEVIN, { text: "Retiens que j'adore les lasagnes" });
     const conversationId = events[0]?.type === "conversation" ? events[0].conversationId : "";
     expect(deps.memory.list("kevin", {})[0]?.conversationId).toBe(conversationId);
+  });
+
+  test("a confirmation is asked through the ports, for the turn's conversation", async () => {
+    let memoryId = "";
+    const { deps, memory } = createContext(async (request) => {
+      const result = await callTool(request, "memory_forget", { id: memoryId });
+      return [{ type: "text", text: result.isError === true ? "Je le garde." : "Oublié." }, { type: "done", inputTokens: 1, outputTokens: 1 }];
+    });
+    const saved = await memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    memoryId = saved.memory.id;
+    const seen: string[] = [];
+    const ports: TurnPorts = {
+      confirm: (conversationId, request) => {
+        seen.push(`${conversationId}:${request.tool}`);
+        return Promise.resolve("refused");
+      },
+    };
+    const events = await send(deps, KEVIN, { text: "Oublie que je cours" }, ports);
+    const first = events[0];
+    if (first?.type !== "conversation") throw new Error("expected a conversation event first");
+    expect(seen).toEqual([`${first.conversationId}:memory_forget`]);
+    expect(events).toContainEqual({ type: "text_delta", conversationId: first.conversationId, text: "Je le garde." });
+    expect(memory.get("kevin", memoryId)).toBeDefined();
+  });
+
+  test("the turn's signal reaches the confirmation", async () => {
+    let memoryId = "";
+    const { deps, memory } = createContext(async (request) => {
+      await callTool(request, "memory_forget", { id: memoryId });
+      return [{ type: "done", inputTokens: 1, outputTokens: 1 }];
+    });
+    const saved = await memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    memoryId = saved.memory.id;
+    const controller = new AbortController();
+    let received: AbortSignal | undefined;
+    const ports: TurnPorts = {
+      confirm: (_conversationId, _request, signal) => {
+        received = signal;
+        return Promise.resolve("approved");
+      },
+    };
+    const full: SendMessage = { type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" };
+    const output: ServerEvent[] = [];
+    for await (const e of handleSend(deps, KEVIN, full, controller.signal, ports)) output.push(e);
+    expect(output.at(-1)?.type).toBe("done");
+    expect(received).toBe(controller.signal);
+    expect(memory.get("kevin", memoryId)).toBeUndefined();
   });
 });
 

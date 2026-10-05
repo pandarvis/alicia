@@ -14,6 +14,7 @@ import type { Authentication } from "../config.ts";
 import { VERSION } from "../version.ts";
 import { type Engine, type EngineEvent, type EngineRequest, INCOMPLETE_TURN_MESSAGE } from "./engine.ts";
 import type { ToolDefinition, ToolResult } from "./tools.ts";
+import { CONFIRMATION_TIMEOUT_MS } from "../tools/confirmations.ts";
 
 const LIMIT_PATTERN = /usage limit|rate[ _]?limit|(?<!disk )quota (?:exceeded|reached)|too many requests|\b429\b/i;
 const QUOTA_MESSAGE = "Je me repose : le quota de l'abonnement est atteint.";
@@ -37,6 +38,9 @@ const QUOTA: EngineEvent = { type: "error", code: "quota", message: QUOTA_MESSAG
 
 const MCP_SERVER = "alicia";
 const MCP_PREFIX = `mcp__${MCP_SERVER}__`;
+
+/** Tool calls may wait for a confirmation: their own deadline comes after the broker's. */
+export const CONFIRMATION_BUDGET_MS = CONFIRMATION_TIMEOUT_MS + 60_000;
 /** Generic on purpose: an exception may carry paths, SQL or secrets, none of which belongs in the model's context. */
 const TOOL_FAILURE = "Erreur de l'outil.";
 
@@ -123,12 +127,14 @@ export function toolHandler<Shape extends ToolDefinition["input"]>(
 }
 
 /** In-process MCP server exposing the tools of a turn. */
-function toolServer(tools: readonly ToolDefinition[]): McpSdkServerConfigWithInstance {
+export function toolServer(tools: readonly ToolDefinition[]): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: MCP_SERVER,
     version: VERSION,
     // Never hidden behind tool search (built-in tools, ToolSearch included, are disabled).
     alwaysLoad: true,
+    // A call may wait for the person's answer (up to 5 min): never cut before the broker settles it.
+    timeout: CONFIRMATION_BUDGET_MS,
     tools: tools.map((definition) =>
       tool(definition.name, definition.description, definition.input, toolHandler(definition)),
     ),

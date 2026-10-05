@@ -152,7 +152,9 @@ export function attachWs(socket: WebSocket, deps: ServerDependencies, locks: Con
     turns.add(turn);
     void (async () => {
       try {
-        for await (const e of handleSend(deps.chat, author, message, turn.signal)) {
+        for await (const e of handleSend(deps.chat, author, message, turn.signal, {
+          confirm: (conversationId, request, signal) => broker.ask(conversationId, request, signal),
+        })) {
           // New conversation: locked as soon as its id exists, before another device can see it.
           if (e.type === "conversation" && locked === undefined && locks.acquire(author.id, e.conversationId)) {
             locked = e.conversationId;

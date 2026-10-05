@@ -1,5 +1,7 @@
 import type { Person } from "@alicia/protocol";
 import type { ToolDefinition } from "../engine/tools.ts";
+import { guardTool } from "./guard-tool.ts";
+import type { TurnContext } from "./turn.ts";
 
 /** Who speaks and where: a turn's tools are always built for one person and one conversation. */
 export interface ToolScope {
@@ -26,14 +28,15 @@ export class ToolCatalog {
     this.#providers = providers;
   }
 
-  forTurn(scope: ToolScope): ToolDefinition[] {
-    const tools = this.#providers.flatMap((provide) => provide(scope));
+  /** The tools of a turn, bound to its person and conversation, each guarded (confirmation, untrusted output). */
+  forTurn(turn: TurnContext): ToolDefinition[] {
+    const tools = this.#providers.flatMap((provide) => provide(turn));
     const seen = new Set<string>();
     for (const t of tools) {
       if (seen.has(t.name)) throw new Error(`Two tools are named ${t.name}`);
       seen.add(t.name);
     }
-    return tools;
+    return tools.map((t) => guardTool(t, turn));
   }
 }
 

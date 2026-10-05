@@ -104,8 +104,14 @@ export function memoryTools(store: MemoryStore): ToolProvider {
     defineTool({
       name: "memory_forget",
       label: "Alicia oublie ce souvenir…",
-      description: "Oublie un souvenir à partir de son identifiant entre crochets (donné par memory_search), récupérable pendant 30 jours.",
+      description:
+        "Oublie un souvenir à partir de son identifiant entre crochets (donné par memory_search). La personne doit confirmer ; récupérable pendant 30 jours.",
       input: { id: z.string().min(1) },
+      // Only a memory this person can reach is worth a question: otherwise `run` says it was not found.
+      confirmation({ id }) {
+        const memory = store.get(person.id, id);
+        return Promise.resolve(memory === undefined ? null : `Oublier ce souvenir : « ${oneLine(memory.text)} » ?`);
+      },
       run({ id }) {
         return Promise.resolve(store.forget(person.id, id) ? { text: "Oublié (récupérable 30 jours)." } : NOT_FOUND);
       },

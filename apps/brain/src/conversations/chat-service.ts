@@ -5,7 +5,10 @@ import type { Clock } from "../clock.ts";
 import { type Engine, type EngineEvent, INCOMPLETE_TURN_MESSAGE } from "../engine/engine.ts";
 import { buildSheet } from "../memory/sheet.ts";
 import type { MemoryStore } from "../memory/store.ts";
+import { truncate } from "../text.ts";
 import { labelOf, type ToolCatalog } from "../tools/catalog.ts";
+import type { ConfirmationOutcome, ConfirmationRequest } from "../tools/confirmations.ts";
+import { TurnContext } from "../tools/turn.ts";
 import type { Conversation, ConversationRepository, LoggedToolCall, Message } from "./repository.ts";
 
 export interface ChatDependencies {
@@ -18,6 +21,12 @@ export interface ChatDependencies {
   timezone: string;
 }
 
+/** What a turn needs from the connection that started it. */
+export interface TurnPorts {
+  /** Asks the person on that device; settles "cancelled" when `signal` aborts. */
+  confirm(conversationId: string, request: ConfirmationRequest, signal: AbortSignal): Promise<ConfirmationOutcome>;
+}
+
 type EngineError = Extract<EngineEvent, { type: "error" }>;
 
 const TITLE_LENGTH = 60;
@@ -25,18 +34,6 @@ const RESUME_MESSAGE_COUNT = 10;
 const RESUME_MESSAGE_CHARS = 1_000;
 const RESUME_TOTAL_CHARS = 8_000;
 const RESUME_HEADER = "Contexte : la conversation précédente n'a pas pu être reprise. Ses derniers échanges :";
-
-/**
- * At most `max` UTF-16 units, the ellipsis included when cut. Never splits a surrogate pair: an emoji
- * cut in half would leave an invalid character in the title or the prompt.
- */
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  let end = max - 1;
-  const last = text.charCodeAt(end - 1);
-  if (last >= 0xd8_00 && last <= 0xdb_ff) end -= 1;
-  return `${text.slice(0, end)}…`;
-}
 
 function resumeLine(m: Message): string {
   return `${m.role === "user" ? "Utilisateur" : "Alicia"} : ${truncate(m.text, RESUME_MESSAGE_CHARS)}`;
@@ -74,6 +71,7 @@ export async function* handleSend(
   person: Person,
   message: SendMessage,
   signal: AbortSignal,
+  ports: TurnPorts,
 ): AsyncGenerator<ServerEvent> {
   const start = deps.clock();
 
@@ -107,7 +105,12 @@ export async function* handleSend(
   const model = chooseModel(message.model, message.text);
   const sheet = buildSheet(deps.memory.sheetMemories(person.id), person.name);
   const systemPrompt = buildSystemPrompt(person, sheet);
-  const tools = deps.tools.forTurn({ person, conversationId });
+  const turn = new TurnContext({
+    person,
+    conversationId,
+    confirm: (request) => ports.confirm(conversationId, request, signal),
+  });
+  const tools = deps.tools.forTurn(turn);
   const prompt = timestamp(message.text, new Date(start), deps.timezone);
 
   let text = "";

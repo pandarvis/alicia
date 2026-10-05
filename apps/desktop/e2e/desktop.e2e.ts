@@ -1,7 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Page } from "playwright";
 import { expect, test } from "vitest";
 import { z } from "zod";
+import { callTool } from "../../brain/src/engine/fake-engine.ts";
 import {
   callHook, closeWindow, deferred, exited, GREETING_EVENTS, launch, pair, POLL, recorded, secondInstance, send, startBrain,
   surfacePage, tempDir, windowBounds, windowVisible,
@@ -361,4 +363,53 @@ test("nothing found on the network: the manual address stays, with a hint for Ta
   // Nor change settings, nor sign the device out.
   await expect(bar.evaluate(() => window.alicia.settings.update({ showHolo: false }))).rejects.toThrow();
   await expect(bar.evaluate(() => window.alicia.clearSession())).rejects.toThrow();
+});
+
+test("a confirmation reaches only the window whose turn asked, and only that window can answer it, once", async () => {
+  let memoryId = "";
+  const brain = await startBrain(async (request) => {
+    const result = await callTool(request, "memory_forget", { id: memoryId });
+    return [
+      { type: "session", sessionId: "s1" },
+      { type: "text", text: result.isError === true ? "Je le garde." : "C'est oublié." },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ];
+  });
+  const saved = await brain.app.memory.remember({
+    personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual",
+  });
+  if (saved.status !== "created") throw new Error("not created");
+  memoryId = saved.memory.id;
+  const { app, page } = await launch(tempDir("alicia-e2e-profile-"));
+  await pair(page, brain);
+  const holo = await surfacePage(app, "holo");
+
+  // Each window notes the confirmation events it receives (no card yet: read through the bridge).
+  for (const surface of [page, holo]) {
+    await surface.evaluate(() => {
+      window.alicia.brain.onEvent((event) => {
+        if (event.type === "confirm_request") document.body.dataset["confirmation"] = event.confirmationId;
+        if (event.type === "confirm_result") document.body.dataset["outcome"] = event.outcome;
+      });
+    });
+  }
+  const noted = (surface: Page, key: string): Promise<string> =>
+    surface.evaluate((wanted) => document.body.dataset[wanted] ?? "", key);
+
+  await send(page, "Oublie que je cours");
+  await expect.poll(() => noted(page, "confirmation"), POLL).not.toBe("");
+  const answer = { type: "confirm", confirmationId: await noted(page, "confirmation"), approved: true } as const;
+
+  // The Holo never saw it, and cannot answer it.
+  expect(await noted(holo, "confirmation")).toBe("");
+  expect(await holo.evaluate((yes) => window.alicia.brain.confirm(yes), answer)).toBe(false);
+  expect(brain.app.memory.get("kevin", memoryId)).toBeDefined();
+
+  // The window that asked answers yes, once.
+  expect(await page.evaluate((yes) => window.alicia.brain.confirm(yes), answer)).toBe(true);
+  expect(await page.evaluate((yes) => window.alicia.brain.confirm(yes), answer)).toBe(false);
+  await page.getByTestId("message-assistant").filter({ hasText: "C'est oublié." }).waitFor();
+  expect(await noted(page, "outcome")).toBe("approved");
+  expect(await noted(holo, "outcome")).toBe("");
+  expect(brain.app.memory.get("kevin", memoryId)).toBeUndefined();
 });

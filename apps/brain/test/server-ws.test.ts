@@ -4,8 +4,10 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 import type { Engine, EngineEvent } from "../src/engine/engine.ts";
-import { FakeEngine } from "../src/engine/fake-engine.ts";
+import { callTool, FakeEngine, type Scenario } from "../src/engine/fake-engine.ts";
+import type { ToolResult } from "../src/engine/tools.ts";
 import { PairingService } from "../src/identity/pairing.ts";
+import type { MemoryStore } from "../src/memory/store.ts";
 import type { DrainOptions } from "../src/server/backpressure.ts";
 import { createServer } from "../src/server/server.ts";
 import { createChatDeps, createTestClock, createTestDb } from "./helpers.ts";
@@ -26,6 +28,7 @@ interface StartOptions {
   allowedOrigins?: readonly string[];
   heartbeatMs?: number;
   drain?: DrainOptions;
+  confirmationTimeoutMs?: number;
 }
 
 async function start(options: StartOptions = {}) {
@@ -51,6 +54,7 @@ async function start(options: StartOptions = {}) {
     ...(options.allowedOrigins === undefined ? {} : { allowedOrigins: options.allowedOrigins }),
     ...(options.heartbeatMs === undefined ? {} : { heartbeatMs: options.heartbeatMs }),
     ...(options.drain === undefined ? {} : { drain: options.drain }),
+    ...(options.confirmationTimeoutMs === undefined ? {} : { confirmationTimeoutMs: options.confirmationTimeoutMs }),
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const { port } = app.server.address() as AddressInfo;
@@ -61,6 +65,24 @@ async function start(options: StartOptions = {}) {
   return {
     url: `ws://127.0.0.1:${port}/ws`, token: r.token, elodieToken: elodie.token, pairing, repository, memory, fakeEngine,
   };
+}
+
+/** A turn that forgets `id` and says how it went. */
+function forgetting(id: () => string): Scenario {
+  return async (request) => {
+    const result = await callTool(request, "memory_forget", { id: id() });
+    return [
+      { type: "session", sessionId: "s1" },
+      { type: "text", text: result.isError === true ? "Je le garde." : "Oublié." },
+      { type: "done", inputTokens: 1, outputTokens: 1 },
+    ];
+  };
+}
+
+async function seedMemory(memory: MemoryStore): Promise<string> {
+  const saved = await memory.remember({ personId: "kevin", scope: "personal", kind: "fact", text: "Kévin court le dimanche", source: "manual" });
+  if (saved.status !== "created") throw new Error("not created");
+  return saved.memory.id;
 }
 
 /** Opens a connection and accumulates the received events (validated by the protocol). */
@@ -600,5 +622,93 @@ describe("WebSocket", () => {
     release();
     await c.waitFor((e) => e.type === "done");
     c.ws.close();
+  });
+
+  test("confirmation: the card is answered yes by the same connection, the tool runs", async () => {
+    let id = "";
+    const { url, token, memory } = await start({ engine: new FakeEngine(forgetting(() => id)) });
+    id = await seedMemory(memory);
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" }));
+    await c.waitFor((e) => e.type === "confirm_request");
+    const request = c.received.find((e) => e.type === "confirm_request");
+    if (request?.type !== "confirm_request") throw new Error("no confirm_request");
+    expect(request.summary).toBe("Oublier ce souvenir : « Kévin court le dimanche » ?");
+    expect(request.tool).toBe("memory_forget");
+    c.ws.send(JSON.stringify({ type: "confirm", confirmationId: request.confirmationId, approved: true }));
+    await c.waitFor((e) => e.type === "done");
+    expect(c.received).toContainEqual({
+      type: "confirm_result", conversationId: request.conversationId, confirmationId: request.confirmationId, outcome: "approved",
+    });
+    expect(c.received).toContainEqual({ type: "text_delta", conversationId: request.conversationId, text: "Oublié." });
+    expect(memory.get("kevin", id)).toBeUndefined();
+    c.ws.close();
+  });
+
+  test("confirmation: another connection cannot answer it", async () => {
+    let id = "";
+    const { url, token, elodieToken, memory } = await start({ engine: new FakeEngine(forgetting(() => id)) });
+    id = await seedMemory(memory);
+    const kevin = connect(url);
+    const elodie = connect(url);
+    await Promise.all([kevin.opened, elodie.opened]);
+    kevin.ws.send(JSON.stringify({ type: "authenticate", token }));
+    elodie.ws.send(JSON.stringify({ type: "authenticate", token: elodieToken }));
+    await Promise.all([kevin.waitFor((e) => e.type === "ready"), elodie.waitFor((e) => e.type === "ready")]);
+    kevin.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" }));
+    await kevin.waitFor((e) => e.type === "confirm_request");
+    const request = kevin.received.find((e) => e.type === "confirm_request");
+    if (request?.type !== "confirm_request") throw new Error("no confirm_request");
+    elodie.ws.send(JSON.stringify({ type: "confirm", confirmationId: request.confirmationId, approved: true }));
+    await elodie.waitFor((e) => e.type === "error");
+    expect(elodie.received.some((e) => e.type === "confirm_request" || e.type === "confirm_result")).toBe(false);
+    expect(memory.get("kevin", id)).toBeDefined();
+    kevin.ws.send(JSON.stringify({ type: "confirm", confirmationId: request.confirmationId, approved: false }));
+    await kevin.waitFor((e) => e.type === "done");
+    expect(kevin.received).toContainEqual(expect.objectContaining({ type: "confirm_result", outcome: "refused" }) as ServerEvent);
+    expect(kevin.received).toContainEqual(expect.objectContaining({ type: "text_delta", text: "Je le garde." }) as ServerEvent);
+    expect(memory.get("kevin", id)).toBeDefined();
+    kevin.ws.close();
+    elodie.ws.close();
+  });
+
+  test("confirmation: no answer in time → expired, nothing done", async () => {
+    let id = "";
+    const { url, token, memory } = await start({ engine: new FakeEngine(forgetting(() => id)), confirmationTimeoutMs: 50 });
+    id = await seedMemory(memory);
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" }));
+    await c.waitFor((e) => e.type === "done");
+    expect(c.received).toContainEqual(expect.objectContaining({ type: "confirm_result", outcome: "expired" }) as ServerEvent);
+    expect(memory.get("kevin", id)).toBeDefined();
+    c.ws.close();
+  });
+
+  test("confirmation: connection lost while waiting → the tool is refused", async () => {
+    let id = "";
+    let observed: ToolResult | undefined;
+    const engine = new FakeEngine(async (request) => {
+      observed = await callTool(request, "memory_forget", { id });
+      return [];
+    });
+    const { url, token, memory } = await start({ engine });
+    id = await seedMemory(memory);
+    const c = connect(url);
+    await c.opened;
+    c.ws.send(JSON.stringify({ type: "authenticate", token }));
+    await c.waitFor((e) => e.type === "ready");
+    c.ws.send(JSON.stringify({ type: "send", requestId: REQUEST_ID, text: "Oublie que je cours" }));
+    await c.waitFor((e) => e.type === "confirm_request");
+    c.ws.close();
+    await vi.waitFor(() => {
+      expect(observed).toEqual({ text: "Demande de confirmation annulée (connexion perdue) : rien n'a été fait.", isError: true });
+    });
+    expect(memory.get("kevin", id)).toBeDefined();
   });
 });

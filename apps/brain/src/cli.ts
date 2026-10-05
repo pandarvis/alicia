@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { type ClientMessage, PairingResponse, ServerEvent } from "@alicia/protocol";
+import { type ClientMessage, type ConfirmationOutcome, PairingResponse, ServerEvent } from "@alicia/protocol";
 import WebSocket from "ws";
 import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import { buildApplication, createSdkEngine, openMemory } from "./application.ts";
@@ -169,11 +169,20 @@ function readEvent(data: WebSocket.RawData): ServerEvent | undefined {
   }
 }
 
+/** How a confirmation that ran nothing ended, as the terminal says it. */
+const OUTCOME_LABELS: Readonly<Record<Exclude<ConfirmationOutcome, "approved">, string>> = {
+  refused: "refusé",
+  expired: "expiré",
+  cancelled: "annulé",
+};
+
 async function chat(url: string, code: string | undefined): Promise<void> {
   const token = await getToken(url, code);
   const ws = new WebSocket(url);
   let conversationId: string | undefined;
   let endTurn: (() => void) | undefined;
+  // Confirmation cards are answered in the terminal, once its prompt exists.
+  const terminal: { ask?: (question: string) => Promise<string> } = {};
   const isOpen = (): boolean => ws.readyState === WebSocket.OPEN;
 
   const send = (m: ClientMessage): void => {
@@ -198,10 +207,30 @@ async function chat(url: string, code: string | undefined): Promise<void> {
         case "tool_call":
           process.stdout.write(`\n  [${e.label}]\n`);
           break;
+        case "confirm_request": {
+          const answer = (approved: boolean): void => {
+            if (isOpen()) send({ type: "confirm", confirmationId: e.confirmationId, approved });
+          };
+          if (terminal.ask === undefined) {
+            answer(false);
+            break;
+          }
+          // A closed prompt (Ctrl+C) is a no.
+          terminal.ask(`\n  [confirmation] ${e.summary} (o/n) `).then(
+            (typed) => {
+              answer(/^o(ui)?$/i.test(typed.trim()));
+            },
+            () => {
+              answer(false);
+            },
+          );
+          break;
+        }
+        case "confirm_result":
+          if (e.outcome !== "approved") console.log(`  [${OUTCOME_LABELS[e.outcome]}]`);
+          break;
         case "tool_result":
         case "heartbeat":
-        case "confirm_request":
-        case "confirm_result":
           break;
         case "done":
           process.stdout.write(`\n  (${e.model}, ${e.inputTokens}→${e.outputTokens} tokens, ${e.durationMs} ms)\n`);
@@ -228,6 +257,7 @@ async function chat(url: string, code: string | undefined): Promise<void> {
   await ready;
 
   const reader = createInterface({ input: process.stdin, output: process.stdout });
+  terminal.ask = (question) => reader.question(question);
   reader.on("SIGINT", () => {
     reader.close();
   });

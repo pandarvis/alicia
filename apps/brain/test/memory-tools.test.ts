@@ -3,7 +3,8 @@ import { ConversationRepository } from "../src/conversations/repository.ts";
 import type { EngineRequest } from "../src/engine/engine.ts";
 import { callTool } from "../src/engine/fake-engine.ts";
 import { memoryTools } from "../src/memory/tools.ts";
-import { createTestClock, createTestDb, createTestMemory, ELODIE, KEVIN } from "./helpers.ts";
+import { ToolCatalog } from "../src/tools/catalog.ts";
+import { createTestClock, createTestDb, createTestMemory, createTestTurn, ELODIE, KEVIN } from "./helpers.ts";
 
 function setup() {
   const db = createTestDb();
@@ -13,9 +14,9 @@ function setup() {
   // Memories point to the conversation they were learnt in: it must exist.
   const requestFor = (person: typeof KEVIN): EngineRequest => ({
     prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "",
-    tools: memoryTools(store)({ person, conversationId: repository.create(person.id, "Test").id }),
+    tools: new ToolCatalog([memoryTools(store)]).forTurn(createTestTurn(person, repository.create(person.id, "Test").id).turn),
   });
-  return { store, kevin: requestFor(KEVIN), elodie: requestFor(ELODIE) };
+  return { store, repository, kevin: requestFor(KEVIN), elodie: requestFor(ELODIE) };
 }
 
 const SECRET_REFUSAL = { text: "Refusé : je ne retiens ni mots de passe ni codes.", isError: true };
@@ -65,5 +66,31 @@ describe("memory tools", () => {
     expect(store.get("kevin", id)?.text).toBe("Kévin boit du thé");
     expect((await callTool(kevin, "memory_forget", { id })).text).toBe("Oublié (récupérable 30 jours).");
     expect(store.get("kevin", id)).toBeUndefined();
+  });
+
+  test("forgetting asks first, with the memory's text; a no keeps it", async () => {
+    const { store, repository } = setup();
+    const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    const refusing = createTestTurn(KEVIN, repository.create("kevin", "Test").id, "refused");
+    const request: EngineRequest = {
+      prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "", tools: new ToolCatalog([memoryTools(store)]).forTurn(refusing.turn),
+    };
+    expect((await callTool(request, "memory_forget", { id: saved.memory.id })).isError).toBe(true);
+    expect(refusing.asked).toEqual([{ tool: "memory_forget", summary: "Oublier ce souvenir : « Kévin adore les lasagnes » ?" }]);
+    expect(store.get("kevin", saved.memory.id)).toBeDefined();
+  });
+
+  test("forgetting someone else's memory: not found, nothing asked", async () => {
+    const { store, repository } = setup();
+    const saved = await store.remember({ personId: "kevin", scope: "personal", kind: "preference", text: "Kévin adore les lasagnes", source: "manual" });
+    if (saved.status !== "created") throw new Error("not created");
+    const elodie = createTestTurn(ELODIE, repository.create("elodie", "Test").id, "approved");
+    const request: EngineRequest = {
+      prompt: "", sessionId: undefined, model: "sonnet", systemPrompt: "", tools: new ToolCatalog([memoryTools(store)]).forTurn(elodie.turn),
+    };
+    expect(await callTool(request, "memory_forget", { id: saved.memory.id })).toEqual({ text: "Souvenir introuvable.", isError: true });
+    expect(elodie.asked).toEqual([]);
+    expect(store.get("kevin", saved.memory.id)).toBeDefined();
   });
 });
